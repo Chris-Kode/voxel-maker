@@ -395,7 +395,7 @@ describe("VoxelVolume.setVoxels", () => {
         capability,
       ),
     ).toThrow(/occupied-voxel limit/u);
-    expect(snapshot(volume)).toEqual(before);
+    expectSameVoxels(snapshot(volume), before);
     expect(volume.occupiedCount()).toBe(1);
   });
 
@@ -412,7 +412,7 @@ describe("VoxelVolume.setVoxels", () => {
         capability,
       ),
     ).toThrow(/extent/u);
-    expect(snapshot(volume)).toEqual(before);
+    expectSameVoxels(snapshot(volume), before);
   });
 
   it("preflights the chunk limit before any write", () => {
@@ -425,7 +425,7 @@ describe("VoxelVolume.setVoxels", () => {
         capability,
       ),
     ).toThrow(/chunk limit/u);
-    expect(snapshot(volume)).toEqual(before);
+    expectSameVoxels(snapshot(volume), before);
   });
 
   it("supports exact inversion through applyPatches without snapshots", () => {
@@ -456,7 +456,7 @@ describe("VoxelVolume.setVoxels", () => {
         capability,
       );
     }
-    expect(snapshot(volume)).toEqual(before);
+    expectSameVoxels(snapshot(volume), before);
   });
 });
 
@@ -571,7 +571,7 @@ describe("VoxelVolume fills", () => {
     expect(() =>
       volume.fillBox({ min: [0, 0, 0], max: [3, 3, 3] }, 1, capability),
     ).toThrow(/occupied-voxel limit/u);
-    expect(snapshot(volume)).toEqual(before);
+    expectSameVoxels(snapshot(volume), before);
   });
 
   it("rejects fills whose iteration domain is pathological", () => {
@@ -682,7 +682,7 @@ describe("VoxelVolume.replaceMaterial", () => {
       })),
       capability,
     );
-    expect(snapshot(volume)).toEqual(before);
+    expectSameVoxels(snapshot(volume), before);
   });
 });
 
@@ -738,7 +738,7 @@ describe("VoxelVolume batch property tests (fixed seed)", () => {
         })),
         capability,
       );
-      expect(snapshot(volume)).toEqual(before);
+      expectSameVoxels(snapshot(volume), before);
     }
   });
 
@@ -765,7 +765,7 @@ describe("VoxelVolume batch property tests (fixed seed)", () => {
         })),
         capability,
       );
-      expect(snapshot(volume)).toEqual(before);
+      expectSameVoxels(snapshot(volume), before);
     }
   });
 });
@@ -780,4 +780,23 @@ function snapshot(volume: VoxelVolume): Map<string, Uint16Array> {
     }
   }
   return result;
+}
+
+/**
+ * Byte-identical chunk comparison. Vitest's `toEqual` on Maps of typed
+ * arrays is pathologically slow (seconds per comparison) and times out on
+ * CI; joining each chunk to a canonical string is deterministic, linear in
+ * the occupied chunk bytes, and fast on every platform.
+ */
+function expectSameVoxels(
+  actual: Map<string, Uint16Array>,
+  expected: Map<string, Uint16Array>,
+): void {
+  expect(actual.size).toBe(expected.size);
+  for (const [key, values] of expected) {
+    const actualValues = actual.get(key);
+    expect(actualValues).toBeDefined();
+    if (actualValues === undefined) continue;
+    expect(actualValues.join(",")).toBe(values.join(","));
+  }
 }
