@@ -1,0 +1,80 @@
+# JavaScript / pnpm dependencies
+node_modules/
+.pnpm-store/
+
+# TypeScript, Vite, and workspace build output
+dist/
+dist-ssr/
+build/
+out/
+.turbo/
+.vite/
+.vitest/
+.cache/
+*.tsbuildinfo
+.eslintcache
+
+# Test and coverage output
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+playwright/.auth/
+junit.xml
+
+# Rust and Tauri build output
+target/
+**/src-tauri/gen/schemas/
+*.rs.bk
+*.dSYM/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+.direnv/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temporary and local agent files
+.scratch/
+.tmp/
+tmp/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Editor metadata
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Operating-system metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# Local application diagnostics
+crash-dumps/
+diagnostics/
