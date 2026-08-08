@@ -32,6 +32,10 @@ The hard-to-reverse contracts behind this document are recorded with their alter
 5. [Package dependency, threading, and adapter boundaries](./docs/adr/0005-package-dependency-threading-and-adapter-boundaries.md)
 6. [Generic articulation and animation runtime](./docs/adr/0006-generic-articulation-and-animation-runtime.md)
 7. [Bounded provider-neutral AI proposals](./docs/adr/0007-bounded-provider-neutral-ai-proposals.md)
+8. [Supported desktop and performance baseline](./docs/adr/0008-supported-desktop-and-performance-baseline.md)
+9. [Default resource limits and escalation policy](./docs/adr/0009-default-resource-limits-and-escalation-policy.md)
+10. [Cloud provider, consent, and privacy policy](./docs/adr/0010-cloud-provider-consent-and-privacy-policy.md)
+11. [Native locking and external-format compatibility](./docs/adr/0011-native-locking-and-external-format-compatibility.md)
 
 ## System shape
 
@@ -306,6 +310,52 @@ Every session enforces limits on rounds, tokens, tool calls, commands, output by
 Skills are removable versioned knowledge: instructions, allowed tools, constraints, deterministic generators, provenance, and evaluations. They produce generic command proposals. A saved document never requires the originating skill to open, edit, animate, or export.
 
 Visual refinement uses fixed standard-view evidence and an opt-in bounded correction loop. Images are evidence for proposed commands, never authoritative state.
+
+## Operational support, limits, and compatibility
+
+### Supported product
+
+The initial desktop release supports Windows 10 22H2 or Windows 11 on x86-64, macOS 12 or later on Apple silicon and x86-64, and Ubuntu 22.04-compatible glibc 2.35 Linux on x86-64. A supported renderer requires hardware WebGL 2. The minimum tier is a four-core 64-bit CPU, 8 GiB RAM, 2 GiB free storage, and a WebGL 2 GPU with at least 1 GiB graphics memory; ADR-0008 names the reference and low-tier benchmark machines and exact measurement protocol. Unsupported graphics fails before an editing session and may never cause a Document rewrite.
+
+Every manual workflow—create, open, edit, undo, rig, animate, save, recover, import, preview, and export—works without an account, provider credential, telemetry consent, or network. The UI meets the applicable WCAG 2.2 AA baseline, including keyboard workflows, visible focus, labelled controls, contrast, 200% scaling, announced status/errors, and reduced motion. Spatial screen-reader interpretation of viewport content, touch-only editing, and pressure-sensitive tools are not version 1 promises.
+
+Release performance gates are measured on fixed compact, sparse, and high-surface fixtures. On the ADR-0008 reference tier, 100k occupied voxels target 60 FPS and p95 input preview below 50 ms; a one-voxel commit is below 8 ms p95; localized worker remesh is below 30 ms p95; 500k sustains 30 FPS; and 1M opens within 10 seconds, remains navigable at 20 FPS, and uses under 2 GiB. The named low tier keeps 100k usable at 30 FPS, p95 input preview below 100 ms, open/save below 5 seconds, and memory below 1.5 GiB. A missed gate blocks release or requires an explicit support-policy change.
+
+### Default limit profile
+
+One immutable injected limit profile is shared across parsers, Commands, history, workers, formats, and agent sessions. Version 1 hard defaults include:
+
+| Resource | Hard maximum |
+|---|---:|
+| coordinate interval / extent per axis | `[-1,048,575, 1,048,575]` / 2,048 |
+| Nodes / Voxel Volumes / Materials | 10,000 / 1,024 / 4,096 |
+| non-empty Chunks / occupied or Transaction-touched voxels | 262,144 / 1,000,000 |
+| Commands / command payload / Transaction envelope | 1,024 / 1 MiB / 16 MiB |
+| history | 512 entries and 256 MiB inverses |
+| input file / archive expansion | 512 MiB / 2 GiB, 4,096 entries, 100:1 ratio |
+| metadata | depth 16, 10,000 members, 1 MiB canonical bytes |
+| Clips / Tracks / keyframes | 256 / 10,000 / 1,000,000 |
+| preview image | 2048×2048 and 16 MiB decoded RGBA |
+
+An AI session additionally permits at most 16 model rounds, 64 tool calls, 1,024 proposed Commands, 1M proposed voxel changes, 4 MiB tool-result bytes, 128k total tokens, 10 minutes, USD 5 estimated spend, three visual iterations, and 12 images. Known usage is reserved before a request. Unknown-cost usage requires an explicit provider-side cap.
+
+Hard-limit violations fail before allocation or mutation with a stable limit error and no forbidden side effects; a dialog cannot waive them. Raising a limit requires reviewed configuration plus benchmark or adversarial evidence. More than 100k affected voxels, 64 MiB new inverse history, file overwrite, lock stealing, source migration, or any image transmission requires explicit pre-execution confirmation even below hard limits. AI Apply always requires approval.
+
+### Cloud privacy
+
+Version 1's sole cloud adapter is the OpenAI API with a user-supplied key and an allowlisted tool-capable model. Cloud AI, image use, analytics, and crash uploads are independently off by default. Keys live only in the OS credential store. A run may send the user's current-run messages, fixed system/Skill/tool instructions, provider settings, bounded selection/Document summaries, explicit bounded inspection results, and staged summaries/errors. It never sends credentials, native files, journals, local paths, unrelated full voxel arrays, history payloads, clipboard data, logs, or diagnostics.
+
+Image transmission requires per-session confirmation of provider, model, views, count, resolution, budget, and cost. The application retains no transcript by default; optional local retention expires after a user-selected 1, 7, or 30 days and is unavailable when encrypted-at-rest storage cannot be provided. Provider-side retention is disclosed rather than represented as application-controlled. Any telemetry is separately opt-in, coarse, non-content-bearing, and contains no stable cross-install identifier. Diagnostics are locally previewable and redact secrets, paths, prompts, provider payloads, and project content. Offline/provider failure has no fallback provider and no effect on manual workflows.
+
+### Native and external formats
+
+The native reader supports current versions plus a complete migration chain for at least the two preceding released major versions of each semantic format. The writer emits current versions only. Unknown future or unrecognized claimed-supported content fails without overwrite. Journals require matching snapshot identity and a supported command migration chain.
+
+Writable open uses an adjacent exclusive nonce-bearing lock. Contention opens read-only by default; lock stealing requires confirmation plus same-machine dead-owner or 30-second stale-heartbeat evidence. Remote/unverifiable locks are never auto-stolen. Lock loss prevents overwrite but permits Save As. Version 1 has no merge or collaborative-editing semantics.
+
+MagicaVoxel interchange targets VOX version 150 `MAIN`, optional `PACK`, `SIZE`/`XYZI`, and optional `RGBA`. Axes map `(vox x, vox y, vox z)` to `(X, Y, Z) = (vox x, vox z, -vox y)`; palette zero is empty. Scene graph, transforms, layers, materials, cameras, and extension chunks are reported but not interpreted. Export requires identity-transformed Volumes within 256³ and at most 255 colors; unsigned-cube origin rebasing and any unsupported hierarchy, transform, rigging, animation, metadata, or material semantics must use an explicit supported bake/loss choice or block export with a loss report.
+
+glTF 2.0 and GLB are export-only. One voxel edge is one meter; the right-handed `+Y`-up basis and positive Z asset axis are retained. Node TRS and hierarchy map directly, pivots use deterministic helper Nodes, voxel surfaces become indexed material-grouped meshes, and PBR base color/opacity/roughness/metallic/emissive values map to core glTF material fields. Step/linear animation map directly; smoothstep is boundedly baked to linear samples; loop policy, constraints, joint annotations, unsupported metadata, history, Skills, and runtime state appear in the preflight loss report rather than disappearing silently.
 
 ## Interface and adapter design
 

@@ -328,8 +328,12 @@ Accepted core decision records:
 - [ADR-0005 — Package dependency, threading, and adapter boundaries](./docs/adr/0005-package-dependency-threading-and-adapter-boundaries.md)
 - [ADR-0006 — Generic articulation and animation runtime](./docs/adr/0006-generic-articulation-and-animation-runtime.md)
 - [ADR-0007 — Bounded provider-neutral AI proposals](./docs/adr/0007-bounded-provider-neutral-ai-proposals.md)
+- [ADR-0008 — Supported desktop and performance baseline](./docs/adr/0008-supported-desktop-and-performance-baseline.md)
+- [ADR-0009 — Default resource limits and escalation policy](./docs/adr/0009-default-resource-limits-and-escalation-policy.md)
+- [ADR-0010 — Cloud provider, consent, and privacy policy](./docs/adr/0010-cloud-provider-consent-and-privacy-policy.md)
+- [ADR-0011 — Native locking and external-format compatibility](./docs/adr/0011-native-locking-and-external-format-compatibility.md)
 
-ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18: picking ties, region-rotation anchoring and collision, loop endpoints, transparency, constraint order, and non-uniform scale. Product support and operational policies remain in #3.
+ADR-0001, ADR-0005, and ADR-0006 resolve the core-runtime portions of S0.18: picking ties, region-rotation anchoring and collision, loop endpoints, transparency, constraint order, and non-uniform scale. ADR-0008 through ADR-0011 resolve S0.11 and S0.14 through S0.17.
 
 | ID | Task | Depends on | Deliverable / acceptance |
 |---|---|---|---|
@@ -340,19 +344,19 @@ ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18
 | S0.5 | Write ADR-004 storage/container/versioning | S0.2 | Independent versions, `.vxl` layout, SHA-256/CRC roles, normalized ZIP, snapshot isolation and atomic save selected |
 | S0.6 | Write ADR-005 package graph/threading | S0.3 | `model` ownership, command registrars, copied worker buffers, preview/live namespaces and Tauri boundaries |
 | S0.7 | Write ADR-006 animation/pivot/constraint semantics | S0.2,S0.3 | Transform formula, interpolation, loop boundaries, constraint order approved |
-| S0.8 | Write ADR-007 AI trust boundary | S0.3 | Tool loop, transaction preview/direct-apply policy, budgets, provider abstraction approved |
+| S0.8 | Write ADR-007 AI trust boundary | S0.3 | Tool loop, isolated preview, mandatory approval, budgets, provider abstraction approved; no v1 auto-apply |
 | S0.9 | Define error taxonomy | S0.4 | Stable error families/codes for validation, conflict, limit, I/O, compatibility |
 | S0.10 | Produce primary UX wireflows | S0.1 | Create/edit/save/undo, rig/animate, AI apply/discard, conflict and recovery flows |
-| S0.11 | Establish performance benchmark matrix | S0.1 | Target devices/assets, frame and remesh metrics, memory budgets, measurement method |
+| S0.11 | Establish performance benchmark matrix | S0.1 | ADR-0008 names hardware tiers, fixtures, frame/remesh/input/save/load/memory targets, and measurement method |
 | S0.12 | Seed threat model | S0.5,S0.8 | Assets: files, keys, prompts; trust boundaries and abuse cases listed |
 | S0.13 | Convert this plan into tracked epics | S0.1 | Each task has owner, estimate, dependency, status, acceptance criteria |
-| S0.14 | Freeze platform/support matrix | S0.1 | Minimum OS/CPU/RAM/WebGL2/GPU, reference and low-tier machines, HiDPI/input, offline/accessibility support |
-| S0.15 | Freeze resource-limit defaults | S0.4,S0.11 | Coordinate/dimension/node/chunk/voxel/material/command/history/file/metadata/track/keyframe/AI step-token-time-cost limits and rejection/confirmation policy |
-| S0.16 | Approve cloud/provider/privacy policy | S0.8,S0.12 | Supported provider, user consent, transmitted fields/images, retention, telemetry, offline degradation and disclosure UI |
-| S0.17 | Freeze native/external format compatibility matrix | S0.5,S0.14 | Backward window, project locking, `.vox` axis/palette subset, glTF unit/pivot/material/animation rules |
+| S0.14 | Freeze platform/support matrix | S0.1 | ADR-0008 fixes OS/architecture/WebGL2 tiers, HiDPI/input, offline behavior, and WCAG 2.2 AA baseline |
+| S0.15 | Freeze resource-limit defaults | S0.4,S0.11 | ADR-0009 fixes numeric Document/Command/history/file/metadata/animation/AI ceilings and rejection/confirmation policy |
+| S0.16 | Approve cloud/provider/privacy policy | S0.8,S0.12 | ADR-0010 fixes the initial provider, consent, transmitted fields/images, credentials, retention, telemetry, redaction, and offline degradation |
+| S0.17 | Freeze native/external format compatibility matrix | S0.5,S0.14 | ADR-0011 fixes the backward window, project lock, VOX v150 subset and axis/palette rules, and glTF unit/pivot/material/animation mapping |
 | S0.18 | Freeze ambiguous editing/runtime semantics | S0.2,S0.7 | Picking tie-break, region rotation center/collision, loop endpoint, transparency, constraint order and non-uniform scale behavior |
 
-**Stage gate:** No core coding until ADRs 001–005 and the applicable blocking decisions S0.14–S0.18 are accepted. ADR 006 must land before rigging; ADR 007 before agent work.
+**Stage gate:** No allocating parser, Command, or core coding starts until ADRs 001–005, S0.11, and S0.14–S0.18 are accepted. ADR 006 must land before rigging; ADR 007 and the privacy policy must land before agent work.
 
 ---
 
@@ -576,7 +580,7 @@ ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18
 
 | ID | Task | Depends on | Deliverable / acceptance |
 |---|---|---|---|
-| S8.1 | Research/freeze supported `.vox` subset | S0.1 | Version/chunks, palette, transforms, scene graph, size and unsupported-feature policy |
+| S8.1 | Validate the frozen `.vox` subset | S0.17 | Turn ADR-0011's VOX v150 chunk, palette, axis, identity-transform, size, warning, and loss rules into fixtures and codecs without expanding scope |
 | S8.2 | Implement defensive `.vox` parser | S5.4,S8.1 | Length/depth/count limits and structured unsupported/corrupt errors |
 | S8.3 | Map `.vox` to generic document via import transaction | S4.11–S4.13,S8.2 | coordinate/material conversion explicit; no direct bypass of invariants |
 | S8.4 | Implement `.vox` exporter | S3.4,S8.1 | axis/palette/size limitations reported before write; deterministic fixtures |
@@ -690,7 +694,7 @@ ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18
 | S12.5 | Implement bounded agent loop | S11.9–S11.11,S12.2 | max rounds/tokens/tool calls/time, cancellation, repeated-error cutoff |
 | S12.6 | Implement context builder | S11.2,S7.2 | selection-first summary, revision, coordinate help, recent relevant actions; no full voxel dump |
 | S12.7 | Implement planning/minimal-diff policy prompt | S12.5,S12.6 | inspect existing state, preserve unrelated content, coarse semantic ops, no authoritative JSON state |
-| S12.8 | Implement direct vs preview policy | S11.15,S12.5,S12.15 | configurable risk threshold; large changes switch projection and require Apply/Discard; small changes still one undo |
+| S12.8 | Implement mandatory preview approval policy | S11.15,S12.5,S12.15 | every v1 proposal uses the isolated projection and requires Apply/Discard; there is no risk-based auto-apply |
 | S12.9 | Implement revision conflict flow | S4.6,S12.8 | never silent rebase; discard/reinspect/replan options and human message |
 | S12.10 | Build integrated AI panel | S7.10,S12.5,S12.8,S12.15 | prompt, progress/tool activity, cancel, errors, preview/diff, Apply/Discard, history label |
 | S12.11 | Implement safe transcript/diagnostics | S12.5 | opt-in retention, prompt/tool redaction/export; no secret/full hidden project leakage |
@@ -699,7 +703,7 @@ ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18
 | S12.14 | Add offline/no-key UX | S12.10 | editor remains fully usable; clear provider configuration and network state |
 | S12.15 | Implement preview renderer projection | S6.3,S6.6,S11.15 | Switch/secondary scene reads overlay events/queries, uses preview job namespace, disposes without live revision/history/autosave effects |
 
-**Commit semantics:** an AI run owns a working transaction with `baseRevision`. Tool successes mutate only the overlay. `Apply` atomically commits one labeled history entry; `Discard` drops it. Direct-apply mode uses the same mechanism but auto-approves after validation.
+**Commit semantics:** an AI run owns a working Transaction with `baseRevision`. Tool successes mutate only the overlay. `Apply` atomically commits one labeled history entry; `Discard` drops it. Version 1 never auto-approves persistent AI work.
 
 ---
 
@@ -781,7 +785,7 @@ ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18
 
 | ID | Task | Depends on | Deliverable / acceptance |
 |---|---|---|---|
-| S16.1 | Specify export coordinate/material policy | S0.2,S6.17 | axis/handedness/unit, pivots, node names, material approximation and loss report |
+| S16.1 | Validate the frozen glTF export policy | S0.17,S0.2,S6.17 | Turn ADR-0011's axis, meter unit, pivot helpers, names, PBR approximation, interpolation, and loss report into golden fixtures |
 | S16.2 | Build renderer-independent mesh export DTO | S6.5 | positions/normals/indices/material groups and node mapping; no `BufferGeometry` dependency required |
 | S16.3 | Implement static glTF/GLB exporter | S16.1,S16.2,S6.18 | hierarchy/meshes/materials, deterministic naming, valid buffers and scoped atomic write |
 | S16.4 | Implement animated glTF export | S10.1,S16.3 | nodes and TRS tracks, quaternion rotations, loop metadata limitation documented |
@@ -806,7 +810,7 @@ ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18
 | S17.4 | Stress test large projects | S6.16,S17.3 | 100k interactive, 500k usable, 1M viewable; no catastrophic freeze/crash |
 | S17.5 | Run import/file fuzzing | S5.12,S8.6,S16.8 | parsers survive corpus without panic/OOM/path escape |
 | S17.6 | Complete threat model/security review | S0.12,S12.11,S17.5 | CSP/IPC/key storage/model data/file parser/update checks and mitigations signed off |
-| S17.7 | Complete accessibility/UX review | S7.17,M4 | keyboard, focus, screen-reader labels where practical, contrast, error/recovery usability |
+| S17.7 | Complete accessibility/UX review | S7.17,M4 | ADR-0008 WCAG 2.2 AA baseline: keyboard, focus, programmatic labels, contrast, 200% scaling, reduced motion, and error/recovery usability |
 | S17.8 | Complete cross-platform matrix | S6.1,S16.7 | open/edit/save/render/export/AI configuration on supported Windows/macOS/Linux |
 | S17.9 | Add crash reporting policy | S12.11 | opt-in, redacted, no project/prompt/secret by default; local diagnostics export |
 | S17.10 | Configure signed packaging/updater | S17.6,S17.8 | code signing/notarization, secure update manifests, rollback instructions |
@@ -913,20 +917,18 @@ Do not use one global percentage as a substitute for correctness. Require 100% r
 
 ### 10.4 Budgets selected in Stage 0 and validated at stage gates
 
-Initial budgets, measured on named reference hardware:
+ADR-0008 fixes the release-build protocol: 1920×1080 at DPR 1, fixed camera and compact/sparse/high-surface fixtures, a 10-second warm-up, at least 30 seconds or 100 latency samples for p95, and five cold process runs for save/load. On its named Apple M1/16 GiB reference tier:
 
-- normal viewport target: 60 FPS at 100k occupied voxels;
-- interaction input-to-preview: p95 under 50 ms;
-- one-voxel edit command commit: p95 under 8 ms excluding async mesh completion;
-- main-thread frame long tasks: no repeated tasks over 50 ms during editing;
-- localized chunk face-cull mesh: p95 under 30 ms in worker; greedy target set after baseline;
-- 500k asset: usable editing, target >=30 FPS in reference view;
-- 1M asset: loads and remains navigable without OOM or multi-second main-thread stalls;
-- save/load and memory targets recorded after representative compression benchmark;
-- animation evaluation cost scales with active tracks/nodes and stays inside frame budget;
-- agent has explicit maximum rounds, commands, voxel modifications, output bytes, time, and estimated cost.
+- the 100k occupied-voxel fixture sustains at least 60 FPS and p95 input-to-preview under 50 ms;
+- one-voxel Transaction commit is p95 under 8 ms excluding asynchronous mesh completion;
+- main-thread editing has no repeated tasks over 50 ms;
+- localized chunk face-cull mesh is p95 under 30 ms in a worker;
+- the 500k fixture sustains at least 30 FPS;
+- the 1M fixture opens within 10 seconds, stays navigable at 20 FPS, and keeps process memory below 2 GiB;
+- canonical 100k open/save each complete within 2 seconds and canonical 1M open/save within 10 seconds;
+- 10,000 active Tracks evaluate within the 16.7 ms p95 frame budget.
 
-Failures must degrade gracefully: show progress, permit cancellation where safe, retain the last good rendered revision, and never corrupt state.
+On the named i5-8250U/UHD 620/8 GiB low tier, 100k sustains at least 30 FPS, p95 input-to-preview is under 100 ms, open/save are each under 5 seconds, and process memory is below 1.5 GiB. ADR-0009 fixes agent and allocation budgets. Failures show progress, permit cancellation where safe, retain the last good rendered Revision, and never corrupt state. A missed gate blocks release or requires an explicit support-policy change.
 
 ---
 
@@ -934,7 +936,7 @@ Failures must degrade gracefully: show progress, permit cancellation where safe,
 
 ### 11.1 Threat boundaries
 
-Untrusted inputs include LLM text/tool arguments, `.vxl/.vox/.gltf` files, metadata, filenames, journal files, preview images, clipboard content, and network/provider responses. Trusted code is still constrained by package capabilities.
+Untrusted inputs include LLM text/tool arguments, `.vxl/.vox` files, generated glTF bytes and validator responses, metadata, filenames, journal files, preview images, clipboard content, and network/provider responses. Trusted code is still constrained by package capabilities.
 
 ### 11.2 Required controls
 
