@@ -14,6 +14,10 @@ import {
 } from "@voxel-maker/commands";
 import { createSceneAdapter, type SceneAdapter } from "@voxel-maker/renderer";
 import { createFileService, type FileService } from "./file-service.js";
+import {
+  createViewportController,
+  type ViewportController,
+} from "./viewport/controller.js";
 
 /**
  * Desktop application composition root (plan S6.2, ticket #15): the single
@@ -43,6 +47,8 @@ export interface DesktopComposition {
   readonly session: DocumentSession;
   readonly editor: EditorStore;
   readonly renderer: RendererService;
+  /** Camera, picking, and overlay controller for the viewport (ticket #16). */
+  readonly viewport: ViewportController;
   readonly fileService: FileService;
   dispose(): void;
 }
@@ -67,6 +73,7 @@ export function createDesktopComposition(
     ],
   });
   const editor = createEditorStore();
+  const viewport = createViewportController({ session, editor, scene });
   const fileService = createFileService({
     session,
     storage: options.storage,
@@ -97,8 +104,10 @@ export function createDesktopComposition(
     session,
     editor,
     renderer: { scene, adapter },
+    viewport,
     fileService,
     dispose() {
+      viewport.dispose();
       adapter.dispose();
       session.dispose();
     },
