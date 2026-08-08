@@ -6,6 +6,7 @@ import {
   type AtomicWriteFaultPlan,
   type AtomicWritePhase,
   type ProjectStoragePort,
+  type RecoveryJournalPort,
 } from "./port.js";
 
 /**
@@ -24,7 +25,7 @@ export interface PortConformanceCase {
  * (for example the temporary directory of the Node adapter).
  */
 export interface StoragePortHarness {
-  readonly port: ProjectStoragePort;
+  readonly port: ProjectStoragePort & RecoveryJournalPort;
   /** Destination path used by the cases (adapter-specific). */
   readonly projectPath: string;
   readonly tempPaths: () => Promise<readonly string[]>;
@@ -73,6 +74,98 @@ async function expectIoCode(
   assert(error.family === "io", `${code} must be an io-family error`);
   assert(error.code === code, `Expected ${code}, got ${error.code}`);
   return error;
+}
+
+/**
+ * Shared recovery-journal port conformance matrix (ticket #14 acceptance:
+ * ordered append, atomic replacement, removal, and missing-read behavior
+ * are identical in the memory and Node adapters).
+ */
+export function recoveryJournalPortConformanceCases(
+  factory: StoragePortFactory,
+): readonly PortConformanceCase[] {
+  const cases: PortConformanceCase[] = [];
+
+  cases.push({
+    name: "journal appends are ordered, flushed, and readable",
+    run: async () => {
+      const harness = await factory();
+      const { port, projectPath } = harness;
+      try {
+        assert(
+          (await port.readJournal(projectPath)) === undefined,
+          "no journal before the first append",
+        );
+        await port.appendJournal(projectPath, V0);
+        await port.appendJournal(projectPath, V1);
+        const bytes = await port.readJournal(projectPath);
+        if (bytes === undefined)
+          throw new Error("journal exists after appends");
+        assert(bytes.byteLength === V0.byteLength + V1.byteLength, "length");
+        assertBytesEqual(
+          bytes.subarray(0, V0.byteLength),
+          V0,
+          "first append first",
+        );
+        assertBytesEqual(
+          bytes.subarray(V0.byteLength),
+          V1,
+          "second append second",
+        );
+      } finally {
+        await harness.cleanup?.();
+      }
+    },
+  });
+
+  cases.push({
+    name: "replaceJournal atomically replaces the whole journal",
+    run: async () => {
+      const harness = await factory();
+      const { port, projectPath } = harness;
+      try {
+        await port.appendJournal(projectPath, V0);
+        await port.appendJournal(projectPath, V0);
+        await port.replaceJournal(projectPath, V1);
+        const bytes = await port.readJournal(projectPath);
+        if (bytes === undefined)
+          throw new Error("journal exists after replace");
+        assertBytesEqual(bytes, V1, "replaced bytes");
+        assert(
+          (await harness.tempPaths()).length === 0,
+          "no temporary files remain",
+        );
+      } finally {
+        await harness.cleanup?.();
+      }
+    },
+  });
+
+  cases.push({
+    name: "removeJournal is idempotent and appends resume after replace",
+    run: async () => {
+      const harness = await factory();
+      const { port, projectPath } = harness;
+      try {
+        await port.appendJournal(projectPath, V0);
+        await port.removeJournal(projectPath);
+        assert(
+          (await port.readJournal(projectPath)) === undefined,
+          "journal removed",
+        );
+        await port.removeJournal(projectPath);
+        await port.replaceJournal(projectPath, V1);
+        await port.appendJournal(projectPath, V0);
+        const bytes = await port.readJournal(projectPath);
+        if (bytes === undefined) throw new Error("journal exists");
+        assert(bytes.byteLength === V1.byteLength + V0.byteLength, "length");
+      } finally {
+        await harness.cleanup?.();
+      }
+    },
+  });
+
+  return cases;
 }
 
 /**

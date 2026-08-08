@@ -198,6 +198,51 @@ export function backupPathFor(path: string): string {
 }
 
 /**
+ * Recovery journal surface of a storage port (plan S5.6 `RecoveryStoragePort`
+ * / file service, S5.9/S5.10, ticket #14). The journal is an ordered,
+ * append-only file of length-prefixed checksummed frames living beside the
+ * project file (`<path>.journal`, the same adjacent-sibling convention as
+ * the backup and lock files); recovery data is never inside the ZIP
+ * container. The port owns external
+ * effects only: it never parses or validates frame bytes.
+ *
+ * Append/flush policy: `appendJournal` writes the bytes and flushes them
+ * (fsync where supported) before resolving, so a resolved append is durable.
+ * A failed append may leave a partial frame at the tail of the file; the
+ * journal coordinator repairs that tail before retrying, and recovery never
+ * guesses past an incomplete frame.
+ */
+export interface RecoveryJournalPort {
+  /**
+   * Reads the complete journal file for the project at `path` (the adjacent
+   * `<path>.journal`); resolves `undefined` when absent.
+   */
+  readJournal(path: string): Promise<Uint8Array | undefined>;
+  /**
+   * Appends bytes to the journal file, creating it when absent. Appends are
+   * ordered and flushed before the promise resolves.
+   */
+  appendJournal(path: string, bytes: Uint8Array): Promise<void>;
+  /**
+   * Atomically replaces the journal file with `bytes` (same-directory
+   * temporary write, flush, rename). Used by compaction: the replacement
+   * journal is durable before any old journal data is removed.
+   */
+  replaceJournal(path: string, bytes: Uint8Array): Promise<void>;
+  /** Removes the journal file; a missing file is not an error. */
+  removeJournal(path: string): Promise<void>;
+}
+
+/**
+ * Adjacent recovery journal path for a project file (ADR-0011 naming
+ * convention). The journal is a sibling, never an entry inside the `.vxl`
+ * container, so recovery data can be appended without rewriting the ZIP.
+ */
+export function journalPathFor(projectPath: string): string {
+  return `${projectPath}.journal`;
+}
+
+/**
  * Same-directory temporary path for an atomic write: a hidden dotfile next
  * to the destination so a rename never crosses a filesystem boundary. The
  * nonce is adapter-supplied (random hex for the Node adapter, a counter for

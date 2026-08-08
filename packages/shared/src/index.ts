@@ -20,6 +20,7 @@ export type ComponentId = OpaqueId<"ComponentId">;
 export type DocumentId = OpaqueId<"DocumentId">;
 export type KeyframeId = OpaqueId<"KeyframeId">;
 export type NodeId = OpaqueId<"NodeId">;
+export type RecoverySessionId = OpaqueId<"RecoverySessionId">;
 export type TrackId = OpaqueId<"TrackId">;
 export type TransactionId = OpaqueId<"TransactionId">;
 export type VolumeId = OpaqueId<"VolumeId">;
@@ -133,6 +134,8 @@ export const documentId = (value: string): DocumentId =>
 export const keyframeId = (value: string): KeyframeId =>
   opaqueId(value, "KeyframeId");
 export const nodeId = (value: string): NodeId => opaqueId(value, "NodeId");
+export const recoverySessionId = (value: string): RecoverySessionId =>
+  opaqueId(value, "RecoverySessionId");
 export const trackId = (value: string): TrackId => opaqueId(value, "TrackId");
 export const transactionId = (value: string): TransactionId =>
   opaqueId(value, "TransactionId");

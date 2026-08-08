@@ -14,7 +14,7 @@
     "check:boundaries": "node scripts/check-boundaries.mjs && depcruise --validate .dependency-cruiser.cjs apps packages",
     "check:entrypoints": "node scripts/check-entrypoints.mjs",
     "clean": "turbo run clean && node scripts/clean.mjs .turbo",
-    "demo:headless": "node apps/headless/dist/cli.js && node apps/headless/dist/persistence-cli.js",
+    "demo:headless": "node apps/headless/dist/cli.js && node apps/headless/dist/persistence-cli.js && node apps/headless/dist/recovery-cli.js",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "lint": "eslint eslint.config.mjs .dependency-cruiser.cjs scripts && turbo run lint",

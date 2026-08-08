@@ -10,6 +10,7 @@ import {
   materialId,
   nodeId,
   ok,
+  recoverySessionId,
   trackId,
 } from "./index.js";
 
@@ -32,6 +33,10 @@ describe("shared contracts", () => {
     );
     expect(keyframeId("keyframe:fixture:0001")).toBe("keyframe:fixture:0001");
     expect(trackId("track:fixture:0001")).toBe("track:fixture:0001");
+    expect(recoverySessionId("session:fixture:0001")).toBe(
+      "session:fixture:0001",
+    );
+    expect(() => recoverySessionId("")).toThrow(/Invalid/u);
     expect(materialId(65_535)).toBe(65_535);
     expect(() => materialId(0)).toThrow(/1 through 65535/u);
     expect(() => materialId(1.5)).toThrow(/1 through 65535/u);

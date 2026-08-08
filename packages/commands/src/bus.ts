@@ -34,6 +34,7 @@ import {
   type TransactionResult,
   type TransactionSuccess,
 } from "./types.js";
+import type { CommittedTransactionRecord } from "./codec.js";
 import type {
   CommandExecutionContext,
   CommandExecution,
@@ -76,6 +77,17 @@ interface IdempotencyRecord {
   readonly result: TransactionSuccess;
 }
 
+/**
+ * Optional post-commit hooks (plan S5.9). `onCommitted` fires exactly once
+ * per committed transaction, after history bookkeeping, with the exact
+ * commands that ran and the transaction metadata the recovery journal needs.
+ * Hook exceptions are isolated: a throwing journal wiring can never break a
+ * commit that already succeeded.
+ */
+export interface CommandBusHooks {
+  readonly onCommitted?: (record: CommittedTransactionRecord) => void;
+}
+
 type RunMode =
   | { readonly kind: "commit" }
   | { readonly kind: "undo"; readonly entry: HistoryEntry }
@@ -112,16 +124,20 @@ export class CommandBus {
   #inverseBytes = 0;
   readonly #idempotency = new Map<TransactionId, IdempotencyRecord>();
 
+  readonly #hooks: CommandBusHooks;
+
   constructor(
     store: DocumentStore,
     registry: CommandRegistry,
     writeCapability: VoxelWriteCapability,
     limits: CommandLimits = DEFAULT_COMMAND_LIMITS,
+    hooks: CommandBusHooks = {},
   ) {
     this.#store = store;
     this.#registry = registry;
     this.#writeCapability = writeCapability;
     this.#limits = limits;
+    this.#hooks = hooks;
   }
 
   /** Executes one command as a single transaction. */
@@ -388,6 +404,27 @@ export class CommandBus {
       replayed: false,
     };
     this.#idempotency.set(options.transactionId, { bytes, result });
+    // Plan S5.9: semantic commit precedes durable recovery I/O. The hook
+    // fires after the commit and history bookkeeping are fully done; the
+    // journal writer appends asynchronously and its failures never roll
+    // back or dirty the in-memory edit.
+    try {
+      this.#hooks.onCommitted?.({
+        transactionId: options.transactionId,
+        expectedRevision: options.expectedRevision,
+        source: options.source,
+        ...(options.correlationId === undefined
+          ? {}
+          : { correlationId: options.correlationId }),
+        ...(options.label === undefined ? {} : { label: options.label }),
+        revisionBefore,
+        revisionAfter,
+        commands,
+      });
+    } catch {
+      // The commit succeeded; a journal hook failure is isolated and
+      // reported through the journal's own degraded-durability events.
+    }
     return ok(result);
   }
 

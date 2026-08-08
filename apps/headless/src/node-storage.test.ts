@@ -6,6 +6,8 @@ import {
   createSaveCoordinator,
   createVxlProjectEncoder,
   IO_ERROR_CODES,
+  journalPathFor,
+  recoveryJournalPortConformanceCases,
   storagePortConformanceCases,
   type AtomicWriteFaultPlan,
   type AtomicWriteOptions,
@@ -50,6 +52,77 @@ describe("NodeProjectStorage conformance", () => {
       await testCase.run();
     });
   }
+});
+
+describe("NodeProjectStorage recovery journal conformance", () => {
+  for (const testCase of recoveryJournalPortConformanceCases(
+    async (options) => {
+      const dir = await makeDirectory();
+      const port = new NodeProjectStorage({
+        ...(options?.faults === undefined ? {} : { faults: options.faults }),
+        nonce: () => "nonce",
+      });
+      return {
+        port,
+        projectPath: join(dir, "project.vxl"),
+        tempPaths: async () =>
+          (await readdir(dir)).filter((name) => name.endsWith(".tmp")),
+        cleanup: async () => {
+          await rm(dir, { recursive: true, force: true });
+        },
+      };
+    },
+  )) {
+    it(testCase.name, async () => {
+      await testCase.run();
+    });
+  }
+});
+
+describe("NodeProjectStorage real journal behavior", () => {
+  it("appends, replaces, reads, and removes a journal beside the project", async () => {
+    const dir = await makeDirectory();
+    try {
+      const path = join(dir, "demo.vxl");
+      const port = new NodeProjectStorage();
+      expect(await port.readJournal(path)).toBeUndefined();
+
+      await port.appendJournal(path, new TextEncoder().encode("frame-a"));
+      await port.appendJournal(path, new TextEncoder().encode("frame-b"));
+      const journalPath = journalPathFor(path);
+      const bytes = await readFile(journalPath);
+      expect(new TextDecoder().decode(bytes)).toBe("frame-aframe-b");
+      expect((await readdir(dir)).includes("demo.vxl.journal")).toBe(true);
+
+      await port.replaceJournal(path, new TextEncoder().encode("compact"));
+      expect(new TextDecoder().decode(await readFile(journalPath))).toBe(
+        "compact",
+      );
+
+      await port.removeJournal(path);
+      expect(await port.readJournal(path)).toBeUndefined();
+      expect((await readdir(dir)).includes("demo.vxl.journal")).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves no temporary files after an atomic journal replacement", async () => {
+    const dir = await makeDirectory();
+    try {
+      const path = join(dir, "demo.vxl");
+      const port = new NodeProjectStorage();
+      await port.appendJournal(path, new TextEncoder().encode("v1"));
+      await port.replaceJournal(path, new TextEncoder().encode("v2"));
+      const entries = await readdir(dir);
+      expect(entries.filter((name) => name.endsWith(".tmp"))).toEqual([]);
+      expect(
+        new TextDecoder().decode(await readFile(journalPathFor(path))),
+      ).toBe("v2");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("NodeProjectStorage real filesystem behavior", () => {

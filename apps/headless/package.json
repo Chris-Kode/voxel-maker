@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "voxel-maker-headless": "./dist/cli.js",
-    "voxel-maker-persistence": "./dist/persistence-cli.js"
+    "voxel-maker-persistence": "./dist/persistence-cli.js",
+    "voxel-maker-recovery": "./dist/recovery-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

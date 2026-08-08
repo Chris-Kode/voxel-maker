@@ -1,8 +1,17 @@
 export {
   CommandBus,
+  type CommandBusHooks,
   type HistoryEntryInfo,
   type HistorySnapshot,
 } from "./bus.js";
+export {
+  JOURNAL_COMMAND_ENVELOPE_VERSION,
+  journalTransactionToJson,
+  parseJournalTransaction,
+  type CommittedTransactionRecord,
+  type JournalTransactionLimits,
+  type JournalTransactionRecord,
+} from "./codec.js";
 export {
   CommandRegistry,
   type CommandExecution,

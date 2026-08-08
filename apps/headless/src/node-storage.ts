@@ -14,6 +14,7 @@ import {
   backupPathFor,
   IO_ERROR_CODES,
   IO_ERROR_MESSAGES,
+  journalPathFor,
   storageIoError,
   tempPathFor,
   throwIfAborted,
@@ -22,6 +23,7 @@ import {
   type AtomicWriteOptions,
   type AtomicWriteResult,
   type ProjectStoragePort,
+  type RecoveryJournalPort,
 } from "@voxel-maker/storage";
 
 /**
@@ -34,7 +36,9 @@ import {
  * the M1 test adapter; the desktop app later supplies a Tauri adapter at the
  * same seam (plan S6.18).
  */
-export class NodeProjectStorage implements ProjectStoragePort {
+export class NodeProjectStorage
+  implements ProjectStoragePort, RecoveryJournalPort
+{
   readonly #faults: AtomicWriteFaultPlan;
   readonly #nonce: () => string;
   readonly #writeChunkBytes: number;
@@ -81,6 +85,67 @@ export class NodeProjectStorage implements ProjectStoragePort {
       if (isNotFound(cause)) return undefined;
       throw mapFsError(cause, path);
     }
+  }
+
+  async readJournal(path: string): Promise<Uint8Array | undefined> {
+    const journalPath = journalPathFor(path);
+    try {
+      return await readFile(journalPath);
+    } catch (cause) {
+      if (isNotFound(cause)) return undefined;
+      throw mapFsError(cause, journalPath);
+    }
+  }
+
+  async appendJournal(path: string, bytes: Uint8Array): Promise<void> {
+    const journalPath = journalPathFor(path);
+    let handle: FileHandle | undefined;
+    try {
+      handle = await open(journalPath, "a");
+      await writeChunked(
+        handle,
+        bytes,
+        this.#writeChunkBytes,
+        undefined,
+        journalPath,
+      );
+      // Flush policy: the append resolves only after the bytes are flushed
+      // to the device, so a confirmed append is durable (plan S5.9).
+      await handle.sync();
+    } catch (cause) {
+      throw mapFsError(cause, journalPath, undefined, true);
+    } finally {
+      await handle?.close().catch(() => {});
+    }
+  }
+
+  async replaceJournal(path: string, bytes: Uint8Array): Promise<void> {
+    const journalPath = journalPathFor(path);
+    const tempPath = tempPathFor(journalPath, this.#nonce());
+    let handle: FileHandle | undefined;
+    try {
+      handle = await open(tempPath, "wx");
+      await writeChunked(
+        handle,
+        bytes,
+        this.#writeChunkBytes,
+        undefined,
+        journalPath,
+      );
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      await rename(tempPath, journalPath);
+    } catch (cause) {
+      if (handle !== undefined) await handle.close().catch(() => {});
+      await rm(tempPath, { force: true }).catch(() => {});
+      if (cause instanceof WorkspaceError) throw cause;
+      throw mapFsError(cause, journalPath, tempPath, true);
+    }
+  }
+
+  async removeJournal(path: string): Promise<void> {
+    await rm(journalPathFor(path), { force: true });
   }
 
   async writeProjectAtomic(

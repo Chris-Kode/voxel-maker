@@ -8,7 +8,11 @@ import {
   tempPathFor,
 } from "./port.js";
 import { MemoryProjectStorage } from "./memory-storage.js";
-import { storagePortConformanceCases } from "./conformance.js";
+import { journalPathFor } from "./port.js";
+import {
+  recoveryJournalPortConformanceCases,
+  storagePortConformanceCases,
+} from "./conformance.js";
 
 describe("storage port helpers", () => {
   it("derives adjacent backup and same-directory temporary paths", () => {
@@ -54,6 +58,30 @@ describe("MemoryProjectStorage conformance", () => {
       await testCase.run();
     });
   }
+});
+
+describe("MemoryProjectStorage recovery journal conformance", () => {
+  for (const testCase of recoveryJournalPortConformanceCases((options) => {
+    const storage = new MemoryProjectStorage(options?.faults);
+    return {
+      port: storage,
+      projectPath: "project.vxl",
+      tempPaths: () => Promise.resolve(storage.temporaryPaths()),
+    };
+  })) {
+    it(testCase.name, async () => {
+      await testCase.run();
+    });
+  }
+});
+
+describe("MemoryProjectStorage journal specifics", () => {
+  it("stores the journal beside the project path", async () => {
+    const storage = new MemoryProjectStorage();
+    await storage.appendJournal("dir/project.vxl", new Uint8Array([1, 2]));
+    const bytes = storage.files().get(journalPathFor("dir/project.vxl"));
+    expect(bytes).toEqual(new Uint8Array([1, 2]));
+  });
 });
 
 describe("MemoryProjectStorage specifics", () => {

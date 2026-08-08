@@ -253,9 +253,9 @@ Asset identity is SHA-256 over the ADR-0004 `canonicalSemanticBytes` (`canonical
 
 A save captures immutable snapshot `(revision R, semantic hash H_R)`, writes a same-directory temporary file, flushes where supported, atomically replaces the destination, and retains a last-known-good backup. Completion records `R` as the durable snapshot and marks the project clean only if the live semantic hash equals captured `H_R`; it never compares a hash with a Revision. `@voxel-maker/storage` owns the port contract and the memory adapter; the Node test adapter lives in the headless app and a Tauri adapter later replaces it at the same seam (plan S5.6/S5.7, `docs/storage/atomic-save-v1.md`).
 
-Semantic commit precedes durable recovery I/O. An ordered recovery writer appends checksummed frames and tracks `lastJournaledRevision`. Failure leaves the edit valid and dirty, reports degraded crash recovery, and schedules retry; it never claims unconfirmed durability.
+Semantic commit precedes durable recovery I/O. An ordered recovery writer appends checksummed frames and tracks `lastJournaledRevision`. Failure leaves the edit valid and dirty, reports degraded crash recovery, and schedules retry; it never claims unconfirmed durability (plan S5.9, `docs/storage/recovery-journal-v1.md`).
 
-Recovery loads a durable snapshot, scans to the last complete valid frame, and replays through normal command decoding, migrations, limits, and invariants. It reports a corrupt tail and never guesses past it. Recovery restores the asset, then starts a fresh bounded user history.
+Recovery loads a durable snapshot, scans to the last complete valid frame, and replays through normal command decoding, migrations, limits, and invariants. It reports a corrupt tail and never guesses past it. Recovery restores the asset, then starts a fresh bounded user history (plan S5.10, `docs/storage/recovery-journal-v1.md`).
 
 ## Renderer and workers
 

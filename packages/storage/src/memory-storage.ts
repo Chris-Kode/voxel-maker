@@ -1,6 +1,7 @@
 import {
   backupPathFor,
   IO_ERROR_CODES,
+  journalPathFor,
   storageIoError,
   tempPathFor,
   throwIfAborted,
@@ -9,6 +10,7 @@ import {
   type AtomicWriteOptions,
   type AtomicWriteResult,
   type ProjectStoragePort,
+  type RecoveryJournalPort,
 } from "./port.js";
 
 /**
@@ -18,7 +20,9 @@ import {
  * matrix runs against both. Files and backups are immutable byte copies;
  * temporary paths are tracked and removed on every failure path.
  */
-export class MemoryProjectStorage implements ProjectStoragePort {
+export class MemoryProjectStorage
+  implements ProjectStoragePort, RecoveryJournalPort
+{
   readonly #files = new Map<string, Uint8Array>();
   readonly #temporary = new Set<string>();
   readonly #faults: AtomicWriteFaultPlan;
@@ -71,6 +75,33 @@ export class MemoryProjectStorage implements ProjectStoragePort {
     return Promise.resolve(
       bytes === undefined ? undefined : Uint8Array.from(bytes),
     );
+  }
+
+  readJournal(path: string): Promise<Uint8Array | undefined> {
+    const bytes = this.#files.get(journalPathFor(path));
+    return Promise.resolve(
+      bytes === undefined ? undefined : Uint8Array.from(bytes),
+    );
+  }
+
+  appendJournal(path: string, bytes: Uint8Array): Promise<void> {
+    const journalPath = journalPathFor(path);
+    const previous = this.#files.get(journalPath);
+    const next = new Uint8Array((previous?.byteLength ?? 0) + bytes.byteLength);
+    if (previous !== undefined) next.set(previous, 0);
+    next.set(bytes, previous?.byteLength ?? 0);
+    this.#files.set(journalPath, next);
+    return Promise.resolve();
+  }
+
+  replaceJournal(path: string, bytes: Uint8Array): Promise<void> {
+    this.#files.set(journalPathFor(path), Uint8Array.from(bytes));
+    return Promise.resolve();
+  }
+
+  removeJournal(path: string): Promise<void> {
+    this.#files.delete(journalPathFor(path));
+    return Promise.resolve();
   }
 
   writeProjectAtomic(

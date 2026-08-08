@@ -11,6 +11,7 @@ export {
   defaultPhaseError,
   IO_ERROR_CODES,
   IO_ERROR_MESSAGES,
+  journalPathFor,
   PHASE_ERROR_CODES,
   storageIoError,
   tempPathFor,
@@ -21,7 +22,26 @@ export {
   type AtomicWritePhase,
   type AtomicWriteResult,
   type ProjectStoragePort,
+  type RecoveryJournalPort,
 } from "./port.js";
+export {
+  createRecoveryJournal,
+  decodeJournalFrames,
+  DEFAULT_JOURNAL_LIMITS,
+  encodeJournalFrame,
+  encodeJournalHeader,
+  JOURNAL_FORMAT_VERSION,
+  type DecodedJournal,
+  type DecodedJournalFrame,
+  type JournalAppendInput,
+  type JournalBase,
+  type JournalFrame,
+  type JournalHeader,
+  type JournalLimits,
+  type RecoveryJournal,
+  type RecoveryJournalEvent,
+  type RecoveryJournalOptions,
+} from "./journal.js";
 export { captureRevisionSnapshot, type RevisionSnapshot } from "./snapshot.js";
 export { createVxlProjectEncoder, type ProjectEncoder } from "./encoder.js";
 export {
@@ -33,6 +53,7 @@ export {
 } from "./coordinator.js";
 export { MemoryProjectStorage } from "./memory-storage.js";
 export {
+  recoveryJournalPortConformanceCases,
   storagePortConformanceCases,
   type PortConformanceCase,
   type StoragePortFactory,
