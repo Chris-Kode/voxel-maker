@@ -2,6 +2,7 @@ export {
   CHUNK_EDGE,
   CHUNK_VOXEL_COUNT,
   DEFAULT_VOXEL_VOLUME_LIMITS,
+  MAX_VOXELS_PER_OPERATION,
   VoxelVolume,
   chunkBounds,
   chunkCoordinate,
@@ -10,8 +11,18 @@ export {
   localCoordinate,
   type ChunkChange,
   type VoxelChangeSet,
+  type VoxelEntry,
   type VoxelPatch,
+  type VoxelPatchChunk,
+  type VoxelPatchTarget,
   type VoxelVolumeLimits,
   type VoxelVolumeReadView,
   type VoxelWriteCapability,
 } from "./volume.js";
+export {
+  boxCoordinates,
+  cylinderCoordinates,
+  sphereCoordinates,
+  type ShapeAxis,
+  type ShapeIterationOptions,
+} from "./shapes.js";

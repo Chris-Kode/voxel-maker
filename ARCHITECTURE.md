@@ -230,6 +230,8 @@ Transaction execution follows this order:
 
 Every version 1 persistent edit command is undoable. Undo executes stored inverses in reverse command order as one special transaction. Redo replays original commands. A new normal commit clears redo. Lifecycle replacement resets history. Coalescing requires an explicit deterministic key and compatible affected resources on the latest unsealed entry; it combines history presentation, never semantic commits or revisions, and seals on gesture end, incompatible or intervening commit, undo/redo, lifecycle replacement, or failure. Idempotency records remain available for the open session and retained recovery horizon.
 
+Input budgets (command count, payload bytes, envelope bytes) protect against untrusted callers, so they are enforced for new commits only. Undo and redo replay stored inverses that were already bounded at commit time (the forward payload budget and the history inverse-bytes budget); re-checking them would make large batch and fill commands un-undoable even though every v1 edit command is undoable and ADR-0009 allows 1,000,000 voxels per transaction. Revision verification and idempotency replay still run for undo and redo.
+
 Post-commit consumers re-read a revisioned immutable snapshot. Events carry granular changed IDs and chunk coordinates but are not writable payloads. Asynchronous consumers process revisions in order.
 
 ## Persistence and recovery

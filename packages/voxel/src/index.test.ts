@@ -14,6 +14,7 @@ describe("voxel package public surface", () => {
       maxExtent: 2_048,
       maxChunks: 262_144,
       maxOccupiedVoxels: 1_000_000,
+      maxCoordinatesPerOperation: 1_000_000,
     });
   });
 

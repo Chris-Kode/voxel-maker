@@ -198,8 +198,17 @@ export class CommandBus {
     mode: RunMode,
   ): TransactionResult {
     // Plan 5.4: budgets, then revision, then frozen idempotency replay.
-    const budgetError = this.#checkBudgets(commands);
-    if (budgetError !== undefined) return err(budgetError);
+    // Input budgets (payload/envelope bytes, command count) protect against
+    // untrusted callers, so they apply to new commits only. Undo and redo
+    // replay stored inverses that were already bounded at commit time (the
+    // forward payload budget and the history inverse-bytes budget); re-checking
+    // them would make large batch/fill commands un-undoable even though
+    // ADR-0003 requires every v1 edit command to be undoable and ADR-0009
+    // allows 1,000,000 voxels per transaction.
+    if (mode.kind === "commit") {
+      const budgetError = this.#checkBudgets(commands);
+      if (budgetError !== undefined) return err(budgetError);
+    }
 
     if (options.expectedRevision !== this.#store.revision) {
       return err(

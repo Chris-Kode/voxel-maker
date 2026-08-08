@@ -5,6 +5,15 @@ import {
   type VolumeId,
 } from "@voxel-maker/shared";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
+import {
+  assertIterationDomain,
+  boxCoordinates,
+  cylinderCoordinates,
+  intersectAabb,
+  sphereCoordinates,
+  type ShapeAxis,
+  type ShapeIterationOptions,
+} from "./shapes.js";
 
 /** Frozen v1 chunk edge length (plan 3.1 / ADR-0004): 16 voxels per axis. */
 export const CHUNK_EDGE = 16;
@@ -22,7 +31,15 @@ export interface VoxelVolumeLimits {
   readonly maxChunks: number;
   /** Maximum number of occupied voxels in one volume. */
   readonly maxOccupiedVoxels: number;
+  /**
+   * Maximum voxels inspected, generated, or changed by one operation
+   * (ADR-0009: 1,000,000 per transaction).
+   */
+  readonly maxCoordinatesPerOperation: number;
 }
+
+/** ADR-0009: voxels inspected, generated, or changed by one operation. */
+export const MAX_VOXELS_PER_OPERATION = 1_000_000;
 
 /** ADR-0009 hard defaults for one voxel volume. */
 export const DEFAULT_VOXEL_VOLUME_LIMITS: VoxelVolumeLimits = Object.freeze({
@@ -30,6 +47,7 @@ export const DEFAULT_VOXEL_VOLUME_LIMITS: VoxelVolumeLimits = Object.freeze({
   maxExtent: 2_048,
   maxChunks: 262_144,
   maxOccupiedVoxels: 1_000_000,
+  maxCoordinatesPerOperation: MAX_VOXELS_PER_OPERATION,
 });
 
 /**
@@ -60,6 +78,25 @@ export interface ChunkChange {
 export interface VoxelChangeSet {
   readonly volumeId: VolumeId;
   readonly chunks: readonly ChunkChange[];
+}
+
+/** One coordinate/material pair of a batch write (plan S3.6). */
+export interface VoxelEntry {
+  readonly coordinate: Vec3i;
+  readonly material: MaterialId;
+}
+
+/** One target patch of a compact change-set application (plan S3.15). */
+export interface VoxelPatchTarget {
+  readonly index: number;
+  /** Value to restore, 0..65535; 0 removes the voxel. */
+  readonly oldValue: number;
+}
+
+/** Chunk-scoped target patches for `applyPatches` (plan S3.15). */
+export interface VoxelPatchChunk {
+  readonly coordinate: Vec3i;
+  readonly patches: readonly VoxelPatchTarget[];
 }
 
 /** Immutable read surface of a voxel volume. */
@@ -388,6 +425,254 @@ export class VoxelVolume implements VoxelVolumeReadView {
     };
   }
 
+  /**
+   * Sets many voxels atomically (plan S3.6). Duplicate coordinates resolve
+   * last-write-wins in payload order, then writes are processed in canonical
+   * sorted order. The whole operation is planned and preflighted before any
+   * chunk is allocated or mutated, so a limit failure leaves the volume
+   * byte-identical. Returns the compact change set for exact inversion.
+   */
+  setVoxels(
+    entries: readonly VoxelEntry[],
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const plan = this.#planEntries(entries, (entry) =>
+      materialId(entry.material),
+    );
+    return this.#applyPlan(plan);
+  }
+
+  /**
+   * Removes many voxels atomically (plan S3.6). Duplicate coordinates resolve
+   * last-write-wins in payload order, then writes are processed in canonical
+   * sorted order. Returns the compact change set for exact inversion.
+   */
+  removeVoxels(
+    coordinates: readonly Vec3i[],
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const plan = this.#planEntries(
+      coordinates.map((coordinate) => ({
+        coordinate,
+        material: 0 as MaterialId,
+      })),
+      (entry) => entry.material,
+    );
+    return this.#applyPlan(plan);
+  }
+
+  /**
+   * Applies a compact change-set patch list (plan S3.15): each patch restores
+   * one voxel to `oldValue` (0 removes). Used by the command bus to replay
+   * exact inverses of batch and fill commands without whole-document
+   * snapshots. Atomic like every other mutating operation.
+   */
+  applyPatches(
+    chunks: readonly VoxelPatchChunk[],
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const entries: VoxelEntry[] = [];
+    for (const chunk of chunks) {
+      const chunkCoordinateValue = parseChunkCoordinate(
+        chunk.coordinate,
+        this.limits,
+      );
+      for (const patch of chunk.patches) {
+        if (
+          !Number.isInteger(patch.oldValue) ||
+          patch.oldValue < 0 ||
+          patch.oldValue > 65_535
+        ) {
+          throw new WorkspaceError({
+            family: "validation",
+            code: "INVALID_MATERIAL_ID",
+            message: "Patch oldValue must be an integer from 0 through 65535",
+            context: { value: String(patch.oldValue) },
+          });
+        }
+        if (
+          !Number.isInteger(patch.index) ||
+          patch.index < 0 ||
+          patch.index >= CHUNK_VOXEL_COUNT
+        ) {
+          throw new WorkspaceError({
+            family: "validation",
+            code: "INVALID_CHUNK_INDEX",
+            message: `Chunk patch index must be an integer from 0 through ${String(CHUNK_VOXEL_COUNT - 1)}`,
+            context: { value: String(patch.index) },
+          });
+        }
+        const local = localFromIndex(patch.index);
+        entries.push({
+          coordinate: [
+            chunkCoordinateValue[0] * CHUNK_EDGE + local[0],
+            chunkCoordinateValue[1] * CHUNK_EDGE + local[1],
+            chunkCoordinateValue[2] * CHUNK_EDGE + local[2],
+          ],
+          material: patch.oldValue as MaterialId,
+        });
+      }
+    }
+    const plan = this.#planEntries(entries, (entry) => entry.material);
+    return this.#applyPlan(plan);
+  }
+
+  /**
+   * Fills the half-open box `[min, max)` with one material (plan S3.7).
+   * Coordinates outside the volume coordinate domain are clipped; the shape
+   * is voxelized by the frozen rules in `shapes.ts`.
+   */
+  fillBox(
+    region: IntAabb,
+    material: number,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const value = materialId(material);
+    const parsedRegion = this.#parseRegion(region);
+    const coordinates = boxCoordinates(parsedRegion, this.#shapeOptions());
+    return this.#applyPlan(
+      this.#planEntries(
+        coordinates.map((coordinate) => ({ coordinate, material: value })),
+        (entry) => entry.material,
+      ),
+    );
+  }
+
+  /**
+   * Fills the solid sphere with integer center and radius (plan S3.7).
+   * Voxelization follows the frozen rule in `shapes.ts`.
+   */
+  fillSphere(
+    center: Vec3i,
+    radius: number,
+    material: number,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const value = materialId(material);
+    this.#assertIntegerPoint(center, "center");
+    const coordinates = sphereCoordinates(center, radius, this.#shapeOptions());
+    return this.#applyPlan(
+      this.#planEntries(
+        coordinates.map((coordinate) => ({ coordinate, material: value })),
+        (entry) => entry.material,
+      ),
+    );
+  }
+
+  /**
+   * Fills the axis-aligned solid cylinder with integer center, radius, and
+   * height (plan S3.7). Voxelization follows the frozen rule in `shapes.ts`.
+   */
+  fillCylinder(
+    center: Vec3i,
+    radius: number,
+    height: number,
+    axis: ShapeAxis,
+    material: number,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const value = materialId(material);
+    this.#assertIntegerPoint(center, "center");
+    const coordinates = cylinderCoordinates(
+      center,
+      radius,
+      height,
+      axis,
+      this.#shapeOptions(),
+    );
+    return this.#applyPlan(
+      this.#planEntries(
+        coordinates.map((coordinate) => ({ coordinate, material: value })),
+        (entry) => entry.material,
+      ),
+    );
+  }
+
+  /**
+   * Replaces every voxel equal to `fromMaterial` with `toMaterial` inside an
+   * optional half-open region (plan S3.8). Both values may be 0 (empty), so
+   * the operation can paint empty voxels or erase a material. Without a
+   * region the whole volume is scanned, which requires a non-empty source
+   * filter; replacing empty voxels needs an explicit region because the
+   * empty domain is unbounded. Returns the compact change set.
+   */
+  replaceMaterial(
+    region: IntAabb | undefined,
+    fromMaterial: number,
+    toMaterial: number,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const from = this.#materialValue(fromMaterial, "fromMaterial");
+    const to = this.#materialValue(toMaterial, "toMaterial");
+    if (from === to) {
+      return { volumeId: this.volumeId, chunks: [] };
+    }
+    const plan: PlannedPatch[] = [];
+    if (region === undefined) {
+      if (from === 0) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "REGION_REQUIRED",
+          message:
+            "Replacing empty voxels requires an explicit region because the empty domain is unbounded",
+        });
+      }
+      let inspected = 0;
+      for (const [key, chunk] of this.#chunks) {
+        const coordinate = parseChunkKey(key);
+        for (let index = 0; index < CHUNK_VOXEL_COUNT; index += 1) {
+          inspected += 1;
+          if (inspected > this.limits.maxCoordinatesPerOperation) {
+            throw this.#operationLimitError(inspected);
+          }
+          const oldValue = chunk.values[index] as MaterialId;
+          if (oldValue === from) {
+            plan.push({ chunk: coordinate, index, oldValue, newValue: to });
+          }
+        }
+      }
+    } else {
+      const parsed = this.#parseRegion(region);
+      const domain = intersectAabb(parsed, this.#coordinateDomain());
+      if (domain !== undefined) {
+        assertIterationDomain(domain, this.limits.maxCoordinatesPerOperation);
+        let inspected = 0;
+        for (let z = domain.min[2]; z < domain.max[2]; z += 1) {
+          for (let y = domain.min[1]; y < domain.max[1]; y += 1) {
+            for (let x = domain.min[0]; x < domain.max[0]; x += 1) {
+              inspected += 1;
+              if (inspected > this.limits.maxCoordinatesPerOperation) {
+                throw this.#operationLimitError(inspected);
+              }
+              const coordinate: Vec3i = [x, y, z];
+              const oldValue = this.getVoxel(coordinate);
+              if (oldValue === from) {
+                const parsedCoordinate = parseCoordinate(
+                  coordinate,
+                  this.limits,
+                );
+                plan.push({
+                  chunk: parsedCoordinate.chunk,
+                  index: chunkIndex(parsedCoordinate.local),
+                  oldValue,
+                  newValue: to,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+    return this.#applyPlan(plan);
+  }
+
   /** Deep copy for copy-on-write transaction staging; shares the write token. */
   clone(): VoxelVolume {
     const clone = new VoxelVolume(this.volumeId, this.limits, this.#capability);
@@ -403,6 +688,286 @@ export class VoxelVolume implements VoxelVolumeReadView {
     return clone;
   }
 
+  /** Half-open coordinate domain of this volume (ADR-0009). */
+  #coordinateDomain(): IntAabb {
+    const max = this.limits.maxCoordinate;
+    return { min: [-max, -max, -max], max: [max + 1, max + 1, max + 1] };
+  }
+
+  /** Shape iteration options derived from this volume's limits. */
+  #shapeOptions(): ShapeIterationOptions {
+    return {
+      clip: this.#coordinateDomain(),
+      maxCoordinates: this.limits.maxCoordinatesPerOperation,
+    };
+  }
+
+  #operationLimitError(requested: number): WorkspaceError {
+    return new WorkspaceError({
+      family: "limit",
+      code: "TOO_MANY_VOXELS",
+      message: "Operation exceeds the per-operation voxel limit",
+      context: {
+        requested,
+        limit: this.limits.maxCoordinatesPerOperation,
+        resource: "voxelsPerOperation",
+      },
+    });
+  }
+
+  /** Validates a 0..65535 material value (empty allowed). */
+  #materialValue(value: number, name: string): MaterialId {
+    if (!Number.isInteger(value) || value < 0 || value > 65_535) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_MATERIAL_ID",
+        message: `${name} must be an integer from 0 through 65535`,
+        context: { value: String(value) },
+      });
+    }
+    return value as MaterialId;
+  }
+
+  /** Validates that a point has integer components (no domain bound). */
+  #assertIntegerPoint(point: Vec3i, name: string): void {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const component = point[axis];
+      if (component === undefined || !Number.isInteger(component)) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "INVALID_VOXEL_COORDINATE",
+          message: `${name} coordinates must be integers`,
+          path: [name, axis],
+          context: { value: String(component) },
+        });
+      }
+    }
+  }
+
+  /**
+   * Validates a half-open region's shape (integer components, `min <= max`).
+   * Out-of-domain regions are not rejected here: shape iterators clip them
+   * to the volume coordinate domain, while the command layer rejects
+   * out-of-domain regions at parse time.
+   */
+  #parseRegion(region: IntAabb): IntAabb {
+    for (const [name, point] of [
+      ["min", region.min],
+      ["max", region.max],
+    ] as const) {
+      for (let axis = 0; axis < 3; axis += 1) {
+        const component = point[axis];
+        if (component === undefined || !Number.isInteger(component)) {
+          throw new WorkspaceError({
+            family: "validation",
+            code: "INVALID_VOXEL_COORDINATE",
+            message: "Region coordinates must be integers",
+            path: ["region", name, axis],
+            context: { value: String(component) },
+          });
+        }
+      }
+    }
+    for (let axis = 0; axis < 3; axis += 1) {
+      if ((region.min[axis] as number) > (region.max[axis] as number)) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "INVALID_AABB",
+          message: "Region minimum must not exceed maximum on any axis",
+          path: ["region", axis],
+        });
+      }
+    }
+    return { min: region.min, max: region.max };
+  }
+
+  /**
+   * Builds the write plan for a batch of entries: validates every coordinate
+   * and value, resolves duplicates last-write-wins, sorts canonically, and
+   * reads current values so no-op writes are dropped. No mutation happens
+   * here; the plan is the modification estimate used for preflight.
+   */
+  #planEntries(
+    entries: readonly VoxelEntry[],
+    valueOf: (entry: VoxelEntry) => number,
+  ): PlannedPatch[] {
+    if (entries.length > this.limits.maxCoordinatesPerOperation) {
+      throw this.#operationLimitError(entries.length);
+    }
+    const byKey = new Map<string, PlannedPatch>();
+    for (const entry of entries) {
+      const parsed = parseCoordinate(entry.coordinate, this.limits);
+      const value = valueOf(entry);
+      const key = `${chunkKey(parsed.chunk)}:${String(chunkIndex(parsed.local))}`;
+      byKey.set(key, {
+        chunk: parsed.chunk,
+        index: chunkIndex(parsed.local),
+        oldValue: 0 as MaterialId,
+        newValue: value as MaterialId,
+      });
+    }
+    const plan = [...byKey.values()];
+    for (const patch of plan) {
+      const chunk = this.#chunks.get(chunkKey(patch.chunk));
+      patch.oldValue =
+        chunk === undefined
+          ? (0 as MaterialId)
+          : (chunk.values[patch.index] as MaterialId);
+    }
+    return plan.filter((patch) => patch.oldValue !== patch.newValue);
+  }
+
+  /**
+   * Verifies every hard limit against the plan before any allocation or
+   * mutation (ADR-0009): occupied-voxel count, occupied extent, and chunk
+   * count. Rejection leaves the volume byte-identical.
+   */
+  #preflightPlan(plan: readonly PlannedPatch[]): void {
+    let additions = 0;
+    const candidateChunks = new Set<string>();
+    for (const patch of plan) {
+      if (patch.oldValue === 0 && patch.newValue !== 0) additions += 1;
+      if (!this.#chunks.has(chunkKey(patch.chunk))) {
+        candidateChunks.add(chunkKey(patch.chunk));
+      }
+    }
+    const occupiedAfter = this.#occupiedCount + additions;
+    if (occupiedAfter > this.limits.maxOccupiedVoxels) {
+      throw new WorkspaceError({
+        family: "limit",
+        code: "TOO_MANY_OCCUPIED_VOXELS",
+        message: "Volume exceeds its occupied-voxel limit",
+        context: {
+          volumeId: this.volumeId,
+          requested: occupiedAfter,
+          limit: this.limits.maxOccupiedVoxels,
+        },
+      });
+    }
+    const chunksAfter = this.#chunks.size + candidateChunks.size;
+    if (chunksAfter > this.limits.maxChunks) {
+      throw new WorkspaceError({
+        family: "limit",
+        code: "TOO_MANY_CHUNKS",
+        message: "Volume exceeds its non-empty chunk limit",
+        context: {
+          volumeId: this.volumeId,
+          requested: chunksAfter,
+          limit: this.limits.maxChunks,
+        },
+      });
+    }
+    if (additions > 0) {
+      const current = this.#bounds ?? this.#recomputeBounds();
+      let candidate: OccupiedBounds | undefined =
+        current === undefined
+          ? undefined
+          : {
+              min: [current.min[0], current.min[1], current.min[2]],
+              max: [current.max[0], current.max[1], current.max[2]],
+            };
+      for (const patch of plan) {
+        if (patch.oldValue !== 0 || patch.newValue === 0) continue;
+        const coordinate = patchCoordinate(patch);
+        candidate =
+          candidate === undefined
+            ? pointBounds(coordinate)
+            : unionBounds(candidate, pointBounds(coordinate));
+      }
+      if (candidate !== undefined) {
+        for (let axis = 0; axis < 3; axis += 1) {
+          const extent =
+            (candidate.max[axis] as number) - (candidate.min[axis] as number);
+          if (extent > this.limits.maxExtent) {
+            throw new WorkspaceError({
+              family: "limit",
+              code: "EXTENT_LIMIT_EXCEEDED",
+              message: "Volume occupied extent exceeds its per-axis limit",
+              context: {
+                volumeId: this.volumeId,
+                axis,
+                extent,
+                maxExtent: this.limits.maxExtent,
+              },
+            });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Applies a preflighted plan. Cannot fail after `#preflightPlan`: chunk
+   * allocation is bounded by the preflighted chunk count and every write is
+   * a plain array store. Returns the compact per-chunk change set.
+   */
+  #applyPlan(plan: readonly PlannedPatch[]): VoxelChangeSet {
+    this.#preflightPlan(plan);
+    // Canonical change-set order: chunk X, then Y, then Z; local index within
+    // a chunk. Every caller (batch, fill, replace, patch) funnels through
+    // here, so the emitted change set is always sorted.
+    const ordered = [...plan].sort(comparePlannedPatch);
+    const chunks = new Map<string, MutableChunkChange>();
+    for (const patch of ordered) {
+      const key = chunkKey(patch.chunk);
+      let chunk = this.#chunks.get(key);
+      if (chunk === undefined) {
+        chunk = {
+          values: new Uint16Array(CHUNK_VOXEL_COUNT),
+          revision: 0,
+        };
+        this.#chunks.set(key, chunk);
+      }
+      chunk.values[patch.index] = patch.newValue;
+      chunk.revision += 1;
+      if (patch.oldValue === 0 && patch.newValue !== 0) {
+        this.#occupiedCount += 1;
+        const current = this.#bounds ?? this.#recomputeBounds();
+        this.#bounds =
+          current === undefined
+            ? pointBounds(patchCoordinate(patch))
+            : unionBounds(current, pointBounds(patchCoordinate(patch)));
+      } else if (patch.oldValue !== 0 && patch.newValue === 0) {
+        this.#occupiedCount -= 1;
+        if (
+          this.#bounds !== undefined &&
+          isOnBoundary(this.#bounds, patchCoordinate(patch))
+        ) {
+          this.#bounds = undefined;
+        }
+      }
+      const existing = chunks.get(key);
+      if (existing === undefined) {
+        chunks.set(key, {
+          coordinate: patch.chunk,
+          revision: chunk.revision,
+          patches: [
+            {
+              index: patch.index,
+              oldValue: patch.oldValue,
+              newValue: patch.newValue,
+            },
+          ],
+        });
+      } else {
+        existing.patches.push({
+          index: patch.index,
+          oldValue: patch.oldValue,
+          newValue: patch.newValue,
+        });
+      }
+    }
+    for (const [key, chunk] of this.#chunks) {
+      if (isEmptyChunk(chunk)) this.#chunks.delete(key);
+    }
+    return {
+      volumeId: this.volumeId,
+      chunks: [...chunks.values()].sort((a, b) =>
+        compareVec3i(a.coordinate, b.coordinate),
+      ),
+    };
+  }
+
   #assertWriteCapability(capability: VoxelWriteCapability): void {
     if (capability !== this.#capability) {
       throw new WorkspaceError({
@@ -413,6 +978,68 @@ export class VoxelVolume implements VoxelVolumeReadView {
       });
     }
   }
+}
+
+/** Mutable accumulator mirroring `ChunkChange` during plan application. */
+interface MutableChunkChange {
+  readonly coordinate: Vec3i;
+  readonly revision: number;
+  readonly patches: VoxelPatch[];
+}
+
+/** One planned write; the unit of preflight and application. */
+interface PlannedPatch {
+  readonly chunk: Vec3i;
+  readonly index: number;
+  oldValue: MaterialId;
+  readonly newValue: MaterialId;
+}
+
+const comparePlannedPatch = (a: PlannedPatch, b: PlannedPatch): number =>
+  compareVec3i(a.chunk, b.chunk) || a.index - b.index;
+
+/** Full voxel coordinate of a planned patch. */
+/** X-fastest local index to local coordinates (plan 5.2). */
+const localFromIndex = (index: number): Vec3i => [
+  index % CHUNK_EDGE,
+  Math.floor(index / CHUNK_EDGE) % CHUNK_EDGE,
+  Math.floor(index / (CHUNK_EDGE * CHUNK_EDGE)),
+];
+
+const patchCoordinate = (patch: PlannedPatch): Vec3i => {
+  const local = localFromIndex(patch.index);
+  return [
+    patch.chunk[0] * CHUNK_EDGE + local[0],
+    patch.chunk[1] * CHUNK_EDGE + local[1],
+    patch.chunk[2] * CHUNK_EDGE + local[2],
+  ];
+};
+
+/** Validates a chunk coordinate against the volume coordinate domain. */
+function parseChunkCoordinate(
+  coordinate: Vec3i,
+  limits: VoxelVolumeLimits,
+): Vec3i {
+  const minChunk = -Math.ceil(limits.maxCoordinate / CHUNK_EDGE);
+  const maxChunk = Math.floor(limits.maxCoordinate / CHUNK_EDGE);
+  for (let axis = 0; axis < 3; axis += 1) {
+    const component = coordinate[axis];
+    if (
+      component === undefined ||
+      !Number.isInteger(component) ||
+      component < minChunk ||
+      component > maxChunk
+    ) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_CHUNK_COORDINATE",
+        message: `Chunk coordinates must be integers within ${String(minChunk)}..${String(maxChunk)}`,
+        path: ["coordinate", axis],
+        context: { value: String(component) },
+      });
+    }
+  }
+  return coordinate;
 }
 
 interface ParsedCoordinate {

@@ -18,6 +18,16 @@ import {
   setVoxelCommand,
 } from "./voxel-commands.js";
 import {
+  VOXEL_APPLY_PATCHES_COMMAND,
+  VOXEL_FILL_BOX_COMMAND,
+  VOXEL_FILL_CYLINDER_COMMAND,
+  VOXEL_FILL_SPHERE_COMMAND,
+  VOXEL_REMOVE_BATCH_COMMAND,
+  VOXEL_REPLACE_MATERIAL_COMMAND,
+  VOXEL_SET_BATCH_COMMAND,
+  registerBatchCommands,
+} from "./batch-commands.js";
+import {
   commandKey,
   runCommandConformanceSuite,
   type CommandConformanceSpec,
@@ -180,14 +190,22 @@ runCommandConformanceSuite(removeSpec, { describe, it, expect });
 
 /** Every registered persistent command must declare a conformance spec (plan 4.17). */
 const CONFORMANCE_TESTED_COMMANDS = [
+  commandKey(VOXEL_APPLY_PATCHES_COMMAND, 1),
+  commandKey(VOXEL_FILL_BOX_COMMAND, 1),
+  commandKey(VOXEL_FILL_CYLINDER_COMMAND, 1),
+  commandKey(VOXEL_FILL_SPHERE_COMMAND, 1),
   commandKey(VOXEL_REMOVE_COMMAND, 1),
+  commandKey(VOXEL_REMOVE_BATCH_COMMAND, 1),
+  commandKey(VOXEL_REPLACE_MATERIAL_COMMAND, 1),
   commandKey(VOXEL_SET_COMMAND, 1),
+  commandKey(VOXEL_SET_BATCH_COMMAND, 1),
 ] as const;
 
 describe("command conformance coverage", () => {
   it("runs every registered command through the conformance suite", () => {
     const registry = new CommandRegistry();
     registerVoxelCommands(registry);
+    registerBatchCommands(registry);
     const registered = registry
       .list()
       .map(({ type, schemaVersion }) => commandKey(type, schemaVersion));

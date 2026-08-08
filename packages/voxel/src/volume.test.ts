@@ -4,8 +4,10 @@ import {
   CHUNK_EDGE,
   chunkCoordinate,
   chunkIndex,
+  chunkKey,
   localCoordinate,
   VoxelVolume,
+  type VoxelEntry,
   type VoxelWriteCapability,
 } from "./volume.js";
 
@@ -17,6 +19,7 @@ function createVolume(
     maxExtent: number;
     maxChunks: number;
     maxOccupiedVoxels: number;
+    maxCoordinatesPerOperation: number;
   }> = {},
 ): VoxelVolume {
   return new VoxelVolume(
@@ -26,6 +29,7 @@ function createVolume(
       maxExtent: 2_048,
       maxChunks: 262_144,
       maxOccupiedVoxels: 1_000_000,
+      maxCoordinatesPerOperation: 1_000_000,
       ...overrides,
     },
     capability,
@@ -297,3 +301,483 @@ describe("VoxelVolume limits contract", () => {
     expect(CHUNK_EDGE).toBe(16);
   });
 });
+
+describe("VoxelVolume.setVoxels", () => {
+  it("sets many voxels atomically and returns a compact sorted change set", () => {
+    const volume = createVolume();
+    const changeSet = volume.setVoxels(
+      [
+        { coordinate: [1, 0, 0], material: 1 as never },
+        { coordinate: [-1, 0, 0], material: 2 as never },
+        { coordinate: [0, 1, 0], material: 3 as never },
+      ],
+      capability,
+    );
+    expect(volume.getVoxel([1, 0, 0])).toBe(1);
+    expect(volume.getVoxel([-1, 0, 0])).toBe(2);
+    expect(volume.getVoxel([0, 1, 0])).toBe(3);
+    expect(volume.occupiedCount()).toBe(3);
+    expect(changeSet.volumeId).toBe(volume.volumeId);
+    expect(changeSet.chunks.map((chunk) => chunk.coordinate)).toEqual([
+      [-1, 0, 0],
+      [0, 0, 0],
+    ]);
+    const chunkZero = changeSet.chunks.find(
+      (chunk) => chunk.coordinate[0] === 0 && chunk.coordinate[1] === 0,
+    );
+    expect(chunkZero?.patches).toEqual([
+      { index: 1, oldValue: 0, newValue: 1 },
+      { index: 16, oldValue: 0, newValue: 3 },
+    ]);
+  });
+
+  it("resolves duplicate coordinates last-write-wins in payload order", () => {
+    const volume = createVolume();
+    const changeSet = volume.setVoxels(
+      [
+        { coordinate: [0, 0, 0], material: 1 as never },
+        { coordinate: [0, 0, 0], material: 2 as never },
+        { coordinate: [0, 0, 0], material: 1 as never },
+      ],
+      capability,
+    );
+    expect(volume.getVoxel([0, 0, 0])).toBe(1);
+    expect(volume.occupiedCount()).toBe(1);
+    expect(changeSet.chunks).toHaveLength(1);
+    expect(changeSet.chunks[0]?.patches).toEqual([
+      { index: 0, oldValue: 0, newValue: 1 },
+    ]);
+  });
+
+  it("drops no-op writes and reports overwrites with old values", () => {
+    const volume = createVolume();
+    volume.setVoxel([0, 0, 0], 1, capability);
+    const changeSet = volume.setVoxels(
+      [
+        { coordinate: [0, 0, 0], material: 1 as never },
+        { coordinate: [0, 0, 0], material: 2 as never },
+        { coordinate: [5, 5, 5], material: 1 as never },
+      ],
+      capability,
+    );
+    expect(changeSet.chunks).toHaveLength(1);
+    expect(changeSet.chunks[0]?.patches).toEqual([
+      { index: 0, oldValue: 1, newValue: 2 },
+      { index: 1365, oldValue: 0, newValue: 1 },
+    ]);
+    expect(volume.getVoxel([5, 5, 5])).toBe(1);
+  });
+
+  it("preflights the per-operation coordinate limit before any write", () => {
+    const volume = createVolume({ maxCoordinatesPerOperation: 2 });
+    const entries: VoxelEntry[] = [
+      { coordinate: [0, 0, 0], material: 1 as never },
+      { coordinate: [1, 0, 0], material: 1 as never },
+      { coordinate: [2, 0, 0], material: 1 as never },
+    ];
+    expect(() => volume.setVoxels(entries, capability)).toThrow(
+      /per-operation voxel limit/u,
+    );
+    expect(volume.occupiedCount()).toBe(0);
+    expect(volume.chunkCount()).toBe(0);
+  });
+
+  it("preflights the occupied-voxel limit and leaves the volume unchanged", () => {
+    const volume = createVolume({ maxOccupiedVoxels: 2 });
+    volume.setVoxel([0, 0, 0], 1, capability);
+    const before = snapshot(volume);
+    expect(() =>
+      volume.setVoxels(
+        [
+          { coordinate: [1, 0, 0], material: 1 as never },
+          { coordinate: [2, 0, 0], material: 1 as never },
+        ],
+        capability,
+      ),
+    ).toThrow(/occupied-voxel limit/u);
+    expect(snapshot(volume)).toEqual(before);
+    expect(volume.occupiedCount()).toBe(1);
+  });
+
+  it("preflights the extent limit before any write", () => {
+    const volume = createVolume({ maxExtent: 4 });
+    volume.setVoxel([0, 0, 0], 1, capability);
+    const before = snapshot(volume);
+    expect(() =>
+      volume.setVoxels(
+        [
+          { coordinate: [1, 0, 0], material: 1 as never },
+          { coordinate: [4, 0, 0], material: 1 as never },
+        ],
+        capability,
+      ),
+    ).toThrow(/extent/u);
+    expect(snapshot(volume)).toEqual(before);
+  });
+
+  it("preflights the chunk limit before any write", () => {
+    const volume = createVolume({ maxChunks: 1 });
+    volume.setVoxel([0, 0, 0], 1, capability);
+    const before = snapshot(volume);
+    expect(() =>
+      volume.setVoxels(
+        [{ coordinate: [16, 0, 0], material: 1 as never }],
+        capability,
+      ),
+    ).toThrow(/chunk limit/u);
+    expect(snapshot(volume)).toEqual(before);
+  });
+
+  it("supports exact inversion through applyPatches without snapshots", () => {
+    const volume = createVolume();
+    volume.setVoxel([0, 0, 0], 1, capability);
+    volume.setVoxel([-1, 0, 0], 2, capability);
+    const before = snapshot(volume);
+    const changeSet = volume.setVoxels(
+      [
+        { coordinate: [0, 0, 0], material: 3 as never },
+        { coordinate: [1, 0, 0], material: 4 as never },
+      ],
+      capability,
+    );
+    const removal = volume.removeVoxels([[-1, 0, 0]], capability);
+    expect(volume.getVoxel([0, 0, 0])).toBe(3);
+    expect(volume.getVoxel([1, 0, 0])).toBe(4);
+    expect(volume.getVoxel([-1, 0, 0])).toBe(0);
+    for (const change of [changeSet, removal]) {
+      volume.applyPatches(
+        change.chunks.map((chunk) => ({
+          coordinate: chunk.coordinate,
+          patches: chunk.patches.map((patch) => ({
+            index: patch.index,
+            oldValue: patch.oldValue,
+          })),
+        })),
+        capability,
+      );
+    }
+    expect(snapshot(volume)).toEqual(before);
+  });
+});
+
+describe("VoxelVolume.removeVoxels", () => {
+  it("removes many voxels and reclaims empty chunks", () => {
+    const volume = createVolume();
+    volume.setVoxels(
+      [
+        { coordinate: [0, 0, 0], material: 1 as never },
+        { coordinate: [1, 0, 0], material: 1 as never },
+        { coordinate: [16, 0, 0], material: 1 as never },
+      ],
+      capability,
+    );
+    const changeSet = volume.removeVoxels(
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [16, 0, 0],
+      ],
+      capability,
+    );
+    expect(volume.occupiedCount()).toBe(0);
+    expect(volume.chunkCount()).toBe(0);
+    expect(changeSet.chunks).toHaveLength(2);
+    expect(changeSet.chunks[0]?.patches).toEqual([
+      { index: 0, oldValue: 1, newValue: 0 },
+      { index: 1, oldValue: 1, newValue: 0 },
+    ]);
+  });
+
+  it("ignores already-empty coordinates and duplicate removals", () => {
+    const volume = createVolume();
+    volume.setVoxel([0, 0, 0], 1, capability);
+    const changeSet = volume.removeVoxels(
+      [
+        [0, 0, 0],
+        [0, 0, 0],
+        [9, 9, 9],
+      ],
+      capability,
+    );
+    expect(changeSet.chunks).toHaveLength(1);
+    expect(changeSet.chunks[0]?.patches).toEqual([
+      { index: 0, oldValue: 1, newValue: 0 },
+    ]);
+  });
+});
+
+describe("VoxelVolume fills", () => {
+  it("fills a box with deterministic voxelization", () => {
+    const volume = createVolume();
+    const changeSet = volume.fillBox(
+      { min: [0, 0, 0], max: [2, 2, 2] },
+      1,
+      capability,
+    );
+    expect(volume.occupiedCount()).toBe(8);
+    expect(volume.getVoxel([1, 1, 1])).toBe(1);
+    expect(volume.getVoxel([2, 0, 0])).toBe(0);
+    expect(changeSet.chunks).toHaveLength(1);
+    expect(changeSet.chunks[0]?.patches).toHaveLength(8);
+  });
+
+  it("fills a sphere with the frozen solid rule", () => {
+    const volume = createVolume();
+    volume.fillSphere([0, 0, 0], 2, 1, capability);
+    expect(volume.occupiedCount()).toBe(33);
+    expect(volume.getVoxel([1, 1, 1])).toBe(1);
+    expect(volume.getVoxel([2, 1, 0])).toBe(0);
+  });
+
+  it("fills a cylinder along each axis", () => {
+    const volume = createVolume();
+    volume.fillCylinder([0, 0, 0], 1, 2, "y", 1, capability);
+    expect(volume.occupiedCount()).toBe(10);
+    expect(volume.getVoxel([0, 1, 0])).toBe(1);
+    expect(volume.getVoxel([0, 2, 0])).toBe(0);
+  });
+
+  it("clips fills to the volume coordinate domain", () => {
+    const volume = createVolume({ maxCoordinate: 1 });
+    volume.fillBox({ min: [-5, -5, -5], max: [5, 5, 5] }, 1, capability);
+    expect(volume.occupiedCount()).toBe(27);
+    expect(volume.getVoxel([-1, -1, -1])).toBe(1);
+    expect(volume.getVoxel([1, 1, 1])).toBe(1);
+  });
+
+  it("clips sphere and cylinder fills with out-of-domain centers", () => {
+    const volume = createVolume({ maxCoordinate: 1 });
+    volume.fillSphere([2, 0, 0], 1, 1, capability);
+    expect(volume.getVoxel([1, 0, 0])).toBe(1);
+    expect(volume.getVoxel([0, 0, 0])).toBe(0);
+    volume.fillCylinder([0, 1, 0], 0, 4, "y", 2, capability);
+    expect(volume.getVoxel([0, 1, 0])).toBe(2);
+    expect(volume.occupiedCount()).toBe(2);
+  });
+
+  it("rejects non-integer sphere and cylinder centers", () => {
+    const volume = createVolume();
+    expect(() => volume.fillSphere([0.5, 0, 0], 1, 1, capability)).toThrow(
+      /integers/u,
+    );
+    expect(() =>
+      volume.fillCylinder([0, 0.5, 0], 1, 1, "y", 1, capability),
+    ).toThrow(/integers/u);
+  });
+
+  it("rejects fills that would exceed the occupied limit", () => {
+    const volume = createVolume({ maxOccupiedVoxels: 10 });
+    const before = snapshot(volume);
+    expect(() =>
+      volume.fillBox({ min: [0, 0, 0], max: [3, 3, 3] }, 1, capability),
+    ).toThrow(/occupied-voxel limit/u);
+    expect(snapshot(volume)).toEqual(before);
+  });
+
+  it("rejects fills whose iteration domain is pathological", () => {
+    const volume = createVolume({ maxCoordinatesPerOperation: 100 });
+    expect(() =>
+      volume.fillSphere([0, 0, 0], 1_000_000, 1, capability),
+    ).toThrow(/iteration domain/u);
+    expect(volume.occupiedCount()).toBe(0);
+  });
+});
+
+describe("VoxelVolume.replaceMaterial", () => {
+  it("replaces a source material inside a region only", () => {
+    const volume = createVolume();
+    volume.fillBox({ min: [0, 0, 0], max: [3, 3, 3] }, 1, capability);
+    volume.setVoxel([5, 5, 5], 1, capability);
+    const changeSet = volume.replaceMaterial(
+      { min: [0, 0, 0], max: [2, 2, 2] },
+      1,
+      2,
+      capability,
+    );
+    expect(volume.getVoxel([0, 0, 0])).toBe(2);
+    expect(volume.getVoxel([2, 2, 2])).toBe(1);
+    expect(volume.getVoxel([5, 5, 5])).toBe(1);
+    expect(changeSet.chunks[0]?.patches).toHaveLength(8);
+  });
+
+  it("emits region-replace patches in canonical index order", () => {
+    const volume = createVolume();
+    volume.fillBox({ min: [0, 0, 0], max: [3, 3, 3] }, 1, capability);
+    const changeSet = volume.replaceMaterial(
+      { min: [0, 0, 0], max: [2, 2, 2] },
+      1,
+      2,
+      capability,
+    );
+    const indexes = (changeSet.chunks[0]?.patches ?? []).map(
+      (patch) => patch.index,
+    );
+    expect(indexes).toEqual([...indexes].sort((a, b) => a - b));
+  });
+
+  it("replaces across the whole volume when no region is given", () => {
+    const volume = createVolume();
+    volume.fillBox({ min: [0, 0, 0], max: [2, 2, 2] }, 1, capability);
+    volume.setVoxel([10, 10, 10], 1, capability);
+    volume.replaceMaterial(undefined, 1, 3, capability);
+    expect(volume.occupiedCount()).toBe(9);
+    expect(volume.getVoxel([0, 0, 0])).toBe(3);
+    expect(volume.getVoxel([10, 10, 10])).toBe(3);
+  });
+
+  it("paints empty voxels only with an explicit region", () => {
+    const volume = createVolume();
+    volume.setVoxel([0, 0, 0], 1, capability);
+    volume.replaceMaterial(
+      { min: [0, 0, 0], max: [2, 2, 2] },
+      0,
+      2,
+      capability,
+    );
+    expect(volume.getVoxel([0, 0, 0])).toBe(1);
+    expect(volume.getVoxel([1, 1, 1])).toBe(2);
+    expect(volume.occupiedCount()).toBe(8);
+  });
+
+  it("erases a material by replacing it with empty", () => {
+    const volume = createVolume();
+    volume.fillBox({ min: [0, 0, 0], max: [2, 2, 2] }, 1, capability);
+    volume.replaceMaterial(undefined, 1, 0, capability);
+    expect(volume.occupiedCount()).toBe(0);
+    expect(volume.chunkCount()).toBe(0);
+  });
+
+  it("requires a region when the source filter is empty", () => {
+    const volume = createVolume();
+    expect(() => volume.replaceMaterial(undefined, 0, 1, capability)).toThrow(
+      /explicit region/u,
+    );
+  });
+
+  it("is a no-op when source and target materials match", () => {
+    const volume = createVolume();
+    volume.setVoxel([0, 0, 0], 1, capability);
+    const changeSet = volume.replaceMaterial(undefined, 1, 1, capability);
+    expect(changeSet.chunks).toEqual([]);
+    expect(volume.occupiedCount()).toBe(1);
+  });
+
+  it("supports exact inversion through applyPatches", () => {
+    const volume = createVolume();
+    volume.fillBox({ min: [0, 0, 0], max: [3, 3, 3] }, 1, capability);
+    const before = snapshot(volume);
+    const changeSet = volume.replaceMaterial(
+      { min: [0, 0, 0], max: [2, 2, 2] },
+      1,
+      2,
+      capability,
+    );
+    volume.applyPatches(
+      changeSet.chunks.map((chunk) => ({
+        coordinate: chunk.coordinate,
+        patches: chunk.patches.map((patch) => ({
+          index: patch.index,
+          oldValue: patch.oldValue,
+        })),
+      })),
+      capability,
+    );
+    expect(snapshot(volume)).toEqual(before);
+  });
+});
+
+describe("VoxelVolume batch property tests (fixed seed)", () => {
+  /** Deterministic LCG so failures are reproducible (plan S3.16). */
+  const lcg = (seed: number): (() => number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+      return state / 0x1_0000_0000;
+    };
+  };
+
+  it("batch writes plus their exact inverse restore the volume (100 rounds)", () => {
+    const random = lcg(0x5eed_0001);
+    for (let round = 0; round < 100; round += 1) {
+      const volume = createVolume();
+      const seedCount = 1 + Math.floor(random() * 20);
+      const seedEntries: VoxelEntry[] = [];
+      for (let i = 0; i < seedCount; i += 1) {
+        seedEntries.push({
+          coordinate: [
+            Math.floor(random() * 40) - 20,
+            Math.floor(random() * 40) - 20,
+            Math.floor(random() * 40) - 20,
+          ],
+          material: (1 + Math.floor(random() * 3)) as never,
+        });
+      }
+      volume.setVoxels(seedEntries, capability);
+      const before = snapshot(volume);
+
+      const batchCount = 1 + Math.floor(random() * 30);
+      const entries: VoxelEntry[] = [];
+      for (let i = 0; i < batchCount; i += 1) {
+        entries.push({
+          coordinate: [
+            Math.floor(random() * 40) - 20,
+            Math.floor(random() * 40) - 20,
+            Math.floor(random() * 40) - 20,
+          ],
+          material: (1 + Math.floor(random() * 3)) as never,
+        });
+      }
+      const changeSet = volume.setVoxels(entries, capability);
+      volume.applyPatches(
+        changeSet.chunks.map((chunk) => ({
+          coordinate: chunk.coordinate,
+          patches: chunk.patches.map((patch) => ({
+            index: patch.index,
+            oldValue: patch.oldValue,
+          })),
+        })),
+        capability,
+      );
+      expect(snapshot(volume)).toEqual(before);
+    }
+  });
+
+  it("replaceMaterial plus its inverse restore the volume (50 rounds)", () => {
+    const random = lcg(0x5eed_0002);
+    for (let round = 0; round < 50; round += 1) {
+      const volume = createVolume();
+      volume.fillBox(
+        { min: [-4, -4, -4], max: [5, 5, 5] },
+        1 + Math.floor(random() * 2),
+        capability,
+      );
+      const before = snapshot(volume);
+      const from = 1 + Math.floor(random() * 2);
+      const to = 1 + Math.floor(random() * 2);
+      const changeSet = volume.replaceMaterial(undefined, from, to, capability);
+      volume.applyPatches(
+        changeSet.chunks.map((chunk) => ({
+          coordinate: chunk.coordinate,
+          patches: chunk.patches.map((patch) => ({
+            index: patch.index,
+            oldValue: patch.oldValue,
+          })),
+        })),
+        capability,
+      );
+      expect(snapshot(volume)).toEqual(before);
+    }
+  });
+});
+
+/** Byte-identical snapshot of every allocated chunk (plan S3.16). */
+function snapshot(volume: VoxelVolume): Map<string, Uint16Array> {
+  const result = new Map<string, Uint16Array>();
+  for (const coordinate of volume.chunkCoordinates()) {
+    const values = volume.getChunk(coordinate);
+    if (values !== undefined) {
+      result.set(chunkKey(coordinate), values);
+    }
+  }
+  return result;
+}

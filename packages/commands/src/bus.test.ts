@@ -15,6 +15,7 @@ import {
   removeVoxelCommand,
   setVoxelCommand,
 } from "./voxel-commands.js";
+import { fillBoxCommand, registerBatchCommands } from "./batch-commands.js";
 
 const identity = {
   translation: [0, 0, 0],
@@ -75,6 +76,7 @@ function createBus(limits?: ConstructorParameters<typeof CommandBus>[3]): {
   });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
+  registerBatchCommands(registry);
   return {
     bus: new CommandBus(store, registry, writeCapability, limits),
     store,
@@ -521,5 +523,41 @@ describe("undo and redo", () => {
     expect(undo3.ok).toBe(false);
     if (undo3.ok) return;
     expect(undo3.error.code).toBe("NOTHING_TO_UNDO");
+  });
+
+  it("undoes a fill whose inverse exceeds the forward payload budget", () => {
+    // ADR-0003: every v1 edit command is undoable. The forward fill payload
+    // is tiny, but its exact inverse (one patch per voxel) is large; input
+    // budgets apply to new commits only, so undo must still succeed.
+    const { bus, store } = createBus({
+      maxCommandsPerTransaction: 1_024,
+      maxCommandPayloadBytes: 200,
+      maxTransactionEnvelopeBytes: 16_777_216,
+      maxHistoryEntries: 512,
+      maxHistoryInverseBytes: 268_435_456,
+    });
+    const before = store.revision;
+    const applied = bus.execute(
+      fillBoxCommand(commandId("command:bus:budget-fill:0001"), {
+        volumeId: VOLUME,
+        region: { min: [0, 0, 0], max: [4, 4, 4] },
+        material: materialId(1),
+      }),
+      options("budget-fill:0001", before),
+    );
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    expect(store.getVoxel(VOLUME, [3, 3, 3])).toBe(1);
+
+    const undone = bus.undo(options("budget-fill:undo:0001", before + 1));
+    expect(undone.ok).toBe(true);
+    if (!undone.ok) return;
+    expect(store.getVoxel(VOLUME, [3, 3, 3])).toBe(0);
+    expect(store.revision).toBe(before + 2);
+
+    const redone = bus.redo(options("budget-fill:redo:0001", before + 2));
+    expect(redone.ok).toBe(true);
+    if (!redone.ok) return;
+    expect(store.getVoxel(VOLUME, [3, 3, 3])).toBe(1);
   });
 });
