@@ -18,7 +18,8 @@
     "@voxel-maker/commands": "workspace:*",
     "@voxel-maker/model": "workspace:*",
     "@voxel-maker/shared": "workspace:*",
-    "@voxel-maker/voxel": "workspace:*"
+    "@voxel-maker/voxel": "workspace:*",
+    "@voxel-maker/document": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:"

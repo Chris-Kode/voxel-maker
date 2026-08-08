@@ -1,8 +1,10 @@
 import {
   canonicalJson,
+  commandId,
   documentId,
   materialId,
   nodeId,
+  transactionId,
   volumeId,
 } from "@voxel-maker/shared";
 import {
@@ -12,8 +14,14 @@ import {
   parseDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import { traceVoxel } from "@voxel-maker/voxel";
-import { traceCommand } from "@voxel-maker/commands";
+import { chunkCoordinate, localCoordinate } from "@voxel-maker/voxel";
+import { createDocumentStore } from "@voxel-maker/document";
+import {
+  CommandBus,
+  CommandRegistry,
+  registerVoxelCommands,
+  setVoxelCommand,
+} from "@voxel-maker/commands";
 
 const identity = {
   translation: [0, 0, 0],
@@ -25,7 +33,7 @@ const identity = {
 function createDemoDocument(): VoxelDocument {
   return createDocument({
     documentId: documentId("document:demo:0001"),
-    metadata: { title: "headless demo", tags: ["trace"] },
+    metadata: { title: "headless demo", tags: ["edit"] },
     rootNodeId: nodeId("node:demo:root"),
     nodes: [
       {
@@ -76,19 +84,58 @@ function createDemoDocument(): VoxelDocument {
   });
 }
 
-/** Headless round-trip demo: create, serialize, hash, reload, and compare. */
+const DEMO_VOLUME = volumeId("volume:demo:0001");
+const DEMO_COORDINATE = [-1, 0, 1] as const;
+
+/**
+ * Headless edit demo: create a document, set one voxel through the command
+ * bus, undo it, redo it, then serialize, hash, reload, and compare.
+ */
 export function runHeadlessTrace(): string {
   const document = createDemoDocument();
-  const serialized = canonicalDocumentJson(document);
-  const hash = canonicalDocumentHash(document);
+  const { store, writeCapability } = createDocumentStore({ document });
+  const registry = new CommandRegistry();
+  registerVoxelCommands(registry);
+  const bus = new CommandBus(store, registry, writeCapability);
+
+  const setResult = bus.execute(
+    setVoxelCommand(commandId("command:demo:set:0001"), {
+      volumeId: DEMO_VOLUME,
+      coordinate: DEMO_COORDINATE,
+      material: materialId(1),
+    }),
+    {
+      transactionId: transactionId("transaction:demo:set:0001"),
+      expectedRevision: 0,
+      source: "ui",
+    },
+  );
+  const afterSet = store.getVoxel(DEMO_VOLUME, DEMO_COORDINATE);
+
+  const undoResult = bus.undo({
+    transactionId: transactionId("transaction:demo:undo:0001"),
+    expectedRevision: 1,
+    source: "ui",
+  });
+  const afterUndo = store.getVoxel(DEMO_VOLUME, DEMO_COORDINATE);
+
+  const redoResult = bus.redo({
+    transactionId: transactionId("transaction:demo:redo:0001"),
+    expectedRevision: 2,
+    source: "ui",
+  });
+  const afterRedo = store.getVoxel(DEMO_VOLUME, DEMO_COORDINATE);
+
+  const committed = store.getDocument();
+  const serialized = canonicalDocumentJson(committed);
+  const hash = canonicalDocumentHash(committed);
   const reloaded = parseDocument(serialized);
-  const voxel = traceVoxel([-1, 0, 1], 1);
-  const command = traceCommand(document, voxel);
+
   return canonicalJson({
     command: {
-      accepted: command.accepted,
-      commandId: command.commandId,
-      revision: command.revision,
+      accepted: setResult.ok,
+      transactionId: "transaction:demo:set:0001",
+      revisionAfter: setResult.ok ? setResult.value.revisionAfter : -1,
     },
     document: {
       documentId: document.documentId,
@@ -99,9 +146,19 @@ export function runHeadlessTrace(): string {
     },
     serialized,
     voxel: {
-      chunk: voxel.chunk,
-      local: voxel.local,
-      material: voxel.material,
+      chunk: chunkCoordinate(DEMO_COORDINATE),
+      local: localCoordinate(DEMO_COORDINATE),
+      material: afterRedo,
+    },
+    edit: {
+      afterSet,
+      afterUndo,
+      afterRedo,
+      revisions: [
+        setResult.ok ? setResult.value.revisionAfter : -1,
+        undoResult.ok ? undoResult.value.revisionAfter : -1,
+        redoResult.ok ? redoResult.value.revisionAfter : -1,
+      ],
     },
   });
 }

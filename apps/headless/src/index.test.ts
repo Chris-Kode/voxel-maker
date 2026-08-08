@@ -7,13 +7,17 @@ import { runHeadlessTrace } from "./index.js";
 const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
 const DEMO_HASH =
-  "df47c5c2e864cf2bda23b8cd6d184266eb0659fa47d572a18eb6c1af2254161b";
+  "165ab842532806fbf0677a367b2b43ac188c1d5e009bf212e74944df17c93b24";
 
 describe("headless workspace tracer", () => {
   it("round-trips a versioned document deterministically", () => {
     const output = runHeadlessTrace();
     const parsed = JSON.parse(output) as {
-      command: { accepted: boolean; commandId: string; revision: number };
+      command: {
+        accepted: boolean;
+        transactionId: string;
+        revisionAfter: number;
+      };
       document: {
         documentId: string;
         hash: string;
@@ -23,11 +27,17 @@ describe("headless workspace tracer", () => {
       };
       serialized: string;
       voxel: { chunk: number[]; local: number[]; material: number };
+      edit: {
+        afterSet: number;
+        afterUndo: number;
+        afterRedo: number;
+        revisions: number[];
+      };
     };
     expect(parsed.command).toEqual({
       accepted: true,
-      commandId: "command:trace:0001",
-      revision: 1,
+      transactionId: "transaction:demo:set:0001",
+      revisionAfter: 1,
     });
     expect(parsed.document).toEqual({
       documentId: "document:demo:0001",
@@ -41,6 +51,12 @@ describe("headless workspace tracer", () => {
       chunk: [-1, 0, 0],
       local: [15, 0, 1],
       material: 1,
+    });
+    expect(parsed.edit).toEqual({
+      afterSet: 1,
+      afterUndo: 0,
+      afterRedo: 1,
+      revisions: [1, 2, 3],
     });
     expect(canonicalDocumentHash(parseDocument(parsed.serialized))).toBe(
       parsed.document.hash,
@@ -57,5 +73,6 @@ describe("headless workspace tracer", () => {
     });
     expect(first).toBe(second);
     expect(first).toContain('"roundTripStable":true');
+    expect(first).toContain('"revisions":[1,2,3]');
   });
 });

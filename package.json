@@ -20,7 +20,7 @@
     "lint": "eslint eslint.config.mjs .dependency-cruiser.cjs scripts && turbo run lint",
     "test": "node --test scripts/*.test.mjs && turbo run test",
     "typecheck": "turbo run typecheck",
-    "coverage": "pnpm --filter @voxel-maker/math test:coverage && pnpm --filter @voxel-maker/model test:coverage && pnpm --filter @voxel-maker/shared test:coverage && pnpm --filter @voxel-maker/voxel test:coverage && pnpm --filter @voxel-maker/testkit test:coverage && pnpm --filter @voxel-maker/headless test:coverage"
+    "coverage": "pnpm --filter @voxel-maker/math test:coverage && pnpm --filter @voxel-maker/model test:coverage && pnpm --filter @voxel-maker/shared test:coverage && pnpm --filter @voxel-maker/voxel test:coverage && pnpm --filter @voxel-maker/document test:coverage && pnpm --filter @voxel-maker/commands test:coverage && pnpm --filter @voxel-maker/testkit test:coverage && pnpm --filter @voxel-maker/headless test:coverage"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

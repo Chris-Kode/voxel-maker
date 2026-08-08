@@ -74,6 +74,9 @@ importers:
       '@voxel-maker/commands':
         specifier: workspace:*
         version: link:../../packages/commands
+      '@voxel-maker/document':
+        specifier: workspace:*
+        version: link:../../packages/document
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../../packages/model
@@ -115,6 +118,12 @@ importers:
 
   packages/commands:
     dependencies:
+      '@voxel-maker/document':
+        specifier: workspace:*
+        version: link:../document
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../math
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../model
@@ -131,6 +140,9 @@ importers:
 
   packages/document:
     dependencies:
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../math
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../model
@@ -232,6 +244,9 @@ importers:
 
   packages/voxel:
     dependencies:
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../math
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../model
