@@ -1,0 +1,367 @@
+# Architecture
+
+This document is the architectural contract for the AI-native generic voxel editor. It defines the rules that implementation, review, and tests must preserve.
+
+[`plan.md`](./plan.md) contains the delivery roadmap and detailed baseline decisions. GitHub issues define the scope of individual slices. Approved ADRs explain hard-to-reverse trade-offs. If an ADR changes this contract, update this document in the same change; architecture must never diverge silently.
+
+## Architectural goals
+
+The system is optimized for these properties, in order:
+
+1. **Data safety** — rejected work, crashes, stale asynchronous work, and hostile input cannot corrupt authoritative asset state.
+2. **Determinism** — the same canonical state and command stream produce the same semantic result across supported processes and platforms.
+3. **One semantic model** — human actions, imports, recovery, and AI proposals use the same document concepts and registered commands.
+4. **Headless core** — semantic behavior runs and is testable in Node without React, Three.js, Tauri, a GPU, a filesystem, or an LLM.
+5. **Genericity** — one unchanged core represents architecture, furniture, vehicles, vegetation, humanoids, non-humanoid creatures, mechanical assemblies, and abstract assets.
+6. **Recoverability** — semantic commit, save, autosave, journaling, and recovery have explicit and honest durability semantics.
+7. **Projection isolation** — the renderer and UI project authoritative state; they never become authoritative.
+8. **Bounded trust** — files, native capabilities, provider output, tool arguments, images, and external formats are validated and resource-limited.
+9. **Incremental performance** — localized changes produce localized semantic, worker, and GPU work.
+10. **Replaceable integrations** — filesystem, renderer, worker, container-library, and model-provider details sit behind narrow adapters.
+
+When goals conflict, preserve correctness, data safety, and explicit failure before convenience or throughput. Optimize only with reproducible evidence.
+
+## System shape
+
+```text
+                         ┌──────────────────────────────┐
+                         │        Desktop app           │
+                         │ composition, panels, tools   │
+                         └──────────────┬───────────────┘
+                                        │
+                 ┌──────────────────────┼───────────────────────┐
+                 │                      │                       │
+          ┌──────▼──────┐       ┌───────▼───────┐       ┌──────▼──────┐
+          │ Editor      │       │ Agent + Skills│       │ Formats     │
+          │ runtime     │       │ inspect/stage │       │ import/export│
+          └──────┬──────┘       └───────┬───────┘       └──────┬──────┘
+                 │                      │                       │
+                 └──────────────┬───────┴───────────────┬──────┘
+                                │                       │
+                         ┌──────▼──────┐         ┌──────▼──────┐
+                         │ Command bus │         │ Renderer    │
+                         │ transactions│         │ projection  │
+                         └──────┬──────┘         └──────┬──────┘
+                                │                       │
+                    ┌───────────▼───────────────────────▼───────────┐
+                    │ Document, voxel, rigging, animation read model│
+                    └───────────────────┬───────────────────────────┘
+                                        │
+                              ┌─────────▼─────────┐
+                              │ Model + math + IDs│
+                              └───────────────────┘
+
+     Native filesystem/keychain and LLM providers connect only through adapters.
+```
+
+The desktop composition root creates implementations and injects them into modules. Semantic packages do not discover global singletons, construct platform integrations, or reach upward into the application.
+
+## Non-negotiable invariants
+
+### One edit path
+
+Every persistent change within an open document executes through `CommandBus.execute` or `CommandBus.executeTransaction`. UI tools, imports into an open document, agent tools, undo, and redo construct registered commands.
+
+`DocumentSession` is the only exception: it may install a complete aggregate for new, open, migrated, or approved recovery state after full parse, migration, and validation. Lifecycle replacement is not an editing shortcut.
+
+### One semantic model
+
+UI and AI behavior differ only in how intent is produced and approved. They share document schemas, command constructors, validation, transactions, history, events, and errors. Agent tools never maintain a parallel authoritative JSON model.
+
+### Deterministic intent
+
+A command payload contains every ID and value required for replay. Handlers do not generate IDs, read wall-clock time, call random generators, inspect UI state, or derive platform-sensitive intent secretly. Callers resolve and canonicalize those values before execution.
+
+Stable ordering is explicit. Object, map, set, archive entry, and worker completion order are never semantic ordering guarantees.
+
+### Atomic transactions
+
+Transactions validate and execute against a staged sequential view. Later commands observe earlier staged effects. A failure publishes no document or voxel change, revision, history entry, dirty transition, journal request, or commit event.
+
+One successful transaction increments the document revision exactly once, creates one history entry, and publishes one frozen post-commit event. Subscribers cannot veto or mutate the commit; subscriber exceptions are isolated.
+
+### Runtime/persistent separation
+
+Selection, hover, cameras, tools, panel layout, playback time, evaluated animation, constraints output, GPU resources, worker state, previews, diagnostics, and agent conversation state are runtime data. Native project serialization excludes them.
+
+### Renderer isolation
+
+Three.js and React Three Fiber types stay in renderer and desktop implementations. Semantic packages expose renderer-neutral DTOs and immutable read views. The scene is a disposable projection, not the source of truth.
+
+### Generic core
+
+Core schemas, commands, evaluators, and interfaces use generic concepts: node, volume, material, pivot, joint, constraint, clip, track, and keyframe. Asset categories and named motions are expressed as skill instructions, recipes, fixtures, or deterministic generators above the engine.
+
+### Bounded untrusted input
+
+Files, archives, metadata, native paths, command envelopes, tool arguments, provider output, preview images, and external formats are parsed before use and checked against configurable limits before allocation or mutation. Errors use stable codes, paths, safe messages, and optional remediation hints.
+
+### Revision safety
+
+Normal editing, import into an open document, AI Apply, undo, and redo declare an expected base revision. Stale work fails before staging. Identical committed transaction replay follows the idempotency policy; reusing an identifier with different canonical bytes fails.
+
+### Compatibility safety
+
+Persisted documents and journals carry explicit independent versions. Migrations run one version at a time. Unknown future versions fail clearly and never overwrite source material. Format changes require fixtures and migration or an explicit compatibility break approved by ADR.
+
+## Package ownership and dependencies
+
+The intended workspace has one desktop application and deep semantic or adapter packages. A package owns both its interface and its invariants; callers do not reconstruct those invariants.
+
+| Module | Owns | May depend on |
+|---|---|---|
+| `shared` | Branded IDs, bounded primitives, results, errors, event utilities | Nothing |
+| `math` | Vectors, integer vectors, quaternions, transforms, matrices, AABBs, rays | `shared` |
+| `model` | All persisted DTOs, structural schemas, canonical document encoding, schema migrations | `shared`, `math` |
+| `voxel` | Sparse chunk storage, coordinate mapping, region operations, voxel queries, meshing input | `shared`, `math`, `model` |
+| `document` | Aggregate invariants, hierarchy and transform queries, immutable read views | `shared`, `math`, `model`, `voxel` |
+| `rigging` | Pivot, joint, and constraint semantics plus pure evaluation | `shared`, `math`, `model`, `document` |
+| `animation` | Clip and track semantics plus pure sampling and runtime evaluation | `shared`, `math`, `model`, `document`, `rigging` |
+| `commands` | Registry, staging, transactions, revisions, history, command handlers, command migration | `shared`, `math`, `model`, `voxel`, `document`, `rigging`, `animation` |
+| `renderer` | Three.js projection, meshing workers, picking, overlays, GPU lifecycle | Semantic read modules; never `commands` or editor implementations |
+| `editor` | Tools and non-React editor workflows that construct commands | Semantic read modules and `commands` |
+| `formats` | Native and external codecs, validation, import/export projections | Semantic read modules; platform I/O is injected |
+| `agent` | Tool contracts, bounded inspection, preview transactions, agent state machine | Semantic read modules and `commands` |
+| `skills` | Versioned domain instructions, recipes, deterministic generators, evaluations | Agent tool contracts and generic command proposal contracts |
+| desktop app | Composition, React UI, Tauri adapters, provider adapters | All modules required for composition |
+
+Rules:
+
+- Dependencies point downward only. No package imports from the desktop application.
+- `model` owns the complete persisted discriminated unions. Feature modules add semantic validation and evaluation; they do not extend the schema upward at runtime.
+- `commands` owns the kernel and feature handler registrars. Feature packages never import a global command bus.
+- `renderer` consumes immutable snapshots and runtime evaluation. It does not issue persistent commands or expose Three.js objects as domain identifiers.
+- `formats` parses and serializes semantic data. Native path access and atomic replacement belong to storage adapters.
+- `agent` may inspect bounded read interfaces and construct commands. It does not import editor or renderer implementations.
+- Package exports and dependency checks enforce these rules. Deep cross-package imports are unsupported.
+
+## Authoritative state and capabilities
+
+| Owner | Responsibility | Write authority |
+|---|---|---|
+| `DocumentStore` | Open document, semantic records, committed revision | Private capability held by command bus and lifecycle coordinator |
+| `VoxelRepository` | Sparse typed-array volumes associated with the document | Same staged transaction capability as the document |
+| `DocumentSession` | New/open/replace/recover/close lifecycle | May install only fully validated aggregate and volumes |
+| `PreviewSession` | Copy-on-write staged read model for proposal review | Preview namespace only; no live authority |
+| `EditorStore` | Selection, hover, active tool, camera, panels, timeline cursor, notices | Runtime only |
+| `SceneRuntime` | World transforms, evaluated animation, constraints, mesh and picking maps | Runtime projection only |
+| `AgentSession` | Context summary, budgets, base revision, tool state, cancellation | Agent runtime and preview only |
+| `FileService` | Open, atomic save, autosave, journal, keychain through scoped ports | External effects; never semantic mutation |
+
+Public reads return immutable snapshots, copies, or immutable accessors. A mutable `Uint16Array`, map, or record owned by authoritative state never escapes through a public interface.
+
+## Canonical semantic model
+
+### Coordinates and transforms
+
+- Right-handed coordinates: `+X` right, `+Y` up, `+Z` forward.
+- Voxel locations are integers. Regions are half-open `[min, max)`.
+- Negative chunk mapping uses mathematical floor division and positive modulo.
+- Angles are radians internally.
+- Quaternions serialize as `[x, y, z, w]`, are finite and normalized, and use one sign-canonicalization rule.
+- Scale is finite and strictly positive in version 1. Geometry reflection uses voxel mirror operations rather than negative node scale.
+- Canonical transforms store translation, pivot, rotation, and scale; matrices are runtime-only.
+- Transform evaluation is `T(position) × T(pivot) × R(rotation) × S(scale) × T(-pivot)`.
+- Persistent derived transform intent, such as preserve-world reparenting, is resolved and canonicalized by the command constructor and carried in its payload.
+
+### Document aggregate
+
+A document contains explicit schema versions, metadata, ordered scene nodes, material records, volume descriptors, generic components, and animation data. Bulk chunk bytes live in the associated voxel repository and serialize separately.
+
+A node has exactly one parent reference and one ordered children list. Validators enforce reciprocity, uniqueness, acyclicity, and complete references. Deleting referenced nodes, volumes, materials, components, or animation records is rejected unless the command declares an explicit valid cascade or replacement policy.
+
+Components form a closed, independently versioned discriminated union. Voxel, pivot, and joint components are singletons per node. Constraints carry stable IDs and deterministic order. Bounded JSON-compatible metadata is inert to engine behavior.
+
+### Voxel storage
+
+Version 1 uses sparse `16 × 16 × 16` chunks of unsigned 16-bit material values. Zero is empty; `1...65535` reference document materials. X is the fastest-changing local coordinate. Empty chunks are removed after mutation.
+
+Each in-session chunk may carry runtime revision and content-hash metadata, but runtime revision is excluded from semantic state. Boundary occupancy changes invalidate the edited chunk and only the six face neighbors needed for visibility.
+
+Bulk operations estimate and validate bounds before allocation. Their change sets contain the affected chunks and compact old values required for inversion, not entire document snapshots.
+
+### Materials
+
+Material IDs are exact unsigned 16-bit values supplied by callers. Zero is absent from the material table. IDs are not reused while reachable history or recovery records can mention them. Initial material properties are bounded name, canonical color, opacity, roughness, metallic, and emissive values.
+
+All other persistent IDs are opaque serialized strings. Production callers may generate UUIDs, but the generated ID enters the command payload before execution. Tests use fixed IDs.
+
+## Commands, transactions, and history
+
+A command has a caller-supplied ID, type, schema version, and serializable payload. Audit metadata such as source, correlation, display label, and timestamps is outside deterministic semantic intent unless explicitly part of the asset.
+
+Every registry entry provides:
+
+- runtime payload parsing;
+- semantic validation against a read view and configured limits;
+- staged execution returning granular change information and inverse intent;
+- an explicit inverse or non-undoable policy;
+- declared affected resources;
+- optional deterministic UI gesture coalescing.
+
+Transaction execution follows this order:
+
+1. Parse the envelope and enforce command, byte, and source budgets.
+2. Verify expected revision and transaction idempotency.
+3. Create a copy-on-write overlay for touched records and chunks.
+4. Parse, validate, and execute commands sequentially against the overlay.
+5. Run aggregate and referential invariants on staged state.
+6. Discard everything on failure and return the failing command index in a structured error.
+7. Atomically install staged state and increment revision once.
+8. Create one history entry and publish one frozen post-commit event.
+
+Undo executes stored inverses in reverse command order as one special transaction. Redo replays original commands. A new normal commit clears redo. Coalesced gestures remain deterministic commands but may replace a pending history entry until the gesture ends.
+
+Post-commit consumers re-read a revisioned immutable snapshot. Events carry granular changed IDs and chunk coordinates but are not writable payloads. Asynchronous consumers process revisions in order.
+
+## Persistence and recovery
+
+The native `.vxl` container is a versioned ZIP with:
+
+- a canonical manifest and entry index;
+- canonical document JSON;
+- coordinate-sorted little-endian sparse voxel streams;
+- optional standard preview images outside semantic identity.
+
+Readers validate path safety, duplicates, entry counts, compressed and uncompressed sizes, ratios, integer overflow, offsets, dimensions, codecs, checksums, metadata depth, and all resource limits before bulk allocation.
+
+`canonicalDocumentHash` is SHA-256 over the documented canonical semantic document plus sorted uncompressed voxel values. It excludes timestamps, archive compression details, permissions, previews, UI state, runtime revisions, history, recovery data, audit logs, and diagnostics. CRC checks container or journal corruption; it is not semantic identity.
+
+A save captures immutable revision `R`, writes a same-directory temporary file, flushes where supported, atomically replaces the destination, and retains a last-known-good backup. Completion marks the project clean only if the live semantic hash still matches captured `R`.
+
+Semantic commit precedes durable recovery I/O. An ordered recovery writer appends checksummed frames and tracks `lastJournaledRevision`. Failure leaves the edit valid and dirty, reports degraded crash recovery, and schedules retry; it never claims unconfirmed durability.
+
+Recovery loads a durable snapshot, scans to the last complete valid frame, and replays through normal command decoding, migrations, limits, and invariants. It reports a corrupt tail and never guesses past it. Recovery restores the asset, then starts a fresh bounded user history.
+
+## Renderer and workers
+
+The renderer maps stable node and material IDs to disposable Three.js resources. It consumes commit events and runtime evaluation, then re-reads immutable snapshots. Lifecycle replacement disposes and rebinds the complete projection.
+
+Meshing workers receive copied immutable chunk and halo data. Requests and results carry:
+
+- live or `preview:<session>` namespace;
+- volume and chunk identity;
+- chunk revision;
+- cancellation identity.
+
+Only a result matching the latest namespace, identity, and revision may update the scene. Worker completion order never determines visible state. Queueing is bounded, visible work is prioritized, main-thread uploads are budgeted, and every replacement disposes superseded GPU resources.
+
+Face culling is the correctness baseline. Greedy meshing is an optimization behind the same seam and requires golden equivalence plus benchmark evidence.
+
+## Editor interaction
+
+`EditorStore` owns only runtime interaction state. An editor tool receives pointer and keyboard input, reads immutable semantic state, maintains a transient preview, and constructs commands on commit.
+
+A complete gesture produces one user-meaningful history entry. Pointer cancellation restores the exact starting state. Selection references are pruned after semantic deletion. Local/world modes, snapping, collision behavior, and transform preservation are explicit rather than inferred from UI state inside handlers.
+
+The React interface calls editor modules and displays returned state and errors. React widgets do not encode duplicate domain invariants.
+
+## Rigging and animation
+
+Hierarchy is the only transform graph. A joint annotates a node; it never introduces a second parent relationship.
+
+Version 1 constraints are deterministically ordered local Euler XYZ rotation limits in radians. Constraint evaluation is pure runtime behavior applied after authored or animated local transforms and does not write the document.
+
+Animation data is generic: clips contain typed property tracks and stable keyframes. Validation enforces target existence, property/value compatibility, finite values, duration, loop policy, unique sorted times, and configured limits.
+
+Rotation tracks store canonical quaternions and use shortest-path spherical interpolation. Initial interpolation modes are step, linear, and a precisely frozen ease curve. Runtime evaluation layers base document state, animation override, and constraints, then calculates hierarchy world transforms. Playback never emits commands per frame, and stopping restores base state exactly.
+
+## AI, previews, and skills
+
+The agent uses provider-neutral, versioned JSON-schema tool contracts. Inspection and mutation are separate capabilities. Inspection is selection-first, paginated, bounded, revision-tagged, and based on stable IDs.
+
+Tools accept structured domain arguments only. They have no shell, source execution, unrestricted path, arbitrary URL, mutable document, or renderer-object capability. Mutation tools construct registered commands and prefer coarse semantic operations over long per-voxel streams.
+
+An agent run owns a base revision, budgets, cancellation state, and a copy-on-write `PreviewSession`. Staged reads observe prior staged commands. Preview events and worker jobs use an isolated namespace and cannot affect live revision, history, dirty state, autosave, or recovery.
+
+The agent state machine is:
+
+1. understand;
+2. inspect;
+3. plan;
+4. stage;
+5. inspect staged state;
+6. validate;
+7. request approval when policy requires it;
+8. apply one optimistic transaction or discard.
+
+A revision conflict is never silently rebased. The user chooses discard, reinspect, or replan. Apply creates one labeled undoable history entry; Discard creates none.
+
+Every session enforces limits on rounds, tokens, tool calls, commands, output bytes, voxel modifications, tracks, keyframes, duration, elapsed time, and estimated cost. Provider credentials live in the operating-system keychain. Provider-specific types remain inside adapters. Logs and diagnostics follow approved consent, retention, and redaction policies.
+
+Skills are removable versioned knowledge: instructions, allowed tools, constraints, deterministic generators, provenance, and evaluations. They produce generic command proposals. A saved document never requires the originating skill to open, edit, animate, or export.
+
+Visual refinement uses fixed standard-view evidence and an opt-in bounded correction loop. Images are evidence for proposed commands, never authoritative state.
+
+## Interface and adapter design
+
+Modules should be deep: a small interface hides substantial invariant-preserving behavior. The interface is also the test surface.
+
+- Accept dependencies; construct concrete adapters only in the composition root.
+- Return explicit results and stable errors instead of signaling semantic failures through exceptions.
+- Introduce a seam when behavior truly varies. One adapter is hypothetical; two adapters make it real.
+- Keep internal seams private when callers do not need the variability.
+- Prefer immutable snapshots and intent-rich operations over mutable repositories and many shallow setters.
+- Apply the deletion test: removing a useful module should force its complexity into multiple callers.
+- Keep platform details, archive-library details, model-provider details, and Three.js details local to their adapters.
+
+## Verification architecture
+
+Tests cross the highest practical interface and assert external behavior rather than implementation details.
+
+| Test class | Required evidence |
+|---|---|
+| Pure and property | Math, negative chunk mapping, canonicalization, shape coordinates, operation identities, graph and animation invariants |
+| Command conformance | Every registered command: valid, invalid, inverse, undo, redo, codec, deterministic replay, conflict, limits, rollback |
+| Integration | Document plus voxel staging, history, commit events, save snapshots, journal, lifecycle, renderer scheduling, preview transactions |
+| Golden | Canonical JSON and binary, semantic hashes, migrations, shapes, mesh output, import/export, animation samples, standard views |
+| Adversarial and fuzz | Native files, archives, external formats, journal tails, metadata, command and tool JSON, provider output |
+| Desktop E2E | Create, edit, select, organize, rig, animate, save, recover, import, export, AI Apply/Discard/conflict, accessibility |
+| Performance | Named hardware and 100k/500k/1M fixtures; command, preview, meshing, frame, memory, save/load, animation, export, AI efficiency |
+| AI evaluation | Fixed documents, selections, prompts, provider/model/tool versions, budgets, structural metrics, unrelated diffs, rendered evidence |
+
+A failure test is complete only when it asserts the absence of forbidden side effects. A deterministic test controls IDs, seeds, clocks, ordering, providers, and worker completion. Live providers are used only by explicitly credentialed evaluations.
+
+## Forbidden dependency and behavior patterns
+
+Architecture checks must reject:
+
+- persistent document writes outside the command bus or validated lifecycle replacement;
+- direct UI or agent mutation of records, chunks, typed-array backing data, or renderer objects;
+- React, Three.js, React Three Fiber, Tauri, filesystem, network, or provider imports in semantic core packages;
+- upward package dependencies, app imports from packages, deep cross-package imports, and dependency cycles;
+- hidden ID, time, random, trigonometric intent, insertion-order, or worker-order dependence inside command handlers;
+- serialized selection, camera, playback, preview, GPU, worker, agent scratch, diagnostics, history, or recovery runtime state;
+- asset-category document types, core commands, constraints, tracks, or evaluators;
+- unbounded parsing, allocation, inspection output, tool execution, agent iteration, or visual refinement;
+- migrations that skip versions, silently discard unknown data, or overwrite a source before validated replacement;
+- tests that require private implementation access when a public architectural seam exists.
+
+## Changing the architecture
+
+Use an ADR only for a decision that is hard to reverse, surprising without context, and selected from genuine alternatives. An architectural change is complete when:
+
+1. the ADR records context, alternatives, decision, consequences, compatibility, migration, and rollback;
+2. `ARCHITECTURE.md` reflects the resulting current contract;
+3. dependency and architecture tests enforce the new rule;
+4. schemas, commands, formats, migrations, goldens, and threat model are updated where affected;
+5. the parent plan or follow-up issue records delivery impact.
+
+Until all five conditions hold, the existing contract remains authoritative.
+
+## Review checklist
+
+Before approving a change, verify:
+
+- [ ] The assigned user behavior crosses the highest practical seam end to end.
+- [ ] Authoritative state has one owner and every write uses the correct capability.
+- [ ] Commands are complete, serializable, deterministic, bounded, versioned, and conforming.
+- [ ] Failed, stale, cancelled, or discarded work has no forbidden side effects.
+- [ ] Runtime projections cannot become persisted or authoritative.
+- [ ] Package dependencies point downward and platform types remain in adapters.
+- [ ] The core remains generic across unrelated asset categories.
+- [ ] Untrusted inputs are parsed and preflighted before allocation or mutation.
+- [ ] Compatibility changes include explicit versions, migrations, and retained fixtures.
+- [ ] Asynchronous work is revision-tagged, cancellable where required, and stale-safe.
+- [ ] Tests assert external behavior with deterministic inputs and cover relevant failures.
+- [ ] Security, privacy, accessibility, and performance effects are measured or explicitly unchanged.
