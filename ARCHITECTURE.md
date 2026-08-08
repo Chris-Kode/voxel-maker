@@ -21,6 +21,18 @@ The system is optimized for these properties, in order:
 
 When goals conflict, preserve correctness, data safety, and explicit failure before convenience or throughput. Optimize only with reproducible evidence.
 
+## Accepted decisions
+
+The hard-to-reverse contracts behind this document are recorded with their alternatives, consequences, and delivery gates:
+
+1. [Coordinate, transform, and canonical number semantics](./docs/adr/0001-coordinate-transform-and-canonical-number-semantics.md)
+2. [Authoritative state and mutation capabilities](./docs/adr/0002-authoritative-state-and-mutation-capabilities.md)
+3. [Command, transaction, revision, and history semantics](./docs/adr/0003-command-transaction-revision-and-history-semantics.md)
+4. [Native storage, canonicalization, and versioning](./docs/adr/0004-native-storage-canonicalization-and-versioning.md)
+5. [Package dependency, threading, and adapter boundaries](./docs/adr/0005-package-dependency-threading-and-adapter-boundaries.md)
+6. [Generic articulation and animation runtime](./docs/adr/0006-generic-articulation-and-animation-runtime.md)
+7. [Bounded provider-neutral AI proposals](./docs/adr/0007-bounded-provider-neutral-ai-proposals.md)
+
 ## System shape
 
 ```text
@@ -162,6 +174,8 @@ Public reads return immutable snapshots, copies, or immutable accessors. A mutab
 - Scale is finite and strictly positive in version 1. Geometry reflection uses voxel mirror operations rather than negative node scale.
 - Canonical transforms store translation, pivot, rotation, and scale; matrices are runtime-only.
 - Transform evaluation is `T(position) × T(pivot) × R(rotation) × S(scale) × T(-pivot)`.
+- Canonical JSON is UTF-8 without BOM and follows RFC 8785 for member ordering, escaping, and ECMAScript shortest round-trippable numbers. Arrays retain schema order; absent optional fields are omitted, allowed explicit `null` is preserved, and unknown fields, non-finite values, and serialized `-0` are rejected before canonicalization. Authored values are not blanket-quantized; derived transform components use the ADR-0001 `1e-9` quantization and decomposition policy before entering a command.
+- Canonical colors are lowercase `#rrggbb` or `#rrggbbaa`; color-space conversion is renderer-only.
 - Persistent derived transform intent, such as preserve-world reparenting, is resolved and canonicalized by the command constructor and carried in its payload.
 
 ### Document aggregate
@@ -182,7 +196,7 @@ Bulk operations estimate and validate bounds before allocation. Their change set
 
 ### Materials
 
-Material IDs are exact unsigned 16-bit values supplied by callers. Zero is absent from the material table. IDs are not reused while reachable history or recovery records can mention them. Initial material properties are bounded name, canonical color, opacity, roughness, metallic, and emissive values.
+Material IDs are exact unsigned 16-bit values supplied by callers. Zero is absent from the material table. IDs are not reused while reachable history or recovery records can mention them. Initial material properties are bounded name, canonical color, opacity, roughness, metallic, and emissive values. Opacity is in `[0,1]`; transparent voxels remain occupied and pickable, and adjacency to a non-opaque voxel does not hide a face.
 
 All other persistent IDs are opaque serialized strings. Production callers may generate UUIDs, but the generated ID enters the command payload before execution. Tests use fixed IDs.
 
@@ -195,7 +209,7 @@ Every registry entry provides:
 - runtime payload parsing;
 - semantic validation against a read view and configured limits;
 - staged execution returning granular change information and inverse intent;
-- an explicit inverse or non-undoable policy;
+- an explicit inverse (every version 1 persistent edit command is undoable);
 - declared affected resources;
 - optional deterministic UI gesture coalescing.
 
@@ -210,7 +224,7 @@ Transaction execution follows this order:
 7. Atomically install staged state and increment revision once.
 8. Create one history entry and publish one frozen post-commit event.
 
-Undo executes stored inverses in reverse command order as one special transaction. Redo replays original commands. A new normal commit clears redo. Coalesced gestures remain deterministic commands but may replace a pending history entry until the gesture ends.
+Every version 1 persistent edit command is undoable. Undo executes stored inverses in reverse command order as one special transaction. Redo replays original commands. A new normal commit clears redo. Lifecycle replacement resets history. Coalescing requires an explicit deterministic key and compatible affected resources on the latest unsealed entry; it combines history presentation, never semantic commits or revisions, and seals on gesture end, incompatible or intervening commit, undo/redo, lifecycle replacement, or failure. Idempotency records remain available for the open session and retained recovery horizon.
 
 Post-commit consumers re-read a revisioned immutable snapshot. Events carry granular changed IDs and chunk coordinates but are not writable payloads. Asynchronous consumers process revisions in order.
 
@@ -225,9 +239,9 @@ The native `.vxl` container is a versioned ZIP with:
 
 Readers validate path safety, duplicates, entry counts, compressed and uncompressed sizes, ratios, integer overflow, offsets, dimensions, codecs, checksums, metadata depth, and all resource limits before bulk allocation.
 
-`canonicalDocumentHash` is SHA-256 over the documented canonical semantic document plus sorted uncompressed voxel values. It excludes timestamps, archive compression details, permissions, previews, UI state, runtime revisions, history, recovery data, audit logs, and diagnostics. CRC checks container or journal corruption; it is not semantic identity.
+`canonicalDocumentHash` is SHA-256 over the ADR-0004 `canonicalSemanticBytes`: a version tag; length-framed RFC 8785 UTF-8 document; and length-framed non-empty chunks sorted by volume ID and signed coordinates, with all 4096 X-fastest unsigned-16 values encoded little-endian. It excludes timestamps, archive compression details, permissions, previews, UI state, runtime revisions, history, recovery data, audit logs, and diagnostics. CRC checks container or journal corruption; it is not semantic identity.
 
-A save captures immutable revision `R`, writes a same-directory temporary file, flushes where supported, atomically replaces the destination, and retains a last-known-good backup. Completion marks the project clean only if the live semantic hash still matches captured `R`.
+A save captures immutable snapshot `(revision R, semantic hash H_R)`, writes a same-directory temporary file, flushes where supported, atomically replaces the destination, and retains a last-known-good backup. Completion records `R` as the durable snapshot and marks the project clean only if the live semantic hash equals captured `H_R`; it never compares a hash with a Revision.
 
 Semantic commit precedes durable recovery I/O. An ordered recovery writer appends checksummed frames and tracks `lastJournaledRevision`. Failure leaves the edit valid and dirty, reports degraded crash recovery, and schedules retry; it never claims unconfirmed durability.
 
@@ -244,7 +258,7 @@ Meshing workers receive copied immutable chunk and halo data. Requests and resul
 - chunk revision;
 - cancellation identity.
 
-Only a result matching the latest namespace, identity, and revision may update the scene. Worker completion order never determines visible state. Queueing is bounded, visible work is prioritized, main-thread uploads are budgeted, and every replacement disposes superseded GPU resources.
+Only a result matching the latest namespace, identity, and revision may update the scene. Worker completion order never determines visible state. The main thread alone owns semantic and renderer installation authority; workers are pure compute adapters over copied immutable input. Queueing is bounded, visible work is prioritized, main-thread uploads are budgeted, and every replacement disposes superseded GPU resources.
 
 Face culling is the correctness baseline. Greedy meshing is an optimization behind the same seam and requires golden equivalence plus benchmark evidence.
 
@@ -252,7 +266,7 @@ Face culling is the correctness baseline. Greedy meshing is an optimization behi
 
 `EditorStore` owns only runtime interaction state. An editor tool receives pointer and keyboard input, reads immutable semantic state, maintains a transient preview, and constructs commands on commit.
 
-A complete gesture produces one user-meaningful history entry. Pointer cancellation restores the exact starting state. Selection references are pruned after semantic deletion. Local/world modes, snapping, collision behavior, and transform preservation are explicit rather than inferred from UI state inside handlers.
+A complete gesture produces one user-meaningful history entry; pointer tools normally keep a runtime preview and commit once at gesture end. Pointer cancellation restores the exact starting state. Selection references are pruned after semantic deletion. Local/world modes, snapping, collision behavior, and transform preservation are explicit rather than inferred from UI state inside handlers. Right-angle region rotation uses the integer minimum-anchored mapping and explicit `overwrite` collision policy in ADR-0001. Picking chooses nearest non-negative distance, then resolves exact ties by X/Y/Z axis priority and stable node/volume identity.
 
 The React interface calls editor modules and displays returned state and errors. React widgets do not encode duplicate domain invariants.
 
@@ -260,11 +274,11 @@ The React interface calls editor modules and displays returned state and errors.
 
 Hierarchy is the only transform graph. A joint annotates a node; it never introduces a second parent relationship.
 
-Version 1 constraints are deterministically ordered local Euler XYZ rotation limits in radians. Constraint evaluation is pure runtime behavior applied after authored or animated local transforms and does not write the document.
+Version 1 constraints follow stable persisted order and apply local Euler XYZ rotation limits in radians. Constraint evaluation is pure runtime behavior applied after authored or animated local transforms and does not write the document. Positive non-uniform ancestor scale is supported because local rotation is clamped before hierarchy composition; runtime evaluation never decomposes resulting shear.
 
 Animation data is generic: clips contain typed property tracks and stable keyframes. Validation enforces target existence, property/value compatibility, finite values, duration, loop policy, unique sorted times, and configured limits.
 
-Rotation tracks store canonical quaternions and use shortest-path spherical interpolation. Initial interpolation modes are step, linear, and a precisely frozen ease curve. Runtime evaluation layers base document state, animation override, and constraints, then calculates hierarchy world transforms. Playback never emits commands per frame, and stopping restores base state exactly.
+Rotation tracks store canonical quaternions and use shortest-path spherical interpolation. Initial interpolation modes are step, linear, and smoothstep `u² × (3 - 2u)`. `once` clamps time to `[0,duration]`; `loop` uses mathematical modulo into `[0,duration)`, with negative playback time clamped to zero. Runtime evaluation layers base document state, animation override, and constraints, then calculates hierarchy world transforms. Playback never emits commands per frame, and stopping restores base state exactly.
 
 ## AI, previews, and skills
 
@@ -282,10 +296,10 @@ The agent state machine is:
 4. stage;
 5. inspect staged state;
 6. validate;
-7. request approval when policy requires it;
+7. request explicit user approval;
 8. apply one optimistic transaction or discard.
 
-A revision conflict is never silently rebased. The user chooses discard, reinspect, or replan. Apply creates one labeled undoable history entry; Discard creates none.
+A revision conflict is never silently rebased. The user chooses discard, reinspect, or replan. Version 1 has no AI auto-apply path: every persistent proposal requires explicit user approval. Apply creates one labeled undoable history entry; Discard creates none.
 
 Every session enforces limits on rounds, tokens, tool calls, commands, output bytes, voxel modifications, tracks, keyframes, duration, elapsed time, and estimated cost. Provider credentials live in the operating-system keychain. Provider-specific types remain inside adapters. Logs and diagnostics follow approved consent, retention, and redaction policies.
 

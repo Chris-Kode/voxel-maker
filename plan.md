@@ -319,6 +319,18 @@ Stages describe dependency order, not a requirement that all work be serial. Tas
 **Indicative effort:** 1 week with tech lead + product/design + QA.  
 **Exit artifact:** Approved ADR set, threat-model skeleton, UX flows, issue dependency graph.
 
+Accepted core decision records:
+
+- [ADR-0001 — Coordinate, transform, and canonical number semantics](./docs/adr/0001-coordinate-transform-and-canonical-number-semantics.md)
+- [ADR-0002 — Authoritative state and mutation capabilities](./docs/adr/0002-authoritative-state-and-mutation-capabilities.md)
+- [ADR-0003 — Command, transaction, revision, and history semantics](./docs/adr/0003-command-transaction-revision-and-history-semantics.md)
+- [ADR-0004 — Native storage, canonicalization, and versioning](./docs/adr/0004-native-storage-canonicalization-and-versioning.md)
+- [ADR-0005 — Package dependency, threading, and adapter boundaries](./docs/adr/0005-package-dependency-threading-and-adapter-boundaries.md)
+- [ADR-0006 — Generic articulation and animation runtime](./docs/adr/0006-generic-articulation-and-animation-runtime.md)
+- [ADR-0007 — Bounded provider-neutral AI proposals](./docs/adr/0007-bounded-provider-neutral-ai-proposals.md)
+
+ADR-0001, ADR-0005, and ADR-0006 also resolve the core-runtime portions of S0.18: picking ties, region-rotation anchoring and collision, loop endpoints, transparency, constraint order, and non-uniform scale. Product support and operational policies remain in #3.
+
 | ID | Task | Depends on | Deliverable / acceptance |
 |---|---|---|---|
 | S0.1 | Confirm MVP boundaries and target OS versions | — | Signed scope includes exact Phase 1–6 features and explicit deferred list |
@@ -482,7 +494,7 @@ Stages describe dependency order, not a requirement that all work be serial. Tas
 | S5.11 | Implement migrations and backup-on-upgrade | S2.11,S5.4 | Old fixtures migrate; original is never overwritten before successful save |
 | S5.12 | Add corrupt/adversarial file fixtures | S5.4 | truncation, checksum, huge lengths, cycles, missing chunks, future version, zip traversal |
 | S5.13 | Add persistence/recovery E2E tests | S5.7–S5.11,S5.14,S5.15 | crash/failure boundaries, edit-during-save races, lifecycle replacement and semantic/byte-stability promises |
-| S5.14 | Implement immutable revision snapshot isolation | S4.3,S5.5 | Retain COW records/chunks for async writer; save marks clean only if live hash still equals captured R; stale completion cannot clear dirty state |
+| S5.14 | Implement immutable revision snapshot isolation | S4.3,S5.5 | Retain COW records/chunks for async writer; capture `(R, H_R)` and mark clean only if the live hash equals captured `H_R`; stale completion cannot clear dirty state |
 | S5.15 | Implement `DocumentSession` lifecycle coordinator | S2.10,S5.4,S5.10 | validated new/open/recovery/replace/close; events reset history/redo/selection/runtime/workers/autosave binding; recovery-session Save As reassociation |
 
 ### Milestone M1 — Headless Engine
