@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "voxel-maker-headless": "./dist/cli.js"
+    "voxel-maker-headless": "./dist/cli.js",
+    "voxel-maker-persistence": "./dist/persistence-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -19,7 +20,9 @@
     "@voxel-maker/model": "workspace:*",
     "@voxel-maker/shared": "workspace:*",
     "@voxel-maker/voxel": "workspace:*",
-    "@voxel-maker/document": "workspace:*"
+    "@voxel-maker/document": "workspace:*",
+    "@voxel-maker/formats": "workspace:*",
+    "@voxel-maker/math": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:"

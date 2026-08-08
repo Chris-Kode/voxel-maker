@@ -11,6 +11,7 @@ export {
   localCoordinate,
   type ChunkChange,
   type VoxelChangeSet,
+  type VoxelChunkSeed,
   type VoxelEntry,
   type VoxelPatch,
   type VoxelPatchChunk,

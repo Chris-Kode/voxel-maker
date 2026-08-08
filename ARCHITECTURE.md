@@ -238,7 +238,8 @@ Post-commit consumers re-read a revisioned immutable snapshot. Events carry gran
 
 ## Persistence and recovery
 
-The native `.vxl` container is a versioned ZIP with:
+The native `.vxl` container (frozen v1 layout: `docs/format/vxl-v1.md`) is a
+versioned ZIP with:
 
 - a canonical manifest and entry index;
 - canonical document JSON;
@@ -247,7 +248,7 @@ The native `.vxl` container is a versioned ZIP with:
 
 Readers validate path safety, duplicates, entry counts, compressed and uncompressed sizes, ratios, integer overflow, offsets, dimensions, codecs, checksums, metadata depth, and all resource limits before bulk allocation.
 
-`canonicalDocumentHash` is SHA-256 over the ADR-0004 `canonicalSemanticBytes`: a version tag; length-framed RFC 8785 UTF-8 document; and length-framed non-empty chunks sorted by volume ID and signed coordinates, with all 4096 X-fastest unsigned-16 values encoded little-endian. It excludes timestamps, archive compression details, permissions, previews, UI state, runtime revisions, history, recovery data, audit logs, and diagnostics. CRC checks container or journal corruption; it is not semantic identity.
+Asset identity is SHA-256 over the ADR-0004 `canonicalSemanticBytes` (`canonicalAssetSemanticHash` in `@voxel-maker/document`): a version tag; the length-framed RFC 8785 UTF-8 document (`canonicalDocumentHash` covers the document-only framing in `@voxel-maker/model`); and length-framed non-empty chunk streams sorted by volume ID and signed coordinates, with all 4096 X-fastest unsigned-16 values encoded little-endian. It excludes timestamps, archive compression details, permissions, previews, UI state, runtime revisions, history, recovery data, audit logs, and diagnostics. CRC checks container or journal corruption; it is not semantic identity.
 
 A save captures immutable snapshot `(revision R, semantic hash H_R)`, writes a same-directory temporary file, flushes where supported, atomically replaces the destination, and retains a last-known-good backup. Completion records `R` as the durable snapshot and marks the project clean only if the live semantic hash equals captured `H_R`; it never compares a hash with a Revision.
 

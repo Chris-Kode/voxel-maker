@@ -825,3 +825,209 @@ function expectSameVoxels(
     expect(actualValues.join(",")).toBe(values.join(","));
   }
 }
+
+/** Asserts that `fn` throws a WorkspaceError with the exact stable code. */
+function expectErrorCode(fn: () => unknown, code: string): void {
+  let thrown: unknown;
+  try {
+    fn();
+  } catch (error) {
+    thrown = error;
+  }
+  if (thrown === undefined) {
+    throw new Error(`Expected WorkspaceError ${code}, but nothing was thrown`);
+  }
+  if (
+    typeof thrown === "object" &&
+    thrown !== null &&
+    "code" in thrown &&
+    (thrown as { code: unknown }).code === code
+  ) {
+    return;
+  }
+  throw new Error(
+    `Expected WorkspaceError ${code}, got ${
+      thrown instanceof Error ? thrown.name : typeof thrown
+    }`,
+  );
+}
+
+describe("VoxelVolume.fromChunks", () => {
+  const seed = (
+    coordinate: readonly [number, number, number],
+    values?: Partial<Record<number, number>>,
+  ) => {
+    const all = new Uint16Array(4096);
+    for (const [index, value] of Object.entries(values ?? {})) {
+      all[Number(index)] = value as number;
+    }
+    return { coordinate, values: all };
+  };
+
+  it("installs sorted chunks with computed occupancy and bounds", () => {
+    const volume = VoxelVolume.fromChunks(
+      "volume:test:0001" as never,
+      {
+        maxCoordinate: 1_048_575,
+        maxExtent: 2_048,
+        maxChunks: 262_144,
+        maxOccupiedVoxels: 1_000_000,
+        maxCoordinatesPerOperation: 1_000_000,
+      },
+      capability,
+      [seed([1, 0, 0], { 0: 3, 17: 5 }), seed([-2, 3, 1], { 4095: 7 })],
+    );
+    expect(volume.chunkCount()).toBe(2);
+    expect(volume.chunkCoordinates()).toEqual([
+      [-2, 3, 1],
+      [1, 0, 0],
+    ]);
+    expect(volume.occupiedCount()).toBe(3);
+    expect(volume.getVoxel([16, 0, 0])).toBe(3);
+    expect(volume.getVoxel([17, 1, 0])).toBe(5);
+    expect(volume.getVoxel([-17, 63, 31])).toBe(7);
+    expect(volume.occupiedBounds()).toEqual({
+      min: [-17, 0, 0],
+      max: [18, 64, 32],
+    });
+    // Installed chunks start at in-session revision 0 and copy loader data.
+    const before = volume.getChunk([1, 0, 0]);
+    expect(before).toBeDefined();
+    if (before !== undefined) {
+      before[0] = 99;
+    }
+    expect(volume.getVoxel([16, 0, 0])).toBe(3);
+  });
+
+  it("accepts an empty chunk list as an empty volume", () => {
+    const volume = VoxelVolume.fromChunks(
+      "volume:test:0001" as never,
+      {
+        maxCoordinate: 1_048_575,
+        maxExtent: 2_048,
+        maxChunks: 262_144,
+        maxOccupiedVoxels: 1_000_000,
+        maxCoordinatesPerOperation: 1_000_000,
+      },
+      capability,
+      [],
+    );
+    expect(volume.chunkCount()).toBe(0);
+    expect(volume.occupiedCount()).toBe(0);
+    expect(volume.occupiedBounds()).toBeUndefined();
+  });
+
+  it("rejects empty and duplicate chunks", () => {
+    const limits = {
+      maxCoordinate: 1_048_575,
+      maxExtent: 2_048,
+      maxChunks: 262_144,
+      maxOccupiedVoxels: 1_000_000,
+      maxCoordinatesPerOperation: 1_000_000,
+    };
+    expectErrorCode(
+      () =>
+        VoxelVolume.fromChunks(
+          "volume:test:0001" as never,
+          limits,
+          capability,
+          [seed([0, 0, 0], {})],
+        ),
+      "EMPTY_CHUNK",
+    );
+    expectErrorCode(
+      () =>
+        VoxelVolume.fromChunks(
+          "volume:test:0001" as never,
+          limits,
+          capability,
+          [seed([0, 0, 0], { 0: 1 }), seed([0, 0, 0], { 1: 1 })],
+        ),
+      "UNORDERED_CHUNK_TABLE",
+    );
+    // Inputs are sorted canonically before install, so an unordered input is
+    // accepted; strict ordering is enforced on the resulting table.
+    const sorted = VoxelVolume.fromChunks(
+      "volume:test:0001" as never,
+      limits,
+      capability,
+      [seed([1, 0, 0], { 0: 1 }), seed([0, 0, 0], { 0: 1 })],
+    );
+    expect(sorted.chunkCoordinates()).toEqual([
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+  });
+
+  it("rejects wrong-sized values and out-of-domain coordinates", () => {
+    const limits = {
+      maxCoordinate: 1_048_575,
+      maxExtent: 2_048,
+      maxChunks: 262_144,
+      maxOccupiedVoxels: 1_000_000,
+      maxCoordinatesPerOperation: 1_000_000,
+    };
+    expectErrorCode(
+      () =>
+        VoxelVolume.fromChunks(
+          "volume:test:0001" as never,
+          limits,
+          capability,
+          [{ coordinate: [0, 0, 0], values: new Uint16Array(10) }],
+        ),
+      "INVALID_CHUNK_LENGTH",
+    );
+    expectErrorCode(
+      () =>
+        VoxelVolume.fromChunks(
+          "volume:test:0001" as never,
+          limits,
+          capability,
+          [seed([1_048_576, 0, 0], { 0: 1 })],
+        ),
+      "INVALID_CHUNK_COORDINATE",
+    );
+  });
+
+  it("enforces chunk, occupied-voxel, and extent limits before install", () => {
+    const small = {
+      maxCoordinate: 1_048_575,
+      maxExtent: 2_048,
+      maxChunks: 1,
+      maxOccupiedVoxels: 2,
+      maxCoordinatesPerOperation: 1_000_000,
+    };
+    expectErrorCode(
+      () =>
+        VoxelVolume.fromChunks("volume:test:0001" as never, small, capability, [
+          seed([0, 0, 0], { 0: 1 }),
+          seed([1, 0, 0], { 0: 1 }),
+        ]),
+      "TOO_MANY_CHUNKS",
+    );
+    expectErrorCode(
+      () =>
+        VoxelVolume.fromChunks("volume:test:0001" as never, small, capability, [
+          seed([0, 0, 0], { 0: 1, 1: 1, 2: 1 }),
+        ]),
+      "TOO_MANY_OCCUPIED_VOXELS",
+    );
+    const narrow = {
+      maxCoordinate: 1_048_575,
+      maxExtent: 10,
+      maxChunks: 262_144,
+      maxOccupiedVoxels: 1_000_000,
+      maxCoordinatesPerOperation: 1_000_000,
+    };
+    expectErrorCode(
+      () =>
+        VoxelVolume.fromChunks(
+          "volume:test:0001" as never,
+          narrow,
+          capability,
+          [seed([0, 0, 0], { 0: 1, 4095: 1 })],
+        ),
+      "EXTENT_LIMIT_EXCEEDED",
+    );
+  });
+});

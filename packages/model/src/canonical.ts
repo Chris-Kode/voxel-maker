@@ -304,8 +304,9 @@ export function canonicalDocumentJson(document: VoxelDocument): string {
 /**
  * ADR-0004 canonical semantic bytes: an ASCII version tag, the unsigned
  * 64-bit little-endian length of the canonical document JSON, and the
- * document bytes. Voxel chunk streams join this framing when voxel storage
- * lands (stage 3) and are excluded from semantic identity until then.
+ * document bytes. Voxel chunk streams join this framing in the document
+ * package (`canonicalAssetSemanticBytes`), which composes this prefix with
+ * the length-framed sorted chunk streams once volume read views exist.
  */
 export function canonicalSemanticBytes(document: VoxelDocument): Uint8Array {
   const documentBytes = encoder.encode(canonicalDocumentJson(document));

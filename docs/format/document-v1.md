@@ -164,8 +164,8 @@ defaults may only be raised by a reviewed policy change.
 
 ## Semantic identity (ADR-0004)
 
-`canonicalDocumentHash` is SHA-256 (pure JS, FIPS 180-4) over
-`canonicalSemanticBytes`:
+`canonicalDocumentHash` is SHA-256 (pure JS, FIPS 180-4) over the document
+part of `canonicalSemanticBytes`:
 
 ```text
 ASCII  "vxl-semantic-v1\n"
@@ -173,8 +173,9 @@ u64le  length of canonical document JSON bytes
 bytes  canonical document JSON
 ```
 
-Non-empty voxel chunk streams join after the document bytes, sorted by volume
-ID and signed coordinates, once voxel storage lands (stage 3). The hash
+The full asset identity (`canonicalAssetSemanticHash` in `@voxel-maker/document`)
+appends the length-framed sorted voxel chunk streams defined in
+[`vxl-v1.md`](./vxl-v1.md) once volume read views are available. The hash
 excludes timestamps, compression, previews, UI state, runtime revisions,
 history, recovery data, and diagnostics. Reloading a valid document preserves
 its hash; the returned document is deeply frozen and exposes no mutable

@@ -4,6 +4,7 @@ export {
   canonicalSemanticBytes,
 } from "./canonical.js";
 export { canonicalColor, isCanonicalColor, type Color } from "./color.js";
+export { sha256Hex } from "./sha256.js";
 export {
   cloneDocument,
   createDocument,

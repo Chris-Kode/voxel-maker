@@ -16,6 +16,7 @@ import {
 } from "@voxel-maker/model";
 import {
   DEFAULT_VOXEL_VOLUME_LIMITS,
+  type VoxelChunkSeed,
   type VoxelVolume,
   type VoxelVolumeReadView,
   type VoxelWriteCapability,
@@ -103,6 +104,14 @@ export interface DocumentStore extends DocumentStoreRead {
 export interface CreateDocumentStoreInput {
   readonly document: VoxelDocument;
   readonly limits?: DocumentLimits;
+  /**
+   * Validated load path (plan S5.3/S5.15): decoded chunk seeds installed
+   * into fresh volumes before the store is handed out. Every key must name
+   * a volume of `document`; chunk data is copied and checked against every
+   * hard volume limit before install, so a corrupt or oversized load can
+   * never produce a partial store. Volumes without seeds start empty.
+   */
+  readonly volumes?: ReadonlyMap<VolumeId, readonly VoxelChunkSeed[]>;
 }
 
 export interface DocumentStoreHandle {
@@ -132,10 +141,23 @@ export function createDocumentStore(
     ...DEFAULT_VOXEL_VOLUME_LIMITS,
     maxCoordinate: limits.maxVoxelCoordinate,
   };
+  if (input.volumes !== undefined) {
+    for (const volumeId of input.volumes.keys()) {
+      if (input.document.volumes[volumeId] === undefined) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "MISSING_VOLUME",
+          message: "Seeded volume is not part of the document",
+          context: { volumeId },
+        });
+      }
+    }
+  }
   const repository = new VoxelRepository(
     Object.keys(input.document.volumes) as VolumeId[],
     volumeLimits,
     writeCapability,
+    input.volumes,
   );
   const store = new DocumentStoreImpl(
     input.document,

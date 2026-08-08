@@ -350,3 +350,95 @@ describe("public consumer surface", () => {
     );
   });
 });
+
+/** Asserts that `fn` throws a WorkspaceError with the exact stable code. */
+function expectErrorCode(fn: () => unknown, code: string): void {
+  let thrown: unknown;
+  try {
+    fn();
+  } catch (error) {
+    thrown = error;
+  }
+  if (thrown === undefined) {
+    throw new Error(`Expected WorkspaceError ${code}, but nothing was thrown`);
+  }
+  if (
+    typeof thrown === "object" &&
+    thrown !== null &&
+    "code" in thrown &&
+    (thrown as { code: unknown }).code === code
+  ) {
+    return;
+  }
+  throw new Error(
+    `Expected WorkspaceError ${code}, got ${
+      thrown instanceof Error ? thrown.name : typeof thrown
+    }`,
+  );
+}
+
+describe("createDocumentStore volume seeding", () => {
+  const seeds = (): ReadonlyMap<
+    string,
+    readonly {
+      coordinate: readonly [number, number, number];
+      values: Uint16Array;
+    }[]
+  > =>
+    new Map([
+      [
+        "volume:store:0001",
+        [
+          {
+            coordinate: [-1, 0, 0],
+            values: (() => {
+              const values = new Uint16Array(4096);
+              values[0] = 2;
+              values[15 + 16 * (0 + 16 * 1)] = 3;
+              return values;
+            })(),
+          },
+        ],
+      ],
+    ]);
+
+  it("installs seeded chunks through the validated load path", () => {
+    const { store } = createDocumentStore({
+      document: createDemoDocument(),
+      volumes: seeds() as never,
+    });
+    const volume = store.getVolume(VOLUME);
+    expect(volume).toBeDefined();
+    expect(volume?.getVoxel([-16, 0, 0])).toBe(2);
+    expect(volume?.getVoxel([-1, 0, 1])).toBe(3);
+    expect(volume?.getVoxel([0, 0, 0])).toBe(0);
+    expect(volume?.occupiedCount()).toBe(2);
+  });
+
+  it("rejects seeds for volumes missing from the document", () => {
+    expectErrorCode(
+      () =>
+        createDocumentStore({
+          document: createDemoDocument(),
+          volumes: new Map([["volume:store:9999", []]]) as never,
+        }),
+      "MISSING_VOLUME",
+    );
+  });
+
+  it("rejects malformed seeds before any install", () => {
+    expectErrorCode(
+      () =>
+        createDocumentStore({
+          document: createDemoDocument(),
+          volumes: new Map([
+            [
+              "volume:store:0001",
+              [{ coordinate: [0, 0, 0], values: new Uint16Array(3) }],
+            ],
+          ]) as never,
+        }),
+      "INVALID_CHUNK_LENGTH",
+    );
+  });
+});

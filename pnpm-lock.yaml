@@ -77,6 +77,12 @@ importers:
       '@voxel-maker/document':
         specifier: workspace:*
         version: link:../../packages/document
+      '@voxel-maker/formats':
+        specifier: workspace:*
+        version: link:../../packages/formats
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../../packages/math
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../../packages/model
@@ -164,7 +170,26 @@ importers:
         version: 5.9.2
 
   packages/formats:
+    dependencies:
+      '@voxel-maker/document':
+        specifier: workspace:*
+        version: link:../document
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../math
+      '@voxel-maker/model':
+        specifier: workspace:*
+        version: link:../model
+      '@voxel-maker/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@voxel-maker/voxel':
+        specifier: workspace:*
+        version: link:../voxel
     devDependencies:
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 3.2.4(vitest@3.2.4(@types/node@22.18.0))
       typescript:
         specifier: 'catalog:'
         version: 5.9.2

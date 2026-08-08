@@ -13,3 +13,8 @@ export {
 export { VoxelRepository } from "./repository.js";
 
 export { worldTransformMatrix } from "./hierarchy.js";
+
+export {
+  canonicalAssetSemanticBytes,
+  canonicalAssetSemanticHash,
+} from "./semantic.js";

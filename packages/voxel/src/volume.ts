@@ -92,6 +92,17 @@ export interface VoxelEntry {
   readonly material: MaterialId;
 }
 
+/**
+ * One decoded chunk ready to install into a fresh volume (plan S5.3 /
+ * ADR-0004): the signed chunk coordinate and the 4096 X-fastest unsigned
+ * 16-bit values. Loaded chunks are immutable seeds; installing volumes copy
+ * them so the loader's buffers are never shared with live volumes.
+ */
+export interface VoxelChunkSeed {
+  readonly coordinate: Vec3i;
+  readonly values: Uint16Array;
+}
+
 /** One target patch of a compact change-set application (plan S3.15). */
 export interface VoxelPatchTarget {
   readonly index: number;
@@ -310,6 +321,138 @@ export class VoxelVolume implements VoxelVolumeReadView {
     };
     this.#bounds = bounds;
     return bounds;
+  }
+
+  /**
+   * Validated construction of a volume from decoded chunk seeds (plan S5.3).
+   * Chunks are copied, sorted canonically, and checked against every hard
+   * volume limit (chunk count, occupied voxels, extent, coordinate domain)
+   * before the volume is returned, so a corrupt or oversized load can never
+   * install partial state. Empty, duplicate, or unordered chunks are
+   * rejected; installed chunks start at in-session revision 0 because chunk
+   * revisions are runtime state, never semantic content.
+   */
+  static fromChunks(
+    volumeId: VolumeId,
+    limits: VoxelVolumeLimits,
+    capability: VoxelWriteCapability,
+    chunks: readonly VoxelChunkSeed[],
+  ): VoxelVolume {
+    if (chunks.length > limits.maxChunks) {
+      throw new WorkspaceError({
+        family: "limit",
+        code: "TOO_MANY_CHUNKS",
+        message: "Volume exceeds its non-empty chunk limit",
+        context: {
+          volumeId,
+          requested: chunks.length,
+          limit: limits.maxChunks,
+        },
+      });
+    }
+    const ordered = [...chunks].sort((a, b) =>
+      compareVec3i(a.coordinate, b.coordinate),
+    );
+    let previous: Vec3i | undefined;
+    let occupied = 0;
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    const installed = new Map<string, Chunk>();
+    for (const seed of ordered) {
+      const coordinate = parseChunkCoordinate(seed.coordinate, limits);
+      if (previous !== undefined && compareVec3i(previous, coordinate) >= 0) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "UNORDERED_CHUNK_TABLE",
+          message:
+            "Loaded chunk table must be strictly sorted by X, then Y, then Z",
+          context: { volumeId, coordinate },
+        });
+      }
+      previous = coordinate;
+      if (seed.values.byteLength !== CHUNK_VOXEL_COUNT * 2) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "INVALID_CHUNK_LENGTH",
+          message: `Loaded chunk values must hold exactly ${String(CHUNK_VOXEL_COUNT)} unsigned 16-bit voxels`,
+          context: { volumeId, coordinate },
+        });
+      }
+      const values = new Uint16Array(seed.values);
+      let chunkOccupied = 0;
+      for (let index = 0; index < CHUNK_VOXEL_COUNT; index += 1) {
+        const value = values[index] as number;
+        if (value !== 0) {
+          chunkOccupied += 1;
+          const x = coordinate[0] * CHUNK_EDGE + (index % CHUNK_EDGE);
+          const y =
+            coordinate[1] * CHUNK_EDGE +
+            (Math.floor(index / CHUNK_EDGE) % CHUNK_EDGE);
+          const z =
+            coordinate[2] * CHUNK_EDGE +
+            Math.floor(index / (CHUNK_EDGE * CHUNK_EDGE));
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (z < minZ) minZ = z;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+          if (z > maxZ) maxZ = z;
+        }
+      }
+      if (chunkOccupied === 0) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "EMPTY_CHUNK",
+          message: "Loaded chunks must be non-empty",
+          context: { volumeId, coordinate },
+        });
+      }
+      occupied += chunkOccupied;
+      if (occupied > limits.maxOccupiedVoxels) {
+        throw new WorkspaceError({
+          family: "limit",
+          code: "TOO_MANY_OCCUPIED_VOXELS",
+          message: "Volume exceeds its occupied-voxel limit",
+          context: {
+            volumeId,
+            requested: occupied,
+            limit: limits.maxOccupiedVoxels,
+          },
+        });
+      }
+      installed.set(chunkKey(coordinate), { values, revision: 0 });
+    }
+    const volume = new VoxelVolume(volumeId, limits, capability);
+    volume.#chunks = installed;
+    volume.#occupiedCount = occupied;
+    if (occupied > 0) {
+      for (let axis = 0; axis < 3; axis += 1) {
+        const min = [minX, minY, minZ][axis] as number;
+        const max = [maxX, maxY, maxZ][axis] as number;
+        if (max - min > limits.maxExtent) {
+          throw new WorkspaceError({
+            family: "limit",
+            code: "EXTENT_LIMIT_EXCEEDED",
+            message: "Volume occupied extent exceeds its per-axis limit",
+            context: {
+              volumeId,
+              axis,
+              extent: max - min,
+              maxExtent: limits.maxExtent,
+            },
+          });
+        }
+      }
+      volume.#bounds = {
+        min: [minX, minY, minZ],
+        max: [maxX + 1, maxY + 1, maxZ + 1],
+      };
+    }
+    return volume;
   }
 
   /**

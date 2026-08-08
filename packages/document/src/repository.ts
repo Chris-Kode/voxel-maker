@@ -2,6 +2,7 @@ import type { Vec3i } from "@voxel-maker/math";
 import type { MaterialId, VolumeId } from "@voxel-maker/shared";
 import {
   VoxelVolume,
+  type VoxelChunkSeed,
   type VoxelVolumeLimits,
   type VoxelVolumeReadView,
   type VoxelWriteCapability,
@@ -10,7 +11,8 @@ import {
 /**
  * Document-associated sparse typed-array volumes (ARCHITECTURE.md
  * "Authoritative state and capabilities"). Volumes are installed only by
- * `DocumentStore.commit`; public consumers receive read views that never
+ * `DocumentStore.commit` or the validated load path of
+ * `createDocumentStore`; public consumers receive read views that never
  * expose mutable backing storage.
  */
 export class VoxelRepository {
@@ -20,11 +22,15 @@ export class VoxelRepository {
     volumeIds: readonly VolumeId[],
     limits: VoxelVolumeLimits,
     writeCapability: VoxelWriteCapability,
+    seeds?: ReadonlyMap<VolumeId, readonly VoxelChunkSeed[]>,
   ) {
     for (const volumeId of volumeIds) {
+      const seeded = seeds?.get(volumeId);
       this.#volumes.set(
         volumeId,
-        new VoxelVolume(volumeId, limits, writeCapability),
+        seeded === undefined
+          ? new VoxelVolume(volumeId, limits, writeCapability)
+          : VoxelVolume.fromChunks(volumeId, limits, writeCapability, seeded),
       );
     }
   }
