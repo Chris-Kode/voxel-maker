@@ -138,6 +138,7 @@ The intended workspace has one desktop application and deep semantic or adapter 
 | `editor` | Tools and non-React editor workflows that construct commands | Semantic read modules and `commands` |
 | `formats` | Native and external codecs, validation, import/export projections | Semantic read modules; platform I/O is injected |
 | `storage` | Storage ports, atomic-save coordination, immutable revision snapshots, dirty state, memory adapter | `shared`, `model`, `voxel`, `document`, `formats` |
+| `session` | `DocumentSession` lifecycle coordinator: validated new/open/replace/recovery/close, a fresh bounded bus per install, lifecycle events | `shared`, `math`, `model`, `document`, `voxel`, `commands` |
 | `agent` | Tool contracts, bounded inspection, preview transactions, agent state machine | Semantic read modules and `commands` |
 | `skills` | Versioned domain instructions, recipes, deterministic generators, evaluations | Agent tool contracts and generic command proposal contracts |
 | desktop app | Composition, React UI, Tauri adapters, provider adapters | All modules required for composition |
@@ -148,6 +149,7 @@ Rules:
 - `model` owns the complete persisted discriminated unions. Feature modules add semantic validation and evaluation; they do not extend the schema upward at runtime.
 - `commands` owns the kernel and feature handler registrars. Feature packages never import a global command bus.
 - `renderer` consumes immutable snapshots and runtime evaluation. It does not issue persistent commands or expose Three.js objects as domain identifiers.
+- `session` owns lifecycle replacement only: it installs fully validated aggregates through `DocumentStore` and never parses or writes files (format codecs and storage adapters are injected at the composition root).
 - `formats` parses and serializes semantic data. Native path access and atomic replacement belong to storage adapters.
 - `agent` may inspect bounded read interfaces and construct commands. It does not import editor or renderer implementations.
 - Package exports and dependency checks enforce these rules. Deep cross-package imports are unsupported.

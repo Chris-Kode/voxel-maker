@@ -28,6 +28,16 @@ const allowedDependencies = {
     "rigging",
     "animation",
   ],
+  session: [
+    "shared",
+    "math",
+    "model",
+    "document",
+    "voxel",
+    "commands",
+    "rigging",
+    "animation",
+  ],
   editor: [
     "shared",
     "model",
