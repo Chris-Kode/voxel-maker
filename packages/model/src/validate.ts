@@ -1,4 +1,5 @@
 import { isCanonicalQuat, isNormalizedQuat } from "@voxel-maker/math";
+import { CURRENT_DOCUMENT_SCHEMA_VERSION } from "./migration.js";
 import { compareCodeUnit, compareNumeric } from "./order.js";
 import type { AnimationDescriptor, SceneNode, VoxelDocument } from "./types.js";
 import { isCanonicalColor } from "./color.js";
@@ -1278,7 +1279,7 @@ export function validateDocumentStructure(
   if (
     typeof value.documentSchemaVersion === "number" &&
     Number.isFinite(value.documentSchemaVersion) &&
-    value.documentSchemaVersion !== 1
+    value.documentSchemaVersion !== CURRENT_DOCUMENT_SCHEMA_VERSION
   ) {
     issues.push(
       issue(

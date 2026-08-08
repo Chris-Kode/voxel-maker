@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "generator": "scripts/generate-native-fixtures.mjs",
+  "golden": {
+    "file": "golden-roundtrip.vxl",
+    "documentJson": "golden-roundtrip.document.json",
+    "semanticHash": "127f625d153cec0927ff8f264c74874ceda0f6125dc11fc94d6fd2fb59ac4280",
+    "byteLength": 43731,
+    "entryCount": 3
+  },
+  "rejected": [
+    {
+      "file": "traversal-path.vxl",
+      "vector": "zip entry name escapes the container with .. segments",
+      "family": "io",
+      "code": "INVALID_ENTRY_NAME"
+    },
+    {
+      "file": "traversal-backslash.vxl",
+      "vector": "zip entry name uses a backslash separator",
+      "family": "io",
+      "code": "INVALID_ENTRY_NAME"
+    },
+    {
+      "file": "duplicate-entries.vxl",
+      "vector": "two zip central records share one entry name",
+      "family": "io",
+      "code": "DUPLICATE_ENTRY"
+    },
+    {
+      "file": "compressed-entry.vxl",
+      "vector": "zip entry uses deflate instead of the stored-only v1 method",
+      "family": "compatibility",
+      "code": "UNSUPPORTED_ZIP_METHOD"
+    },
+    {
+      "file": "bomb-declared-sizes.vxl",
+      "vector": "tiny file declares a gigabyte of stored content (ratio preflight)",
+      "family": "io",
+      "code": "DECLARED_SIZE_EXCEEDS_ARCHIVE"
+    },
+    {
+      "file": "huge-entry-count.vxl",
+      "vector": "EOCD claims thousands of entries in a one-entry archive",
+      "family": "limit",
+      "code": "ENTRY_LIMIT_EXCEEDED"
+    },
+    {
+      "file": "zip64-extra-length.vxl",
+      "vector": "central record uses the 0xFFFF ZIP64 marker for extra length",
+      "family": "io",
+      "code": "INVALID_ZIP_ARCHIVE"
+    },
+    {
+      "file": "zip64-offset.vxl",
+      "vector": "central record uses the 0xFFFFFFFF ZIP64 marker for local offset",
+      "family": "io",
+      "code": "INVALID_ZIP_ARCHIVE"
+    },
+    {
+      "file": "empty-archive.vxl",
+      "vector": "valid EOCD with zero entries",
+      "family": "io",
+      "code": "INVALID_ZIP_ARCHIVE"
+    },
+    {
+      "file": "multi-disk-archive.vxl",
+      "vector": "EOCD claims a multi-disk archive",
+      "family": "io",
+      "code": "INVALID_ZIP_ARCHIVE"
+    },
+    {
+      "file": "truncated-archive.vxl",
+      "vector": "valid container cut off before its end-of-central-directory",
+      "family": "io",
+      "code": "INVALID_ZIP_ARCHIVE"
+    },
+    {
+      "file": "checksum-mismatch.vxl",
+      "vector": "one data byte flipped inside document.json",
+      "family": "io",
+      "code": "CRC_MISMATCH"
+    },
+    {
+      "file": "manifest-checksum-mismatch.vxl",
+      "vector": "manifest index checksum disagrees with the document entry",
+      "family": "io",
+      "code": "ENTRY_CHECKSUM_MISMATCH"
+    },
+    {
+      "file": "missing-indexed-entry.vxl",
+      "vector": "manifest indexes a voxel entry absent from the zip",
+      "family": "io",
+      "code": "MISSING_ENTRY"
+    },
+    {
+      "file": "unindexed-entry.vxl",
+      "vector": "zip carries an entry the manifest index does not list",
+      "family": "io",
+      "code": "UNINDEXED_ENTRY"
+    },
+    {
+      "file": "missing-manifest.vxl",
+      "vector": "zip has no manifest.json entry at all",
+      "family": "io",
+      "code": "MISSING_MANIFEST"
+    },
+    {
+      "file": "document-missing-volume.vxl",
+      "vector": "document references a volume with no container entry",
+      "family": "io",
+      "code": "MISSING_VOLUME_ENTRY"
+    },
+    {
+      "file": "volume-not-in-document.vxl",
+      "vector": "container carries a voxel entry for an unknown volume",
+      "family": "io",
+      "code": "VOLUME_NOT_IN_DOCUMENT"
+    },
+    {
+      "file": "cycle-hierarchy.vxl",
+      "vector": "document node parent graph contains a cycle",
+      "family": "validation",
+      "code": "CYCLIC_HIERARCHY"
+    },
+    {
+      "file": "huge-chunk-table.vxl",
+      "vector": "volume binary declares an impossible chunk count",
+      "family": "limit",
+      "code": "TOO_MANY_CHUNKS"
+    },
+    {
+      "file": "chunk-offset-overflow.vxl",
+      "vector": "volume chunk record claims a u64 offset beyond the safe integer domain",
+      "family": "io",
+      "code": "INVALID_CHUNK_OFFSET"
+    },
+    {
+      "file": "chunk-crc-mismatch.vxl",
+      "vector": "volume chunk payload byte flipped after the table was written",
+      "family": "io",
+      "code": "CRC_MISMATCH"
+    },
+    {
+      "file": "semantic-hash-mismatch.vxl",
+      "vector": "manifest semantic hash disagrees with the reconstructed asset",
+      "family": "io",
+      "code": "SEMANTIC_HASH_MISMATCH"
+    },
+    {
+      "file": "unknown-document-field.vxl",
+      "vector": "document.json carries a top-level field the v1 schema does not know",
+      "family": "validation",
+      "code": "UNKNOWN_FIELD"
+    },
+    {
+      "file": "unknown-component-version.vxl",
+      "vector": "document node component claims an unsupported schema version",
+      "family": "validation",
+      "code": "UNSUPPORTED_COMPONENT_VERSION"
+    },
+    {
+      "file": "lying-document-version.vxl",
+      "vector": "manifest claims v1 while document.json claims a future version",
+      "family": "compatibility",
+      "code": "UNSUPPORTED_DOCUMENT_VERSION"
+    },
+    {
+      "file": "future-container-v2.vxl",
+      "vector": "unknown future container version",
+      "family": "compatibility",
+      "code": "UNSUPPORTED_CONTAINER_VERSION"
+    },
+    {
+      "file": "future-document-v2.vxl",
+      "vector": "manifest declares an unknown future document schema version",
+      "family": "compatibility",
+      "code": "UNSUPPORTED_DOCUMENT_VERSION"
+    },
+    {
+      "file": "future-chunk-encoding-v2.vxl",
+      "vector": "manifest declares an unknown future chunk encoding version",
+      "family": "compatibility",
+      "code": "UNSUPPORTED_CHUNK_ENCODING_VERSION"
+    },
+    {
+      "file": "unknown-manifest-field.vxl",
+      "vector": "manifest carries a field this version does not know",
+      "family": "compatibility",
+      "code": "UNKNOWN_MANIFEST_FIELD"
+    },
+    {
+      "file": "unknown-entry-field.vxl",
+      "vector": "manifest entry carries a field this version does not know",
+      "family": "compatibility",
+      "code": "UNKNOWN_MANIFEST_FIELD"
+    }
+  ]
+}

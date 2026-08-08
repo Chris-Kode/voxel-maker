@@ -128,22 +128,46 @@ semantic hash equals the hash captured with the snapshot revision.
 - The initial reader accepts every released version 1 format. After future
   majors exist, the reader supports the current major and up to the two
   immediately preceding released majors of each semantic format, with a
-  complete ordered migration chain (ADR-0011).
+  complete ordered migration chain (ADR-0011). The document-schema part of
+  that chain lives in the `@voxel-maker/model` migration registry
+  (`createMigrationChain`, plan S2.11): ordered pure `vN -> vN+1` steps, no
+  skipping, a retained fixture per transition, and a report of what ran.
+  While v1 is the only released major the registry is empty and every
+  reader gate (manifest field, document field, chain input) rejects
+  anything else; the first major that bumps `documentSchemaVersion` wires
+  the registry into the reader together with backup-on-upgrade (plan
+  S5.11) and must retain its transition fixture before the chain grows.
 - Unknown future versions, unknown persistent fields inside a
   claimed-supported version, and missing migration steps fail clearly and
-  never enable overwrite of the source file.
+  never enable overwrite of the source file. The reader is pure: a rejected
+  or migrated read returns data or a structured error and never touches the
+  source bytes; only a later, explicitly user-approved save may replace the
+  original, and only after the migrated asset validated (plan S5.11).
 - Command journals are replayed only when their exact snapshot identity and
   command-version migration chain are supported (recovery, ticket #14).
 
 ## Reader preflight summary
 
 Before returning any data, the reader validates: ZIP structure and EOCD
-sanity; path safety, duplicates, and name bounds; entry count, per-entry and
-total size limits; stored-only method; central/local header consistency;
-non-overlapping data ranges; per-entry CRC-32; manifest versions and index
-consistency; document schema version and document limits; volume chunk table
-structure, geometry, coordinates, and checksums; and finally the semantic
-hash. Container-level defaults (plan S5.4 / ADR-0009) may only be lowered by
-callers: 4096 entries, 256-byte names, 1 GiB per entry, 2 GiB total. The
-writer enforces the same defaults, so it can never emit a container its own
-reader rejects.
+sanity (including agreeing entry counts and no multi-disk archives); path
+safety, duplicates, and name bounds; entry count, per-entry and total size
+limits; stored-only method (compression is a compatibility error); ZIP64
+size/offset/length markers; the stored-format ratio preflight (declared
+entry sizes may never exceed the archive byte length, rejecting size bombs
+before extraction); central/local header consistency; non-overlapping data
+ranges; per-entry CRC-32; manifest versions and index consistency; document
+schema version and document limits; volume chunk table structure, geometry,
+coordinates, safe u64-to-Number offsets, and checksums; and finally the
+semantic hash. Container-level defaults (plan S5.4 / ADR-0009) may only be
+lowered by callers: 4096 entries, 256-byte names, 1 GiB per entry, 2 GiB
+total. The writer enforces the same defaults, so it can never emit a
+container its own reader rejects.
+
+A checked-in adversarial and compatibility corpus
+([`fixtures/native/`](../../fixtures/native/), plan S5.12) pins this
+contract: `corpus.json` maps every rejected fixture to the exact stable
+`family`/`code` it must produce (traversal, duplicates, bombs, truncation,
+huge declarations, ZIP64 markers, checksum failures, missing and unindexed
+references, document cycles, chunk-table corruption, future versions, and
+unknown fields), and the golden fixture pins the writer's bytes and the
+semantic hash.

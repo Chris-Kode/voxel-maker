@@ -181,6 +181,19 @@ history, recovery data, and diagnostics. Reloading a valid document preserves
 its hash; the returned document is deeply frozen and exposes no mutable
 authoritative backing data.
 
+## Versioning and migration
+
+`documentSchemaVersion` is an independent version field (ADR-0004). A format
+change that adds, removes, or reinterprets persisted fields bumps the version
+and registers an ordered, pure, JSON-to-JSON migration for every supported
+transition in the `@voxel-maker/model` migration registry
+(`createMigrationChain`, plan S2.11). Migrations run one version at a time
+(`vN -> vN+1`) and never skip; a file whose version is unknown, or newer than
+the current release, fails with `UNSUPPORTED_DOCUMENT_VERSION`
+(compatibility) and is never overwritten. The production registry is empty
+while v1 is the only released version, and every future transition must
+retain its own fixture before the chain may grow.
+
 ## Error codes
 
 Validation failures carry a stable `code` and a JSON-ish `path`. Principal

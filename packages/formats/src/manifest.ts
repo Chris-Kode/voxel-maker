@@ -5,6 +5,7 @@ import {
   type JsonValue,
   type VolumeId,
 } from "@voxel-maker/shared";
+import { CURRENT_DOCUMENT_SCHEMA_VERSION } from "@voxel-maker/model";
 import { isValidEntryName } from "./zip.js";
 
 /**
@@ -18,7 +19,8 @@ import { isValidEntryName } from "./zip.js";
 
 /** Frozen v1 independent version fields (ADR-0004). */
 export const VXL_CONTAINER_VERSION = 1;
-export const VXL_DOCUMENT_VERSION = 1;
+/** Document schema version, single-sourced from the model migration registry. */
+export const VXL_DOCUMENT_VERSION = CURRENT_DOCUMENT_SCHEMA_VERSION;
 export const VXL_CHUNK_ENCODING_VERSION = 1;
 
 export type VxlEntryKind = "document" | "voxels" | "preview";

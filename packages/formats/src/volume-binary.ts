@@ -215,6 +215,9 @@ export function decodeVoxelVolume(
     const byteLength = view.getUint32(recordOffset + 20, true);
     const checksum = view.getUint32(recordOffset + 24, true);
     if (
+      // Reject the lossy u64 -> Number conversion before any comparison:
+      // a hostile offset above 2^53 must not be silently rounded.
+      !Number.isSafeInteger(offset) ||
       offset !== expectedOffset ||
       byteLength !== VXL_VOLUME_CHUNK_PAYLOAD_BYTES
     ) {

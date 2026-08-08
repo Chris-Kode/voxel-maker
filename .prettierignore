@@ -6,3 +6,4 @@ pnpm-lock.yaml
 .agents
 *.md
 skills-lock.json
+fixtures

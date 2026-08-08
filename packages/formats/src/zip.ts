@@ -253,9 +253,17 @@ export function readZipArchive(
       "Multi-disk ZIP archives are not supported",
     );
   }
+  const entriesOnDisk = readU16(view, eocd + 8);
   const entryCount = readU16(view, eocd + 10);
   const centralSize = readU32(view, eocd + 12);
   const centralOffset = readU32(view, eocd + 16);
+  if (entriesOnDisk !== entryCount) {
+    throw corrupt(
+      "INVALID_ZIP_ARCHIVE",
+      "ZIP entry counts disagree between the EOCD fields",
+      { entriesOnDisk, entryCount },
+    );
+  }
   if (entryCount > limits.maxEntries) {
     throw limitError(
       "ENTRY_LIMIT_EXCEEDED",
@@ -342,7 +350,10 @@ export function readZipArchive(
     if (
       compressedSize !== uncompressedSize ||
       compressedSize === U32_MAX ||
-      nameLength === U32_MAX ||
+      uncompressedSize === U32_MAX ||
+      nameLength === 0xffff ||
+      extraLength === 0xffff ||
+      commentLength === 0xffff ||
       localOffset === U32_MAX
     ) {
       throw corrupt(
@@ -387,6 +398,16 @@ export function readZipArchive(
   const extracted: ZipEntry[] = [];
   for (const record of records) {
     totalSize += record.size;
+    // Ratio preflight for the stored-only v1 format: declared uncompressed
+    // content cannot exceed the archive byte length, so a small file that
+    // declares gigabytes is a size bomb and is rejected before extraction.
+    if (totalSize > bytes.byteLength) {
+      throw corrupt(
+        "DECLARED_SIZE_EXCEEDS_ARCHIVE",
+        "Declared entry sizes exceed the archive size; refusing a stored-format size bomb",
+        { requested: totalSize, archiveSize: bytes.byteLength },
+      );
+    }
     if (totalSize > limits.maxTotalSize) {
       throw limitError(
         "TOTAL_SIZE_LIMIT_EXCEEDED",

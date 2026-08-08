@@ -13,6 +13,27 @@ function names(entries: readonly ZipEntry[]): string[] {
   return entries.map((entry) => entry.name);
 }
 
+/**
+ * Grows a forged archive's central directory by `growBy` zero bytes and
+ * lets `mutate` patch the central record, so declared 0xFFFF length fields
+ * physically fit and the ZIP64-marker preflight is what rejects them.
+ */
+function growCentralDirectory(
+  bytes: Uint8Array,
+  growBy: number,
+  mutate: (view: DataView, centralOffset: number) => void,
+): Uint8Array {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const centralOffset = view.getUint32(bytes.byteLength - 6, true);
+  const centralSize = view.getUint32(bytes.byteLength - 10, true);
+  const out = new Uint8Array(bytes.byteLength + growBy);
+  out.set(bytes);
+  const outView = new DataView(out.buffer);
+  outView.setUint32(out.byteLength - 10, centralSize + growBy, true);
+  mutate(outView, centralOffset);
+  return out;
+}
+
 /** Asserts that `fn` throws a WorkspaceError with the exact stable code. */
 function expectErrorCode(fn: () => unknown, code: string): void {
   let thrown: unknown;
@@ -167,6 +188,70 @@ describe("readZipArchive", () => {
         }),
       "ENTRY_SIZE_LIMIT_EXCEEDED",
     );
+  });
+
+  it("rejects ZIP64 marker fields before trusting the record", () => {
+    // extraLength = 0xFFFF is the ZIP64 marker for a 16-bit length. The
+    // central directory is grown so the forged record physically fits and
+    // the marker check — not the truncation check — is what rejects it.
+    const base = writeZipArchive([{ name: "a", data: text("x") }]);
+    const forged = growCentralDirectory(base, 0xffff, (view, centralOffset) => {
+      view.setUint16(centralOffset + 30, 0xffff, true);
+    });
+    expectErrorCode(() => readZipArchive(forged), "INVALID_ZIP_ARCHIVE");
+  });
+
+  it("rejects ZIP64 comment-length markers", () => {
+    const base = writeZipArchive([{ name: "a", data: text("x") }]);
+    const forged = growCentralDirectory(base, 0xffff, (view, centralOffset) => {
+      view.setUint16(centralOffset + 32, 0xffff, true);
+    });
+    expectErrorCode(() => readZipArchive(forged), "INVALID_ZIP_ARCHIVE");
+  });
+
+  it("rejects ZIP64 size markers in central and local records", () => {
+    const bytes = writeZipArchive([{ name: "a", data: text("x") }]);
+    const forged = bytes.slice();
+    const dv = new DataView(forged.buffer);
+    const centralOffset = dv.getUint32(forged.byteLength - 6, true);
+    dv.setUint32(centralOffset + 20, 0xffff_ffff, true);
+    dv.setUint32(centralOffset + 24, 0xffff_ffff, true);
+    dv.setUint32(18, 0xffff_ffff, true);
+    dv.setUint32(22, 0xffff_ffff, true);
+    expectErrorCode(() => readZipArchive(forged), "INVALID_ZIP_ARCHIVE");
+  });
+
+  it("rejects ZIP64 local offsets", () => {
+    const bytes = writeZipArchive([{ name: "a", data: text("x") }]);
+    const dv = new DataView(bytes.buffer);
+    const centralOffset = dv.getUint32(bytes.byteLength - 6, true);
+    dv.setUint32(centralOffset + 42, 0xffff_ffff, true);
+    expectErrorCode(() => readZipArchive(bytes), "INVALID_ZIP_ARCHIVE");
+  });
+
+  it("rejects declared sizes that exceed the archive (stored-format bomb)", () => {
+    const bytes = writeZipArchive([{ name: "a", data: text("x") }]);
+    const forged = bytes.slice();
+    const dv = new DataView(forged.buffer);
+    const centralOffset = dv.getUint32(forged.byteLength - 6, true);
+    // Both central and local records declare 1 MiB while the file holds one
+    // byte: the ratio preflight must reject before per-entry extraction.
+    dv.setUint32(centralOffset + 20, 1 << 20, true);
+    dv.setUint32(centralOffset + 24, 1 << 20, true);
+    dv.setUint32(18, 1 << 20, true);
+    dv.setUint32(22, 1 << 20, true);
+    expectErrorCode(
+      () => readZipArchive(forged),
+      "DECLARED_SIZE_EXCEEDS_ARCHIVE",
+    );
+  });
+
+  it("rejects EOCD entry counts that disagree with the disk", () => {
+    const bytes = writeZipArchive([{ name: "a", data: text("x") }]);
+    const forged = bytes.slice();
+    const dv = new DataView(forged.buffer);
+    dv.setUint16(forged.byteLength - 14, 2, true); // entries on this disk
+    expectErrorCode(() => readZipArchive(forged), "INVALID_ZIP_ARCHIVE");
   });
 
   it("accepts zero-length entries", () => {

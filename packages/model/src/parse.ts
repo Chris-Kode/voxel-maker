@@ -1,4 +1,5 @@
 import { WorkspaceError } from "@voxel-maker/shared";
+import { CURRENT_DOCUMENT_SCHEMA_VERSION } from "./migration.js";
 import { DEFAULT_DOCUMENT_LIMITS, type DocumentLimits } from "./limits.js";
 import type { VoxelDocument } from "./types.js";
 import { deepFreeze } from "./freeze.js";
@@ -42,12 +43,14 @@ export function parseDocument(
     typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>).documentSchemaVersion
       : undefined;
-  if (typeof version === "number" && version > 1) {
+  if (
+    typeof version === "number" &&
+    version > CURRENT_DOCUMENT_SCHEMA_VERSION
+  ) {
     throw new WorkspaceError({
       family: "compatibility",
       code: "UNSUPPORTED_DOCUMENT_VERSION",
-      message:
-        "Document format version is newer than the supported version 1; refusing to guess at unknown data",
+      message: `Document format version is newer than the supported version ${String(CURRENT_DOCUMENT_SCHEMA_VERSION)}; refusing to guess at unknown data`,
       path: ["documentSchemaVersion"],
       context: { version },
     });

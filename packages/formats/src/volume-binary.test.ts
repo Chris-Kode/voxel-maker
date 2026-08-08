@@ -188,6 +188,38 @@ describe("voxel volume binary codec", () => {
     );
   });
 
+  it("rejects chunk offsets beyond the safe integer domain", () => {
+    // One chunk record whose u64 payload offset claims 2^64-1: the reader
+    // must reject the lossy u64->Number conversion before any comparison.
+    const bytes = new Uint8Array(
+      VXL_VOLUME_HEADER_BYTES +
+        VXL_VOLUME_CHUNK_RECORD_BYTES +
+        VXL_VOLUME_CHUNK_PAYLOAD_BYTES,
+    );
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, VXL_VOLUME_MAGIC, true);
+    view.setUint32(4, 1, true);
+    view.setUint32(8, 16, true);
+    view.setUint32(12, 2, true);
+    view.setUint32(16, 1, true);
+    view.setUint32(20, 1, true);
+    view.setUint32(24, 0, true);
+    view.setBigUint64(
+      VXL_VOLUME_HEADER_BYTES + 12,
+      0xffff_ffff_ffff_ffffn,
+      true,
+    );
+    view.setUint32(
+      VXL_VOLUME_HEADER_BYTES + 20,
+      VXL_VOLUME_CHUNK_PAYLOAD_BYTES,
+      true,
+    );
+    expectErrorCode(
+      () => decodeVoxelVolume(bytes, VID, limits),
+      "INVALID_CHUNK_OFFSET",
+    );
+  });
+
   it("enforces the chunk count limit before returning data", () => {
     const bytes = encodeVoxelVolume(volume());
     expectErrorCode(
