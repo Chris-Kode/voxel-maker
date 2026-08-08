@@ -8,12 +8,12 @@ import type { SceneNode } from "@voxel-maker/model";
 import { chunkKey, type VoxelVolumeReadView } from "@voxel-maker/voxel";
 import type { MaterialId, NodeId, VolumeId } from "@voxel-maker/shared";
 import type { Vec3i } from "@voxel-maker/math";
-import { buildChunkMesh } from "./mesher.js";
+import { buildChunkMesh, CHUNK_EDGE } from "./mesher.js";
 import {
   createMaterialAdapter,
   type MaterialAdapter,
 } from "./material-adapter.js";
-import type { ChunkNamespace, ChunkSampler } from "./types.js";
+import type { ChunkSampler } from "./types.js";
 
 /**
  * Renderer scene adapter (plan S6.3/S6.7, ticket #15): a disposable
@@ -61,13 +61,10 @@ interface ChunkMeshEntry {
 export interface SceneAdapterOptions {
   /** Target scene; the adapter only adds/removes its own projections. */
   readonly scene: THREE.Scene;
-  /** Namespace for DTO tags; defaults to the live document namespace. */
-  readonly namespace?: ChunkNamespace;
 }
 
 export interface SceneAdapter {
   readonly scene: THREE.Scene;
-  readonly namespace: ChunkNamespace;
   /** Number of projected node groups (diagnostics/tests). */
   readonly nodeCount: number;
   /** Number of projected chunk meshes (diagnostics/tests). */
@@ -90,7 +87,6 @@ export interface SceneAdapter {
 
 class SceneAdapterImpl implements SceneAdapter {
   readonly scene: THREE.Scene;
-  readonly namespace: ChunkNamespace;
   readonly #materials: MaterialAdapter;
   readonly #nodeProjections = new Map<NodeId, NodeProjection>();
   readonly #chunkMeshes = new Map<VolumeId, Map<string, ChunkMeshEntry>>();
@@ -100,7 +96,6 @@ class SceneAdapterImpl implements SceneAdapter {
 
   constructor(options: SceneAdapterOptions) {
     this.scene = options.scene;
-    this.namespace = options.namespace ?? "live";
     this.#materials = createMaterialAdapter();
   }
 
@@ -177,6 +172,9 @@ class SceneAdapterImpl implements SceneAdapter {
     this.#nodeProjections.clear();
     this.#chunkMeshes.clear();
     this.#volumeOwners.clear();
+    // Lifecycle replacement fully releases material resources too (S6.7):
+    // the cache is recreated lazily by the next rebind.
+    this.#materials.dispose();
   }
 
   objectForNode(nodeId: NodeId): THREE.Object3D | undefined {
@@ -346,21 +344,24 @@ class SceneAdapterImpl implements SceneAdapter {
     values: Uint16Array,
   ): ChunkSampler {
     const [chunkX, chunkY, chunkZ] = coordinate;
+    const plane = CHUNK_EDGE * CHUNK_EDGE;
     return (localX, localY, localZ) => {
       if (
         localX >= 0 &&
-        localX < 16 &&
+        localX < CHUNK_EDGE &&
         localY >= 0 &&
-        localY < 16 &&
+        localY < CHUNK_EDGE &&
         localZ >= 0 &&
-        localZ < 16
+        localZ < CHUNK_EDGE
       ) {
-        return values[localX + localY * 16 + localZ * 256] as MaterialId;
+        return values[
+          localX + localY * CHUNK_EDGE + localZ * plane
+        ] as MaterialId;
       }
       return readView.getVoxel([
-        chunkX * 16 + localX,
-        chunkY * 16 + localY,
-        chunkZ * 16 + localZ,
+        chunkX * CHUNK_EDGE + localX,
+        chunkY * CHUNK_EDGE + localY,
+        chunkZ * CHUNK_EDGE + localZ,
       ]);
     };
   }
@@ -393,6 +394,9 @@ class SceneAdapterImpl implements SceneAdapter {
         }
         this.#nodeProjections.delete(descendant.node.nodeId);
       }
+    }
+    for (const volumeId of projection.volumes) {
+      this.#volumeOwners.delete(volumeId);
     }
     this.#disposeProjection(projection);
     this.#nodeProjections.delete(nodeId);

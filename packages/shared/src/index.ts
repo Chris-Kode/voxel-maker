@@ -26,6 +26,46 @@ export type TransactionId = OpaqueId<"TransactionId">;
 export type VolumeId = OpaqueId<"VolumeId">;
 export type MaterialId = number & { readonly __kind: "MaterialId" };
 
+/**
+ * A small, exception-isolated listener set (ARCHITECTURE.md assigns event
+ * utilities to `shared`). `emit` runs every listener and swallows listener
+ * failures so one bad subscriber can never break the notifier; `add`
+ * returns an unsubscribe function.
+ */
+export interface ListenerSet<T> {
+  add(listener: (value: T) => void): () => void;
+  emit(value: T): void;
+  clear(): void;
+  readonly size: number;
+}
+
+export function createListenerSet<T>(): ListenerSet<T> {
+  const listeners = new Set<(value: T) => void>();
+  return {
+    add(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    emit(value) {
+      for (const listener of [...listeners]) {
+        try {
+          listener(value);
+        } catch {
+          // Best-effort notifications never break the emitter.
+        }
+      }
+    },
+    clear() {
+      listeners.clear();
+    },
+    get size() {
+      return listeners.size;
+    },
+  };
+}
+
 export type ErrorFamily =
   | "validation"
   | "conflict"

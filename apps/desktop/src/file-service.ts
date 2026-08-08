@@ -1,5 +1,6 @@
 import {
   WorkspaceError,
+  createListenerSet,
   documentId,
   nodeId,
   type DocumentId,
@@ -70,16 +71,10 @@ export function createFileService(options: FileServiceOptions): FileService {
   const { session, storage, picker } = options;
   let path: string | undefined;
   let newCounter = 1;
-  const listeners = new Set<() => void>();
+  const listeners = createListenerSet<undefined>();
 
   const notify = (): void => {
-    for (const listener of [...listeners]) {
-      try {
-        listener();
-      } catch {
-        // Best-effort notifications never break file operations.
-      }
-    }
+    listeners.emit(undefined);
   };
 
   const install = (name: string, bytes: Uint8Array): FileServiceResult => {
@@ -129,9 +124,10 @@ export function createFileService(options: FileServiceOptions): FileService {
       return session.current?.revision;
     },
     get title() {
-      return session.current?.store.getDocument().metadata.title as
-        | string
-        | undefined;
+      // Metadata is bounded JSON (ARCHITECTURE.md): only a string title is
+      // surfaced; other JSON kinds are ignored rather than asserted.
+      const title = session.current?.store.getDocument().metadata.title;
+      return typeof title === "string" ? title : undefined;
     },
     get nodeCount() {
       return session.current === undefined
@@ -248,10 +244,7 @@ export function createFileService(options: FileServiceOptions): FileService {
       return { ok: true };
     },
     subscribe(listener) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
+      return listeners.add(listener);
     },
   };
 }

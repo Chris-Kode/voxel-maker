@@ -1,4 +1,4 @@
-import type { NodeId } from "@voxel-maker/shared";
+import { createListenerSet, type NodeId } from "@voxel-maker/shared";
 
 /**
  * Runtime-only editor interaction state (plan S7.1, ARCHITECTURE.md
@@ -25,6 +25,7 @@ export interface EditorStore {
   setSelection(selection: readonly NodeId[]): void;
   pushNotice(level: EditorNotice["level"], message: string): void;
   dismissNotice(id: number): void;
+  clearNotices(): void;
   /** Subscribes to runtime state changes; returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
 }
@@ -41,16 +42,10 @@ export function createEditorStore(): EditorStore {
   let selection: readonly NodeId[] = [];
   let notices: EditorNotice[] = [];
   let nextNoticeId = 1;
-  const listeners = new Set<() => void>();
+  const listeners = createListenerSet<undefined>();
 
   const notify = (): void => {
-    for (const listener of [...listeners]) {
-      try {
-        listener();
-      } catch {
-        // Best-effort notifications never break editor state changes.
-      }
-    }
+    listeners.emit(undefined);
   };
 
   return {
@@ -80,11 +75,12 @@ export function createEditorStore(): EditorStore {
       notices = notices.filter((notice) => notice.id !== id);
       notify();
     },
+    clearNotices() {
+      notices = [];
+      notify();
+    },
     subscribe(listener) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
+      return listeners.add(listener);
     },
   };
 }

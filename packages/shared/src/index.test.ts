@@ -3,6 +3,7 @@ import {
   WorkspaceError,
   animationId,
   canonicalJson,
+  createListenerSet,
   commandId,
   componentId,
   err,
@@ -63,5 +64,44 @@ describe("shared contracts", () => {
     });
     expect(ok(4)).toEqual({ ok: true, value: 4 });
     expect(err(error)).toEqual({ ok: false, error });
+  });
+});
+
+describe("createListenerSet", () => {
+  it("notifies listeners and honors unsubscribe", () => {
+    const set = createListenerSet<number>();
+    const seen: number[] = [];
+    const unsubscribe = set.add((value) => {
+      seen.push(value);
+    });
+    set.emit(1);
+    set.emit(2);
+    unsubscribe();
+    set.emit(3);
+    expect(seen).toEqual([1, 2]);
+  });
+
+  it("isolates throwing listeners", () => {
+    const set = createListenerSet<number>();
+    set.add(() => {
+      throw new Error("listener failure");
+    });
+    let reached = false;
+    set.add(() => {
+      reached = true;
+    });
+    expect(() => {
+      set.emit(1);
+    }).not.toThrow();
+    expect(reached).toBe(true);
+  });
+
+  it("tracks size and clears", () => {
+    const set = createListenerSet<string>();
+    set.add(() => undefined);
+    set.add(() => undefined);
+    expect(set.size).toBe(2);
+    set.clear();
+    expect(set.size).toBe(0);
   });
 });

@@ -24,6 +24,13 @@ fn validate_path(path: &str) -> Result<(), String> {
     if path.as_bytes().contains(&0) {
         return Err("project path contains a NUL byte".to_string());
     }
+    // Native dialogs always return absolute paths; relative paths are
+    // rejected outright so the webview can never address files through
+    // its own working directory. Scoped allowlists and canonicalization
+    // arrive with the project lifecycle ticket (#22 / S6.18).
+    if !Path::new(path).is_absolute() {
+        return Err("project path must be absolute".to_string());
+    }
     Ok(())
 }
 

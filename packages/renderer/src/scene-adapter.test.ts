@@ -307,8 +307,13 @@ describe("scene adapter", () => {
     const harness = createHarness();
     const mesh = childMesh(harness.adapter);
     const dispose = vi.spyOn(mesh.geometry, "dispose");
+    const materialDispose = vi.spyOn(
+      mesh.material as THREE.Material,
+      "dispose",
+    );
     harness.adapter.clear();
     expect(dispose).toHaveBeenCalled();
+    expect(materialDispose).toHaveBeenCalled();
     expect(harness.adapter.nodeCount).toBe(0);
     expect(harness.adapter.chunkMeshCount).toBe(0);
     expect(chunkMeshes(harness.scene)).toHaveLength(0);
@@ -329,10 +334,17 @@ describe("scene adapter", () => {
     const { adapter, scene } = createHarness();
     const mesh = childMesh(adapter);
     const dispose = vi.spyOn(mesh.geometry, "dispose");
+    const oldMaterial = mesh.material;
+    const materialDispose = vi.spyOn(oldMaterial as THREE.Material, "dispose");
 
     const second = createHarness();
     adapter.rebind(second.store);
     expect(dispose).toHaveBeenCalled();
+    expect(materialDispose).toHaveBeenCalled();
+    // The rebound projection uses a fresh material instance, not the
+    // disposed cache entry of the replaced document.
+    const reboundMesh = childMesh(adapter);
+    expect(reboundMesh.material).not.toBe(oldMaterial);
     expect(adapter.nodeCount).toBe(2);
     expect(adapter.chunkMeshCount).toBe(1);
     // Commits on the new store project.

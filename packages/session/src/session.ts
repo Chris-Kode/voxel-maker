@@ -1,6 +1,8 @@
 import {
   WorkspaceError,
+  createListenerSet,
   type DocumentId,
+  type JsonValue,
   type VolumeId,
 } from "@voxel-maker/shared";
 import {
@@ -122,7 +124,7 @@ export interface DocumentSession {
 
 class DocumentSessionImpl implements DocumentSession {
   readonly #registerCommands: readonly CommandRegistryRegistrar[];
-  readonly #listeners = new Set<(event: DocumentLifecycleEvent) => void>();
+  readonly #listeners = createListenerSet<DocumentLifecycleEvent>();
   #current: DocumentSessionState | undefined;
 
   constructor(options: CreateDocumentSessionOptions) {
@@ -176,10 +178,7 @@ class DocumentSessionImpl implements DocumentSession {
   }
 
   subscribe(listener: (event: DocumentLifecycleEvent) => void): () => void {
-    this.#listeners.add(listener);
-    return () => {
-      this.#listeners.delete(listener);
-    };
+    return this.#listeners.add(listener);
   }
 
   dispose(): void {
@@ -237,15 +236,8 @@ class DocumentSessionImpl implements DocumentSession {
 
   #emit(event: DocumentLifecycleEvent): void {
     // Best-effort notifications: a throwing listener must never break a
-    // lifecycle transition.
-    for (const listener of [...this.#listeners]) {
-      try {
-        listener(event);
-      } catch {
-        // Swallow projection listener failures; the transition already
-        // committed.
-      }
-    }
+    // lifecycle transition (listener failures are isolated by the set).
+    this.#listeners.emit(event);
   }
 }
 
@@ -253,13 +245,13 @@ function sessionError(
   family: "conflict" | "validation",
   code: string,
   message: string,
-  context?: Readonly<Record<string, unknown>>,
+  context?: Readonly<Record<string, JsonValue>>,
 ): WorkspaceError {
   return new WorkspaceError({
     family,
     code,
     message,
-    ...(context === undefined ? {} : { context: context as never }),
+    ...(context === undefined ? {} : { context }),
   });
 }
 

@@ -35,6 +35,14 @@ describe("editor runtime store", () => {
     expect(store.notices[0]?.message).toBe("ok");
   });
 
+  it("clears all notices", () => {
+    const store = createEditorStore();
+    store.pushNotice("error", "boom");
+    store.pushNotice("info", "ok");
+    store.clearNotices();
+    expect(store.notices).toEqual([]);
+  });
+
   it("notifies subscribers and honors unsubscribe", () => {
     const store = createEditorStore();
     let calls = 0;

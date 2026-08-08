@@ -75,7 +75,12 @@ export function createDesktopComposition(
 
   // Lifecycle rebinding: opening, replacing, and closing a document fully
   // dispose and rebind scene resources through lifecycle events (plan S6.3).
+  // Lifecycle rebinding (plan S6.3/S5.15): opening, replacing, and closing
+  // a document fully dispose and rebind scene resources and reset runtime
+  // editor state (selection/notices) through lifecycle events.
   session.subscribe((event) => {
+    editor.setSelection([]);
+    editor.clearNotices();
     if (
       event.kind === "document-opened" ||
       event.kind === "document-replaced"
