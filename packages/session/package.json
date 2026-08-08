@@ -1,5 +1,5 @@
 {
-  "name": "@voxel-maker/renderer",
+  "name": "@voxel-maker/session",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -23,14 +23,12 @@
   },
   "dependencies": {
     "@voxel-maker/shared": "workspace:*",
-    "@voxel-maker/math": "workspace:*",
     "@voxel-maker/model": "workspace:*",
     "@voxel-maker/document": "workspace:*",
     "@voxel-maker/voxel": "workspace:*",
-    "three": "catalog:"
+    "@voxel-maker/commands": "workspace:*"
   },
   "devDependencies": {
-    "@types/three": "catalog:",
     "typescript": "catalog:"
   }
 }

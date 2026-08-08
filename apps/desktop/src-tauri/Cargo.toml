@@ -1,0 +1,21 @@
+[package]
+name = "voxel-maker"
+version = "0.0.0"
+description = "AI-native generic voxel editor - desktop shell"
+authors = ["Voxel Maker contributors"]
+edition = "2021"
+
+# The library is linked by the mobile entrypoint when present; the desktop
+# binary uses the cdylib/rlib pair.
+[lib]
+name = "voxel_maker_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
