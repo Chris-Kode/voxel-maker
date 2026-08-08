@@ -176,6 +176,7 @@ class SceneAdapterImpl implements SceneAdapter {
     }
     this.#nodeProjections.clear();
     this.#chunkMeshes.clear();
+    this.#volumeOwners.clear();
   }
 
   objectForNode(nodeId: NodeId): THREE.Object3D | undefined {
