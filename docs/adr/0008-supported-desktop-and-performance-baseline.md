@@ -30,7 +30,7 @@ The desktop UI targets the applicable WCAG 2.2 AA success criteria. Release qual
 
 ### Performance gates
 
-A release build is measured while plugged in, with default quality settings, a fixed camera and 1920×1080 viewport, after a 10-second warm-up. Frame and latency gates use at least 30 seconds or 100 samples and report p95; save/load uses five cold process runs. Fixtures include compact, sparse, and checkerboard/high-surface geometry so occupied-voxel count cannot hide pathological chunk or face counts.
+A release build is measured while plugged in, with default quality settings, a fixed camera and 1920×1080 logical viewport forced to device-pixel ratio 1 (a 1920×1080 framebuffer), after a 10-second warm-up. Frame and latency gates use at least 30 seconds or 100 samples and report p95; save/load uses five cold process runs. Fixtures include compact, sparse, and checkerboard/high-surface geometry so occupied-voxel count cannot hide pathological chunk or face counts. HiDPI qualification is a separate support test and does not alter benchmark DPR.
 
 On the reference tier:
 

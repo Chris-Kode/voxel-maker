@@ -337,7 +337,7 @@ One immutable injected limit profile is shared across parsers, Commands, history
 | Clips / Tracks / keyframes | 256 / 10,000 / 1,000,000 |
 | preview image | 2048×2048 and 16 MiB decoded RGBA |
 
-An AI session additionally permits at most 16 model rounds, 64 tool calls, 1,024 proposed Commands, 1M proposed voxel changes, 4 MiB tool-result bytes, 128k total tokens, 10 minutes, USD 5 estimated spend, three visual iterations, and 12 images. Known usage is reserved before a request. Unknown-cost usage requires an explicit provider-side cap.
+An AI session additionally permits at most 16 model rounds, 64 tool calls, 1,024 proposed Commands, 1M proposed voxel changes, 256 proposed or modified Tracks, 10,000 keyframes, 3,600 seconds per proposed Clip, 4 MiB combined inspection and tool-result bytes, 128k total tokens, 10 minutes, USD 5 estimated spend, three visual iterations, and 12 images. Known usage is reserved before a request. Unknown-cost usage requires an explicit provider-side cap.
 
 Hard-limit violations fail before allocation or mutation with a stable limit error and no forbidden side effects; a dialog cannot waive them. Raising a limit requires reviewed configuration plus benchmark or adversarial evidence. More than 100k affected voxels, 64 MiB new inverse history, file overwrite, lock stealing, source migration, or any image transmission requires explicit pre-execution confirmation even below hard limits. AI Apply always requires approval.
 
@@ -349,7 +349,7 @@ Image transmission requires per-session confirmation of provider, model, views, 
 
 ### Native and external formats
 
-The native reader supports current versions plus a complete migration chain for at least the two preceding released major versions of each semantic format. The writer emits current versions only. Unknown future or unrecognized claimed-supported content fails without overwrite. Journals require matching snapshot identity and a supported command migration chain.
+The initial native reader supports every released version 1 format with a complete migration chain. After future majors exist, the reader supports the current major and up to the two immediately preceding released majors of each semantic format—all existing predecessor majors until two exist. The writer emits current versions only. Unknown future or unrecognized claimed-supported content fails without overwrite. Journals require matching snapshot identity and a supported command migration chain.
 
 Writable open uses an adjacent exclusive nonce-bearing lock. Contention opens read-only by default; lock stealing requires confirmation plus same-machine dead-owner or 30-second stale-heartbeat evidence. Remote/unverifiable locks are never auto-stolen. Lock loss prevents overwrite but permits Save As. Version 1 has no merge or collaborative-editing semantics.
 

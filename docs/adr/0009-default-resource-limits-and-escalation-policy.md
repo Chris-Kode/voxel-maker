@@ -38,6 +38,8 @@ Each AI session has these additional hard defaults:
 |---|---:|
 | model rounds / tool calls | 16 / 64 |
 | proposed Commands / proposed voxel changes | 1,024 / 1,000,000 |
+| proposed or modified Tracks / keyframes | 256 / 10,000 |
+| proposed Clip duration | 3,600 seconds |
 | inspection plus tool-result bytes | 4 MiB |
 | input plus output tokens | 128,000 |
 | elapsed wall time | 10 minutes |
