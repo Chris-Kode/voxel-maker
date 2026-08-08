@@ -1,0 +1,26 @@
+{
+  "name": "@voxel-maker/headless",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "voxel-maker-headless": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node ../../scripts/clean.mjs dist",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@voxel-maker/commands": "workspace:*",
+    "@voxel-maker/model": "workspace:*",
+    "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/voxel": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

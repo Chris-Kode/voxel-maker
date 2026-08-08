@@ -1,0 +1,8 @@
+.turbo
+coverage
+dist
+node_modules
+pnpm-lock.yaml
+.agents
+*.md
+skills-lock.json

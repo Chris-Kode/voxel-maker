@@ -1,0 +1,38 @@
+{
+  "name": "voxel-maker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "check": "pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm coverage && pnpm build && pnpm check:boundaries && pnpm check:entrypoints && pnpm demo:headless",
+    "check:boundaries": "node scripts/check-boundaries.mjs && depcruise --validate .dependency-cruiser.cjs apps packages",
+    "check:entrypoints": "node scripts/check-entrypoints.mjs",
+    "clean": "turbo run clean && node scripts/clean.mjs .turbo",
+    "demo:headless": "node apps/headless/dist/cli.js",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "lint": "eslint eslint.config.mjs .dependency-cruiser.cjs scripts && turbo run lint",
+    "test": "node --test scripts/*.test.mjs && turbo run test",
+    "typecheck": "turbo run typecheck",
+    "coverage": "pnpm --filter @voxel-maker/shared test:coverage && pnpm --filter @voxel-maker/voxel test:coverage && pnpm --filter @voxel-maker/testkit test:coverage && pnpm --filter @voxel-maker/headless test:coverage"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "dependency-cruiser": "catalog:",
+    "eslint": "catalog:",
+    "prettier": "3.6.2",
+    "turbo": "2.5.6",
+    "typescript": "5.9.2",
+    "typescript-eslint": "catalog:",
+    "vite": "7.1.3",
+    "vitest": "catalog:"
+  }
+}
