@@ -37,11 +37,30 @@ interface PersistenceOutput {
     voxelSamples: { coordinate: number[]; before: number; after: number }[];
   };
   transactions: { label: string; accepted: boolean; revision: number }[];
+  durable: {
+    firstSave: {
+      status: string;
+      revision: number;
+      cleanAfter: boolean;
+      backupAfter: boolean;
+    };
+    edit: { revision: number; dirtyAfter: boolean };
+    secondSave: {
+      status: string;
+      revision: number;
+      cleanAfter: boolean;
+      backupAfter: boolean;
+      bytes: number;
+      savedHashMatches: boolean;
+      backupMatchesFirstSave: boolean;
+      leftoverTempFiles: string[];
+    };
+  };
 }
 
 describe("headless persistence tracer", () => {
-  it("creates, saves, reloads, and reinstalls the same semantic asset", () => {
-    const output = JSON.parse(runPersistenceTrace()) as PersistenceOutput;
+  it("creates, saves, reloads, and reinstalls the same semantic asset", async () => {
+    const output = JSON.parse(await runPersistenceTrace()) as PersistenceOutput;
 
     // Same canonical semantic hash before and after reload (acceptance).
     expect(output.save.hashStable).toBe(true);
@@ -73,7 +92,9 @@ describe("headless persistence tracer", () => {
     expect(output.reload.extraName).toBe("Extra-renamed");
     expect(output.reload.accentColor).toBe("#00ff88");
     expect(output.reload.accentEmissive).toBe(0.2);
-    expect(output.reload.occupiedBody).toBe(729);
+    // The live store gained the extra fillBox transaction (81 voxels) after
+    // the reload snapshot was captured; the reloaded store stays at 729.
+    expect(output.reload.occupiedBody).toBe(810);
     expect(output.reload.occupiedBodyAfter).toBe(729);
     expect(output.reload.occupiedArm).toBe(33);
     expect(output.reload.occupiedArmAfter).toBe(33);
@@ -82,13 +103,31 @@ describe("headless persistence tracer", () => {
     }
 
     // Every transaction committed through the command bus.
-    expect(output.transactions).toHaveLength(6);
+    expect(output.transactions).toHaveLength(7);
     for (const transaction of output.transactions) {
       expect(transaction.accepted).toBe(true);
     }
     expect(
       output.transactions.map((transaction) => transaction.revision),
-    ).toEqual([1, 2, 3, 4, 5, 6]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7]);
+
+    // Atomic durable save (ticket #13): first save writes the captured
+    // snapshot and leaves the project clean with no backup; an edit marks
+    // it dirty; the second save writes the new snapshot, preserves the
+    // first one as last-known-good, and leaves no temporary files.
+    expect(output.durable.firstSave.status).toBe("saved");
+    expect(output.durable.firstSave.revision).toBe(6);
+    expect(output.durable.firstSave.cleanAfter).toBe(true);
+    expect(output.durable.firstSave.backupAfter).toBe(false);
+    expect(output.durable.edit.revision).toBe(7);
+    expect(output.durable.edit.dirtyAfter).toBe(true);
+    expect(output.durable.secondSave.status).toBe("saved");
+    expect(output.durable.secondSave.revision).toBe(7);
+    expect(output.durable.secondSave.cleanAfter).toBe(true);
+    expect(output.durable.secondSave.backupAfter).toBe(true);
+    expect(output.durable.secondSave.savedHashMatches).toBe(true);
+    expect(output.durable.secondSave.backupMatchesFirstSave).toBe(true);
+    expect(output.durable.secondSave.leftoverTempFiles).toEqual([]);
   });
 
   it("serializes byte-identically across fresh processes", () => {

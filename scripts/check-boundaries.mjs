@@ -46,6 +46,7 @@ const allowedDependencies = {
     "rigging",
     "animation",
   ],
+  storage: ["shared", "math", "model", "document", "voxel", "formats"],
   agent: [
     "shared",
     "model",

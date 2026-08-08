@@ -1,31 +1,35 @@
 {
-  "name": "@voxel-maker/headless",
+  "name": "@voxel-maker/storage",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "voxel-maker-headless": "./dist/cli.js",
-    "voxel-maker-persistence": "./dist/persistence-cli.js"
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "node ../../scripts/clean.mjs dist",
     "lint": "eslint src",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:coverage": "vitest run --coverage"
   },
+  "devDependencies": {
+    "typescript": "catalog:"
+  },
   "dependencies": {
-    "@voxel-maker/commands": "workspace:*",
-    "@voxel-maker/model": "workspace:*",
     "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/model": "workspace:*",
     "@voxel-maker/voxel": "workspace:*",
     "@voxel-maker/document": "workspace:*",
     "@voxel-maker/formats": "workspace:*",
-    "@voxel-maker/math": "workspace:*",
-    "@voxel-maker/storage": "workspace:*"
-  },
-  "devDependencies": {
-    "typescript": "catalog:"
+    "@voxel-maker/math": "workspace:*"
   }
 }

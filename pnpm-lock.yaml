@@ -89,6 +89,9 @@ importers:
       '@voxel-maker/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@voxel-maker/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@voxel-maker/voxel':
         specifier: workspace:*
         version: link:../../packages/voxel
@@ -252,6 +255,31 @@ importers:
         version: 5.9.2
 
   packages/skills:
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.2
+
+  packages/storage:
+    dependencies:
+      '@voxel-maker/document':
+        specifier: workspace:*
+        version: link:../document
+      '@voxel-maker/formats':
+        specifier: workspace:*
+        version: link:../formats
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../math
+      '@voxel-maker/model':
+        specifier: workspace:*
+        version: link:../model
+      '@voxel-maker/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@voxel-maker/voxel':
+        specifier: workspace:*
+        version: link:../voxel
     devDependencies:
       typescript:
         specifier: 'catalog:'

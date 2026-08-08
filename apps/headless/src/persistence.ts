@@ -38,7 +38,16 @@ import {
   type Command,
 } from "@voxel-maker/commands";
 import { readVxlProject, writeVxlProject } from "@voxel-maker/formats";
+import {
+  backupPathFor,
+  createSaveCoordinator,
+  createVxlProjectEncoder,
+} from "@voxel-maker/storage";
+import { NodeProjectStorage } from "./node-storage.js";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const identity = {
   translation: [0, 0, 0],
@@ -60,7 +69,7 @@ const EXTRA = nodeId("node:demo:persist:extra");
  * verify the canonical semantic hash, and reinstall the asset into a fresh
  * store through validated lifecycle replacement.
  */
-export function runPersistenceTrace(): string {
+export async function runPersistenceTrace(): Promise<string> {
   const document = createPersistenceDocument();
   const { store, writeCapability } = createDocumentStore({ document });
   const registry = new CommandRegistry();
@@ -194,6 +203,58 @@ export function runPersistenceTrace(): string {
     after: reloadedStore.getVoxel(BODY_VOLUME, coordinate),
   }));
 
+  // Atomic durable save (ticket #13, plan S5.6/S5.7/S5.14): the coordinator
+  // captures an immutable `(revision, semantic hash)` snapshot, the Node
+  // adapter writes a same-directory temporary file, flushes it, preserves a
+  // last-known-good backup, and atomically replaces the destination.
+  const saveDirectory = await mkdtemp(join(tmpdir(), "voxel-maker-save-"));
+  const projectPath = join(saveDirectory, "demo.vxl");
+  const storagePort = new NodeProjectStorage();
+  const coordinator = createSaveCoordinator({
+    store,
+    port: storagePort,
+    encoder: createVxlProjectEncoder(),
+  });
+  const firstSave = await coordinator.save(projectPath);
+  const cleanAfterFirstSave = !coordinator.isDirty();
+  const backupAfterFirstSave = await storagePort.exists(
+    backupPathFor(projectPath),
+  );
+
+  // A later edit leaves the durable snapshot untouched and marks the
+  // project dirty; the second save writes the new snapshot and backs up
+  // the first one.
+  execute(
+    "fillBox extra",
+    fillBoxCommand(commandId("command:demo:persist:fill-extra"), {
+      volumeId: BODY_VOLUME,
+      region: { min: [-4, 9, -4], max: [5, 10, 5] },
+      material: materialId(2),
+    }),
+  );
+  const revisionAfterEdit = revision;
+  const dirtyAfterEdit = coordinator.isDirty();
+  const secondSave = await coordinator.save(projectPath);
+  const cleanAfterSecondSave = !coordinator.isDirty();
+  const backupAfterSecondSave = await storagePort.exists(
+    backupPathFor(projectPath),
+  );
+
+  // Reload the bytes that reached the disk and confirm identity.
+  const savedBytes = await storagePort.readProject(projectPath);
+  const savedProject = readVxlProject(savedBytes);
+  const savedHashMatches =
+    savedProject.semanticHash === secondSave.semanticHash;
+  const backupBytes = await storagePort.readBackup(projectPath);
+  const backupLoaded =
+    backupBytes === undefined ? undefined : readVxlProject(backupBytes);
+  const backupMatchesFirstSave =
+    backupLoaded?.semanticHash === firstSave.semanticHash;
+  const leftoverTempFiles = (await readdir(saveDirectory)).filter((name) =>
+    name.endsWith(".tmp"),
+  );
+  await rm(saveDirectory, { recursive: true, force: true });
+
   return canonicalJson({
     save: {
       bytes: firstBytes.byteLength,
@@ -230,6 +291,28 @@ export function runPersistenceTrace(): string {
       voxelSamples,
     },
     transactions,
+    durable: {
+      firstSave: {
+        status: firstSave.status,
+        revision: firstSave.revision,
+        cleanAfter: cleanAfterFirstSave,
+        backupAfter: backupAfterFirstSave,
+      },
+      edit: {
+        revision: revisionAfterEdit,
+        dirtyAfter: dirtyAfterEdit,
+      },
+      secondSave: {
+        status: secondSave.status,
+        revision: secondSave.revision,
+        cleanAfter: cleanAfterSecondSave,
+        backupAfter: backupAfterSecondSave,
+        bytes: savedBytes.byteLength,
+        savedHashMatches,
+        backupMatchesFirstSave,
+        leftoverTempFiles,
+      },
+    },
   });
 }
 

@@ -137,6 +137,7 @@ The intended workspace has one desktop application and deep semantic or adapter 
 | `renderer` | Three.js projection, meshing workers, picking, overlays, GPU lifecycle | Semantic read modules; never `commands` or editor implementations |
 | `editor` | Tools and non-React editor workflows that construct commands | Semantic read modules and `commands` |
 | `formats` | Native and external codecs, validation, import/export projections | Semantic read modules; platform I/O is injected |
+| `storage` | Storage ports, atomic-save coordination, immutable revision snapshots, dirty state, memory adapter | `shared`, `model`, `voxel`, `document`, `formats` |
 | `agent` | Tool contracts, bounded inspection, preview transactions, agent state machine | Semantic read modules and `commands` |
 | `skills` | Versioned domain instructions, recipes, deterministic generators, evaluations | Agent tool contracts and generic command proposal contracts |
 | desktop app | Composition, React UI, Tauri adapters, provider adapters | All modules required for composition |
@@ -250,7 +251,7 @@ Readers validate path safety, duplicates, entry counts, compressed and uncompres
 
 Asset identity is SHA-256 over the ADR-0004 `canonicalSemanticBytes` (`canonicalAssetSemanticHash` in `@voxel-maker/document`): a version tag; the length-framed RFC 8785 UTF-8 document (`canonicalDocumentHash` covers the document-only framing in `@voxel-maker/model`); and length-framed non-empty chunk streams sorted by volume ID and signed coordinates, with all 4096 X-fastest unsigned-16 values encoded little-endian. It excludes timestamps, archive compression details, permissions, previews, UI state, runtime revisions, history, recovery data, audit logs, and diagnostics. CRC checks container or journal corruption; it is not semantic identity.
 
-A save captures immutable snapshot `(revision R, semantic hash H_R)`, writes a same-directory temporary file, flushes where supported, atomically replaces the destination, and retains a last-known-good backup. Completion records `R` as the durable snapshot and marks the project clean only if the live semantic hash equals captured `H_R`; it never compares a hash with a Revision.
+A save captures immutable snapshot `(revision R, semantic hash H_R)`, writes a same-directory temporary file, flushes where supported, atomically replaces the destination, and retains a last-known-good backup. Completion records `R` as the durable snapshot and marks the project clean only if the live semantic hash equals captured `H_R`; it never compares a hash with a Revision. `@voxel-maker/storage` owns the port contract and the memory adapter; the Node test adapter lives in the headless app and a Tauri adapter later replaces it at the same seam (plan S5.6/S5.7, `docs/storage/atomic-save-v1.md`).
 
 Semantic commit precedes durable recovery I/O. An ordered recovery writer appends checksummed frames and tracks `lastJournaledRevision`. Failure leaves the edit valid and dirty, reports degraded crash recovery, and schedules retry; it never claims unconfirmed durability.
 
