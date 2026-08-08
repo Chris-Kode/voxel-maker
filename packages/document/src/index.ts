@@ -11,3 +11,5 @@ export {
   type StagedState,
 } from "./store.js";
 export { VoxelRepository } from "./repository.js";
+
+export { worldTransformMatrix } from "./hierarchy.js";

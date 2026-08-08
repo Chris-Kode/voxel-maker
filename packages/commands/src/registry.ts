@@ -1,12 +1,21 @@
 import {
   WorkspaceError,
   type AnimationId,
+  type DocumentId,
   type MaterialId,
   type NodeId,
   type VolumeId,
 } from "@voxel-maker/shared";
-import type { Vec3i } from "@voxel-maker/math";
-import type { DocumentLimits, VoxelDocument } from "@voxel-maker/model";
+import type { Transform, Vec3i } from "@voxel-maker/math";
+import type {
+  AnimationDescriptor,
+  Color,
+  Component,
+  DocumentLimits,
+  MetadataRecord,
+  VoxelDocument,
+  VolumeDescriptor,
+} from "@voxel-maker/model";
 import type {
   VoxelChangeSet,
   VoxelVolume,
@@ -22,10 +31,56 @@ export interface CommandValidationContext {
   getVolume(volumeId: VolumeId): VoxelVolumeReadView | undefined;
 }
 
+/**
+ * Mutable copy-on-write working copy of the document for one transaction
+ * (plan 4.3). Only registered command handlers receive it, through
+ * `CommandExecutionContext.stageDocument`; public consumers never see it.
+ */
+export interface MutableDocument {
+  documentId: DocumentId;
+  documentSchemaVersion: 1;
+  revision: number;
+  metadata: MetadataRecord;
+  rootNodeId: NodeId;
+  nodes: Record<NodeId, MutableSceneNode>;
+  materials: Record<MaterialId, MutableMaterialRecord>;
+  volumes: Record<VolumeId, VolumeDescriptor>;
+  animations: Record<AnimationId, AnimationDescriptor>;
+}
+
+/** Mutable scene node record; children order is preserved by commands. */
+export interface MutableSceneNode {
+  nodeId: NodeId;
+  name?: string;
+  parentId: NodeId | null;
+  children: NodeId[];
+  transform: Transform;
+  components: Component[];
+  metadata?: MetadataRecord;
+}
+
+/** Mutable material record; every field is bounded by the model schema. */
+export interface MutableMaterialRecord {
+  materialId: MaterialId;
+  name: string;
+  color: Color;
+  opacity: number;
+  roughness: number;
+  metallic: number;
+  emissive: number;
+}
+
 /** Execution context; staged writes are visible to later commands. */
 export interface CommandExecutionContext extends CommandValidationContext {
   /** Copy-on-write clone of a volume for this transaction, or undefined. */
   stageVolume(volumeId: VolumeId): VoxelVolume | undefined;
+  /**
+   * Copy-on-write working copy of the document for this transaction. The
+   * first call clones the committed document; later commands see earlier
+   * staged record effects. The returned object is mutable and private to the
+   * transaction; it is discarded on failure.
+   */
+  stageDocument(): MutableDocument;
   readonly writeCapability: VoxelWriteCapability;
 }
 
@@ -50,8 +105,22 @@ export interface DeclaredAffectedResources {
 
 /** Result of executing one command against the staged state. */
 export interface CommandExecution {
-  readonly changeSet: VoxelChangeSet;
-  readonly inverse: InverseCommand;
+  /** Voxel change set of the primary touched volume, when any. */
+  readonly changeSet?: VoxelChangeSet;
+  /** Additional touched volumes (for example a material remap). */
+  readonly additionalChangeSets?: readonly VoxelChangeSet[];
+  /**
+   * Exact inverse intent. A command may return several inverse commands
+   * (for example recreating a record and restoring voxels); the bus replays
+   * them in reverse order on undo.
+   */
+  readonly inverse: InverseCommand | readonly InverseCommand[];
+  /**
+   * True when the command mutated a document record (node, material, or
+   * metadata). Voxel commands leave it unset; the bus treats a command as
+   * changed when it reports record changes or any non-empty change set.
+   */
+  readonly changedRecords?: boolean;
   readonly declaredAffectedResources: DeclaredAffectedResources;
 }
 

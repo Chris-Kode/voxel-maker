@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   QUATERNION_NORM_EPSILON,
+  applyMatrix,
   canonicalIntAabb,
   canonicalNumber,
   canonicalQuat,
@@ -8,8 +9,14 @@ import {
   canonicalTransform,
   canonicalVec3,
   canonicalVec3i,
+  decomposeMatrix,
+  invertMatrix,
   isCanonicalQuat,
   isNormalizedQuat,
+  multiplyMatrices,
+  resolveLocalTransform,
+  transformToMatrix,
+  type Mat4,
   type Quat,
   type Transform,
 } from "./index.js";
@@ -114,5 +121,179 @@ describe("canonical AABB", () => {
     expect(() => canonicalIntAabb({ min: [0, 0, 0], max: [-1, 1, 1] })).toThrow(
       /must not exceed maximum/u,
     );
+  });
+});
+
+describe("affine transform matrices", () => {
+  const identity: Transform = {
+    translation: [0, 0, 0],
+    pivot: [0, 0, 0],
+    rotation: [0, 0, 0, 1],
+    scale: [1, 1, 1],
+  };
+
+  it("converts the identity transform to the identity matrix", () => {
+    expect(transformToMatrix(identity)).toEqual([
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    ]);
+  });
+
+  it("places translation in the fourth column", () => {
+    const matrix = transformToMatrix({
+      ...identity,
+      translation: [1, -2, 3],
+    });
+    expect(applyMatrix(matrix, [0, 0, 0])).toEqual([1, -2, 3]);
+  });
+
+  it("evaluates T(t) x T(p) x R x S x T(-p) around the pivot", () => {
+    const transform: Transform = {
+      translation: [10, 0, 0],
+      pivot: [2, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+    };
+    // A 180-degree rotation around the pivot at x=2 maps x=3 to x=1,
+    // then the translation moves the result to x=11.
+    const rotated: Transform = {
+      ...transform,
+      rotation: [0, 0, 1, 0],
+    };
+    expect(applyMatrix(transformToMatrix(rotated), [3, 0, 0])).toEqual([
+      11, 0, 0,
+    ]);
+  });
+
+  it("multiplies matrices in the given order", () => {
+    const a = transformToMatrix({ ...identity, translation: [1, 0, 0] });
+    const b = transformToMatrix({ ...identity, translation: [0, 2, 0] });
+    expect(applyMatrix(multiplyMatrices(a, b), [0, 0, 0])).toEqual([1, 2, 0]);
+    expect(applyMatrix(multiplyMatrices(b, a), [0, 0, 0])).toEqual([1, 2, 0]);
+  });
+
+  it("inverts affine matrices exactly", () => {
+    const transform: Transform = {
+      translation: [3, -1, 2],
+      pivot: [1, 0, -1],
+      rotation: [0, HALF, 0, HALF],
+      scale: [2, 0.5, 3],
+    };
+    const matrix = transformToMatrix(transform);
+    const inverse = invertMatrix(matrix);
+    const product = multiplyMatrices(matrix, inverse);
+    for (let i = 0; i < 16; i += 1) {
+      const expected = i % 5 === 0 ? 1 : 0;
+      expect(Math.abs((product[i] as number) - expected)).toBeLessThan(1e-9);
+    }
+  });
+
+  it("decomposes a transform matrix back into canonical TRS with the given pivot", () => {
+    const transform: Transform = {
+      translation: [3, -1, 2],
+      pivot: [1, 0, -1],
+      rotation: [0, HALF, 0, HALF],
+      scale: [2, 0.5, 3],
+    };
+    const decomposed = decomposeMatrix(
+      transformToMatrix(transform),
+      [1, 0, -1],
+    );
+    expect(decomposed.pivot).toEqual([1, 0, -1]);
+    expect(decomposed.translation).toEqual([3, -1, 2]);
+    expect(decomposed.rotation[0]).toBeCloseTo(0, 12);
+    expect(decomposed.rotation[1]).toBeCloseTo(HALF, 12);
+    expect(decomposed.rotation[2]).toBeCloseTo(0, 12);
+    expect(decomposed.rotation[3]).toBeCloseTo(HALF, 12);
+    expect(decomposed.scale).toEqual([2, 0.5, 3]);
+  });
+
+  it("quantizes derived components to 1e-9 and canonicalizes tiny magnitudes", () => {
+    const transform: Transform = {
+      translation: [1.0000000004, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1.0000000004, 1, 1],
+    };
+    const decomposed = decomposeMatrix(transformToMatrix(transform), [0, 0, 0]);
+    expect(decomposed.translation[0]).toBe(1);
+    expect(decomposed.scale[0]).toBe(1);
+    expect(Object.is(decomposed.translation[1], -0)).toBe(false);
+  });
+
+  it("rejects matrices that are not a rotation times positive scale", () => {
+    // A shear matrix cannot be represented as TRS with positive scale.
+    const shear: Mat4 = [1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    expect(() => decomposeMatrix(shear, [0, 0, 0])).toThrow(
+      /decompos|represent/u,
+    );
+  });
+
+  it("resolves a local transform that preserves the world placement", () => {
+    const parent: Transform = {
+      translation: [5, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+    };
+    const local: Transform = {
+      translation: [1, 2, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+    };
+    const world = multiplyMatrices(
+      transformToMatrix(parent),
+      transformToMatrix(local),
+    );
+    const resolved = resolveLocalTransform(
+      world,
+      transformToMatrix(parent),
+      [0, 0, 0],
+    );
+    expect(resolved.translation).toEqual([1, 2, 0]);
+    expect(resolved.rotation).toEqual([0, 0, 0, 1]);
+    expect(resolved.scale).toEqual([1, 1, 1]);
+  });
+
+  it("resolves a rotated and scaled parent so the world placement round-trips", () => {
+    const parent: Transform = {
+      translation: [5, -2, 1],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, HALF, HALF], // 90 degrees around Z
+      scale: [2, 1, 1],
+    };
+    const local: Transform = {
+      translation: [1, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, HALF, 0, HALF], // 90 degrees around Y
+      scale: [1, 3, 1],
+    };
+    const world = multiplyMatrices(
+      transformToMatrix(parent),
+      transformToMatrix(local),
+    );
+    const resolved = resolveLocalTransform(
+      world,
+      transformToMatrix(parent),
+      [0, 0, 0],
+    );
+    // The resolved local transform reproduces the original local transform
+    // (up to the 1e-9 derived-component quantization)...
+    expect(resolved.translation[0]).toBeCloseTo(1, 9);
+    expect(resolved.translation[1]).toBeCloseTo(0, 9);
+    expect(resolved.translation[2]).toBeCloseTo(0, 9);
+    expect(resolved.rotation[1]).toBeCloseTo(HALF, 9);
+    expect(resolved.rotation[3]).toBeCloseTo(HALF, 9);
+    expect(resolved.scale[1]).toBeCloseTo(3, 9);
+    // ...and composing it under the parent reproduces the world matrix.
+    const recomposed = multiplyMatrices(
+      transformToMatrix(parent),
+      transformToMatrix(resolved),
+    );
+    for (let index = 0; index < 16; index += 1) {
+      expect(
+        Math.abs((recomposed[index] as number) - (world[index] as number)),
+      ).toBeLessThan(1e-9);
+    }
   });
 });

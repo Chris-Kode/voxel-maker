@@ -7,7 +7,7 @@ import { runHeadlessTrace } from "./index.js";
 const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
 const DEMO_HASH =
-  "165ab842532806fbf0677a367b2b43ac188c1d5e009bf212e74944df17c93b24";
+  "3ccd4db83c7213025751e5e925962a07bdb6af176fe9d46b0732932a43c583a9";
 
 describe("headless workspace tracer", () => {
   it("round-trips a versioned document deterministically", () => {
@@ -32,6 +32,20 @@ describe("headless workspace tracer", () => {
         afterUndo: number;
         afterRedo: number;
         revisions: number[];
+      };
+      hierarchy: {
+        createNodeAccepted: boolean;
+        reparentAccepted: boolean;
+        renameAccepted: boolean;
+        extraParent: string | null;
+        extraName: string | null;
+        childChildren: string[];
+      };
+      materials: {
+        createAccepted: boolean;
+        updateAccepted: boolean;
+        deleteAccepted: boolean;
+        materialCount: number;
       };
     };
     expect(parsed.command).toEqual({
@@ -58,6 +72,20 @@ describe("headless workspace tracer", () => {
       afterRedo: 1,
       revisions: [1, 2, 3],
     });
+    expect(parsed.hierarchy).toEqual({
+      createNodeAccepted: true,
+      reparentAccepted: true,
+      renameAccepted: true,
+      extraParent: "node:demo:child",
+      extraName: "Extra-renamed",
+      childChildren: ["node:demo:extra"],
+    });
+    expect(parsed.materials).toEqual({
+      createAccepted: true,
+      updateAccepted: true,
+      deleteAccepted: true,
+      materialCount: 1,
+    });
     expect(canonicalDocumentHash(parseDocument(parsed.serialized))).toBe(
       parsed.document.hash,
     );
@@ -74,5 +102,7 @@ describe("headless workspace tracer", () => {
     expect(first).toBe(second);
     expect(first).toContain('"roundTripStable":true');
     expect(first).toContain('"revisions":[1,2,3]');
+    expect(first).toContain('"extraParent":"node:demo:child"');
+    expect(first).toContain('"materialCount":1');
   });
 });

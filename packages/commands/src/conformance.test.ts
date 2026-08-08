@@ -36,6 +36,22 @@ import {
   registerRegionCommands,
 } from "./region-commands.js";
 import {
+  NODE_CREATE_COMMAND,
+  NODE_DELETE_COMMAND,
+  NODE_RENAME_COMMAND,
+  NODE_REPARENT_COMMAND,
+  NODE_SET_COMPONENTS_COMMAND,
+  NODE_SET_METADATA_COMMAND,
+  NODE_SET_TRANSFORM_COMMAND,
+  registerNodeCommands,
+} from "./node-commands.js";
+import {
+  MATERIAL_CREATE_COMMAND,
+  MATERIAL_DELETE_COMMAND,
+  MATERIAL_UPDATE_COMMAND,
+  registerMaterialCommands,
+} from "./material-commands.js";
+import {
   commandKey,
   runCommandConformanceSuite,
   type CommandConformanceSpec,
@@ -198,6 +214,16 @@ runCommandConformanceSuite(removeSpec, { describe, it, expect });
 
 /** Every registered persistent command must declare a conformance spec (plan 4.17). */
 const CONFORMANCE_TESTED_COMMANDS = [
+  commandKey(MATERIAL_CREATE_COMMAND, 1),
+  commandKey(MATERIAL_DELETE_COMMAND, 1),
+  commandKey(MATERIAL_UPDATE_COMMAND, 1),
+  commandKey(NODE_CREATE_COMMAND, 1),
+  commandKey(NODE_DELETE_COMMAND, 1),
+  commandKey(NODE_RENAME_COMMAND, 1),
+  commandKey(NODE_REPARENT_COMMAND, 1),
+  commandKey(NODE_SET_COMPONENTS_COMMAND, 1),
+  commandKey(NODE_SET_METADATA_COMMAND, 1),
+  commandKey(NODE_SET_TRANSFORM_COMMAND, 1),
   commandKey(VOXEL_APPLY_PATCHES_COMMAND, 1),
   commandKey(VOXEL_COPY_REGION_COMMAND, 1),
   commandKey(VOXEL_DELETE_REGION_COMMAND, 1),
@@ -220,6 +246,8 @@ describe("command conformance coverage", () => {
     registerVoxelCommands(registry);
     registerBatchCommands(registry);
     registerRegionCommands(registry);
+    registerNodeCommands(registry);
+    registerMaterialCommands(registry);
     const registered = registry
       .list()
       .map(({ type, schemaVersion }) => commandKey(type, schemaVersion));

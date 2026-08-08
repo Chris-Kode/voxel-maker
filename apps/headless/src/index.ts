@@ -8,6 +8,7 @@ import {
   volumeId,
 } from "@voxel-maker/shared";
 import {
+  canonicalColor,
   canonicalDocumentHash,
   canonicalDocumentJson,
   createDocument,
@@ -19,8 +20,16 @@ import { createDocumentStore } from "@voxel-maker/document";
 import {
   CommandBus,
   CommandRegistry,
+  createMaterialCommand,
+  createNodeCommand,
+  deleteMaterialCommand,
+  registerMaterialCommands,
+  registerNodeCommands,
   registerVoxelCommands,
+  renameNodeCommand,
+  reparentNodeCommand,
   setVoxelCommand,
+  updateMaterialCommand,
 } from "@voxel-maker/commands";
 
 const identity = {
@@ -96,6 +105,8 @@ export function runHeadlessTrace(): string {
   const { store, writeCapability } = createDocumentStore({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
+  registerNodeCommands(registry);
+  registerMaterialCommands(registry);
   const bus = new CommandBus(store, registry, writeCapability);
 
   const setResult = bus.execute(
@@ -125,6 +136,87 @@ export function runHeadlessTrace(): string {
     source: "ui",
   });
   const afterRedo = store.getVoxel(DEMO_VOLUME, DEMO_COORDINATE);
+
+  // Hierarchy and material edits ride the same atomic history path as voxels.
+  const childId = nodeId("node:demo:child");
+  const extraId = nodeId("node:demo:extra");
+  const createNodeResult = bus.execute(
+    createNodeCommand(commandId("command:demo:create-node:0001"), {
+      nodeId: extraId,
+      parentId: nodeId("node:demo:root"),
+      name: "Extra",
+      transform: identity,
+    }),
+    {
+      transactionId: transactionId("transaction:demo:create-node:0001"),
+      expectedRevision: 3,
+      source: "ui",
+    },
+  );
+  if (!createNodeResult.ok) {
+    throw new Error(`demo create node failed: ${createNodeResult.error.code}`);
+  }
+  const reparentResult = bus.execute(
+    reparentNodeCommand(
+      commandId("command:demo:reparent:0001"),
+      { nodeId: extraId, newParentId: childId, placement: "preserve-world" },
+      store.getDocument(),
+    ),
+    {
+      transactionId: transactionId("transaction:demo:reparent:0001"),
+      expectedRevision: 4,
+      source: "ui",
+    },
+  );
+  const createMaterialResult = bus.execute(
+    createMaterialCommand(commandId("command:demo:create-material:0001"), {
+      materialId: materialId(2),
+      name: "accent",
+      color: canonicalColor("#00ff88"),
+      opacity: 1,
+      roughness: 0.3,
+      metallic: 0.4,
+      emissive: 0,
+    }),
+    {
+      transactionId: transactionId("transaction:demo:create-material:0001"),
+      expectedRevision: 5,
+      source: "ui",
+    },
+  );
+  const updateMaterialResult = bus.execute(
+    updateMaterialCommand(commandId("command:demo:update-material:0001"), {
+      materialId: materialId(2),
+      name: "accent-bright",
+      emissive: 0.2,
+    }),
+    {
+      transactionId: transactionId("transaction:demo:update-material:0001"),
+      expectedRevision: 6,
+      source: "ui",
+    },
+  );
+  const deleteMaterialResult = bus.execute(
+    deleteMaterialCommand(commandId("command:demo:delete-material:0001"), {
+      materialId: materialId(2),
+    }),
+    {
+      transactionId: transactionId("transaction:demo:delete-material:0001"),
+      expectedRevision: 7,
+      source: "ui",
+    },
+  );
+  const renameResult = bus.execute(
+    renameNodeCommand(commandId("command:demo:rename:0001"), {
+      nodeId: extraId,
+      name: "Extra-renamed",
+    }),
+    {
+      transactionId: transactionId("transaction:demo:rename:0001"),
+      expectedRevision: 8,
+      source: "ui",
+    },
+  );
 
   const committed = store.getDocument();
   const serialized = canonicalDocumentJson(committed);
@@ -159,6 +251,20 @@ export function runHeadlessTrace(): string {
         undoResult.ok ? undoResult.value.revisionAfter : -1,
         redoResult.ok ? redoResult.value.revisionAfter : -1,
       ],
+    },
+    hierarchy: {
+      createNodeAccepted: createNodeResult.ok,
+      reparentAccepted: reparentResult.ok,
+      renameAccepted: renameResult.ok,
+      extraParent: committed.nodes[extraId]?.parentId ?? null,
+      extraName: committed.nodes[extraId]?.name ?? null,
+      childChildren: committed.nodes[childId]?.children ?? [],
+    },
+    materials: {
+      createAccepted: createMaterialResult.ok,
+      updateAccepted: updateMaterialResult.ok,
+      deleteAccepted: deleteMaterialResult.ok,
+      materialCount: Object.keys(committed.materials).length,
     },
   });
 }

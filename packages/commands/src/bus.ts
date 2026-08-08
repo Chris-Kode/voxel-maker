@@ -18,6 +18,7 @@ import type {
   DocumentCommitted,
   DocumentStore,
 } from "@voxel-maker/document";
+import type { VoxelDocument } from "@voxel-maker/model";
 import {
   chunkBounds,
   chunkKey,
@@ -37,6 +38,7 @@ import type {
   CommandExecutionContext,
   CommandExecution,
   InverseCommand,
+  MutableDocument,
 } from "./registry.js";
 import { CommandRegistry } from "./registry.js";
 
@@ -78,6 +80,21 @@ type RunMode =
   | { readonly kind: "commit" }
   | { readonly kind: "undo"; readonly entry: HistoryEntry }
   | { readonly kind: "redo"; readonly entry: HistoryEntry };
+
+/** Copy-on-write staging state for one transaction (plan 4.3). */
+interface StagedOverlay {
+  readonly volumes: Map<VolumeId, VoxelVolume>;
+  document: MutableDocument | undefined;
+}
+
+/**
+ * Mutable deep clone of the committed document for transaction staging.
+ * The committed document is canonical and deeply frozen, so a JSON round
+ * trip yields an independent working copy with no shared backing data.
+ */
+function cloneDocumentMutable(document: VoxelDocument): MutableDocument {
+  return JSON.parse(JSON.stringify(document)) as MutableDocument;
+}
 
 /**
  * Executes validated commands against a copy-on-write staging overlay and
@@ -232,10 +249,13 @@ export class CommandBus {
       );
     }
 
-    const stagedVolumes = new Map<VolumeId, VoxelVolume>();
-    const context = this.#makeContext(stagedVolumes);
+    const staged: StagedOverlay = {
+      volumes: new Map<VolumeId, VoxelVolume>(),
+      document: undefined,
+    };
+    const context = this.#makeContext(staged);
     const executions: CommandExecution[] = [];
-    const inverses: InverseCommand[] = [];
+    const inverses: (InverseCommand | readonly InverseCommand[])[] = [];
     for (let index = 0; index < commands.length; index += 1) {
       const command = commands[index];
       if (command === undefined) continue;
@@ -300,12 +320,12 @@ export class CommandBus {
       revisionAfter,
     );
     const stagedDocument = {
-      ...this.#store.getDocument(),
+      ...(staged.document ?? this.#store.getDocument()),
       revision: revisionAfter,
     };
     try {
       this.#store.commit(
-        { document: stagedDocument, volumes: stagedVolumes },
+        { document: stagedDocument, volumes: staged.volumes },
         event,
         this.#writeCapability,
       );
@@ -313,12 +333,18 @@ export class CommandBus {
       return err(toWorkspaceError(error));
     }
 
-    const inverseCommands = inverses.map((inverse, index) => ({
-      id: deriveInverseId(
-        commands[index]?.id ?? commandId("command:inverse:0000"),
-      ),
-      ...inverse,
-    }));
+    const inverseCommands = inverses.flatMap((inverse, index) => {
+      const list: readonly InverseCommand[] = Array.isArray(inverse)
+        ? inverse
+        : [inverse];
+      return list.map((command, inverseIndex) => ({
+        id: deriveInverseId(
+          commands[index]?.id ?? commandId("command:inverse:0000"),
+          inverseIndex,
+        ),
+        ...command,
+      }));
+    });
     const entry: HistoryEntry = {
       transactionId: options.transactionId,
       revisionBefore,
@@ -411,29 +437,37 @@ export class CommandBus {
     return undefined;
   }
 
-  #makeContext(
-    stagedVolumes: Map<VolumeId, VoxelVolume>,
-  ): CommandExecutionContext {
+  #makeContext(staged: StagedOverlay): CommandExecutionContext {
     const store = this.#store;
     return {
-      document: store.getDocument(),
+      get document(): VoxelDocument {
+        return staged.document ?? store.getDocument();
+      },
       limits: store.limits,
       getVoxel: (volumeId, coordinate) => {
-        const staged = stagedVolumes.get(volumeId);
-        return staged !== undefined
-          ? staged.getVoxel(coordinate)
+        const stagedVolume = staged.volumes.get(volumeId);
+        return stagedVolume !== undefined
+          ? stagedVolume.getVoxel(coordinate)
           : store.getVoxel(volumeId, coordinate);
       },
       getVolume: (volumeId) => {
-        const staged = stagedVolumes.get(volumeId);
-        return staged !== undefined ? staged : store.getVolume(volumeId);
+        const stagedVolume = staged.volumes.get(volumeId);
+        return stagedVolume !== undefined
+          ? stagedVolume
+          : store.getVolume(volumeId);
       },
       stageVolume: (volumeId) => {
-        const staged = stagedVolumes.get(volumeId);
-        if (staged !== undefined) return staged;
+        const stagedVolume = staged.volumes.get(volumeId);
+        if (stagedVolume !== undefined) return stagedVolume;
         const clone = store.stageVolume(volumeId);
-        if (clone !== undefined) stagedVolumes.set(volumeId, clone);
+        if (clone !== undefined) staged.volumes.set(volumeId, clone);
         return clone;
+      },
+      stageDocument: () => {
+        if (staged.document === undefined) {
+          staged.document = cloneDocumentMutable(store.getDocument());
+        }
+        return staged.document;
       },
       writeCapability: this.#writeCapability,
     };
@@ -535,12 +569,17 @@ function buildEvent(
   revisionAfter: number,
 ): DocumentCommitted {
   // Declared resources count as changed only when the command actually
-  // changed something; no-op commits report no changed resources.
+  // changed something (a record mutation or a non-empty voxel change set);
+  // no-op commits report no changed resources.
   const nodeIds = new Set<NodeId>();
   const materialIds = new Set<MaterialId>();
   const animationIds = new Set<AnimationId>();
   for (const execution of executions) {
-    if (execution.changeSet.chunks.length === 0) continue;
+    const changeSets = changeSetsOf(execution);
+    const changed =
+      execution.changedRecords === true ||
+      changeSets.some((changeSet) => changeSet.chunks.length > 0);
+    if (!changed) continue;
     for (const nodeId of execution.declaredAffectedResources.nodeIds) {
       nodeIds.add(nodeId);
     }
@@ -565,11 +604,17 @@ function buildEvent(
     changedNodeIds: [...nodeIds],
     changedMaterialIds: [...materialIds],
     changedAnimationIds: [...animationIds],
-    changedVolumes: mergeChangeSets(
-      executions.map((execution) => execution.changeSet),
-    ),
+    changedVolumes: mergeChangeSets(executions.flatMap(changeSetsOf)),
     ...(options.label !== undefined ? { label: options.label } : {}),
   };
+}
+
+/** All voxel change sets produced by one command execution. */
+function changeSetsOf(execution: CommandExecution): readonly VoxelChangeSet[] {
+  return [
+    ...(execution.changeSet === undefined ? [] : [execution.changeSet]),
+    ...(execution.additionalChangeSets ?? []),
+  ];
 }
 
 function mergeChangeSets(
@@ -630,13 +675,20 @@ function unionAabb(a: IntAabb, b: IntAabb): IntAabb {
 const INVERSE_SUFFIX = ":inv";
 const MAX_ID_LENGTH = 128;
 
-/** Deterministic inverse command id derived from the forward command id. */
-function deriveInverseId(id: CommandId): CommandId {
+/**
+ * Deterministic inverse command id derived from the forward command id.
+ * Commands with several inverse commands get distinct suffixes.
+ */
+function deriveInverseId(id: CommandId, inverseIndex: number): CommandId {
+  const suffix =
+    inverseIndex === 0
+      ? INVERSE_SUFFIX
+      : `${INVERSE_SUFFIX}:${String(inverseIndex + 1)}`;
   const base =
-    id.length + INVERSE_SUFFIX.length <= MAX_ID_LENGTH
+    id.length + suffix.length <= MAX_ID_LENGTH
       ? id
-      : id.slice(0, MAX_ID_LENGTH - INVERSE_SUFFIX.length);
-  return commandId(`${base}${INVERSE_SUFFIX}`);
+      : id.slice(0, MAX_ID_LENGTH - suffix.length);
+  return commandId(`${base}${suffix}`);
 }
 
 function toWorkspaceError(error: unknown): WorkspaceError {

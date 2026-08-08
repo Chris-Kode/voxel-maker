@@ -1,7 +1,9 @@
 import {
   WorkspaceError,
   materialId,
+  type ComponentId,
   type MaterialId,
+  type NodeId,
   type VolumeId,
 } from "@voxel-maker/shared";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
@@ -17,10 +19,10 @@ import type { ShapeAxis } from "@voxel-maker/voxel";
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-export function parseVolumeId(
+function parseIdString(
   value: unknown,
   path: readonly (string | number)[],
-): VolumeId {
+): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 128) {
     throw new WorkspaceError({
       family: "validation",
@@ -30,7 +32,56 @@ export function parseVolumeId(
       path,
     });
   }
-  return value as VolumeId;
+  return value;
+}
+
+export function parseVolumeId(
+  value: unknown,
+  path: readonly (string | number)[],
+): VolumeId {
+  return parseIdString(value, path) as VolumeId;
+}
+
+export function parseNodeId(
+  value: unknown,
+  path: readonly (string | number)[],
+): NodeId {
+  return parseIdString(value, path) as NodeId;
+}
+
+export function parseComponentId(
+  value: unknown,
+  path: readonly (string | number)[],
+): ComponentId {
+  return parseIdString(value, path) as ComponentId;
+}
+
+/**
+ * Parses a bounded name. Names are optional on nodes (absent removes the
+ * name) but required on materials; callers guard for the optional case.
+ */
+export function parseName(
+  value: unknown,
+  limits: DocumentLimits,
+  path: readonly (string | number)[],
+): string {
+  if (typeof value !== "string") {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_NAME",
+      message: "Name must be a string",
+      path,
+    });
+  }
+  if (new TextEncoder().encode(value).byteLength > limits.maxNameBytes) {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_NAME",
+      message: `Name exceeds the ${String(limits.maxNameBytes)}-byte limit`,
+      path,
+    });
+  }
+  return value;
 }
 
 export function parseCoordinate(
