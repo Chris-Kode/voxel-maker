@@ -4,10 +4,13 @@ import {
   animationId,
   canonicalJson,
   commandId,
+  componentId,
   err,
+  keyframeId,
   materialId,
   nodeId,
   ok,
+  trackId,
 } from "./index.js";
 
 describe("shared contracts", () => {
@@ -24,6 +27,11 @@ describe("shared contracts", () => {
       "animation:fixture:0001",
     );
     expect(commandId("command:fixture:0001")).toBe("command:fixture:0001");
+    expect(componentId("component:fixture:0001")).toBe(
+      "component:fixture:0001",
+    );
+    expect(keyframeId("keyframe:fixture:0001")).toBe("keyframe:fixture:0001");
+    expect(trackId("track:fixture:0001")).toBe("track:fixture:0001");
     expect(materialId(65_535)).toBe(65_535);
     expect(() => materialId(0)).toThrow(/1 through 65535/u);
     expect(() => materialId(1.5)).toThrow(/1 through 65535/u);

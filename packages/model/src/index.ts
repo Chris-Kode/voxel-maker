@@ -1,25 +1,20 @@
-import {
-  documentId,
-  nodeId,
-  volumeId,
-  type DocumentId,
-  type NodeId,
-  type VolumeId,
-} from "@voxel-maker/shared";
-
-/** Minimal versioned read model used only to prove the headless package seam. */
-export interface TraceDocument {
-  readonly documentId: DocumentId;
-  readonly formatVersion: 1;
-  readonly rootNodeId: NodeId;
-  readonly volumeId: VolumeId;
-}
-
-export function createTraceDocument(): TraceDocument {
-  return {
-    documentId: documentId("document:trace:0001"),
-    formatVersion: 1,
-    rootNodeId: nodeId("node:trace:root"),
-    volumeId: volumeId("volume:trace:0001"),
-  };
-}
+export {
+  canonicalDocumentHash,
+  canonicalDocumentJson,
+  canonicalSemanticBytes,
+} from "./canonical.js";
+export { canonicalColor, isCanonicalColor, type Color } from "./color.js";
+export {
+  cloneDocument,
+  createDocument,
+  type CreateDocumentInput,
+} from "./create.js";
+export { DEFAULT_DOCUMENT_LIMITS, type DocumentLimits } from "./limits.js";
+export { parseDocument } from "./parse.js";
+export type * from "./types.js";
+export {
+  validateDocument,
+  validateDocumentStructure,
+  validateReferences,
+  type DocumentIssue,
+} from "./validate.js";

@@ -16,8 +16,11 @@ export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 export type OpaqueId<Kind extends string> = string & { readonly __kind: Kind };
 export type AnimationId = OpaqueId<"AnimationId">;
 export type CommandId = OpaqueId<"CommandId">;
+export type ComponentId = OpaqueId<"ComponentId">;
 export type DocumentId = OpaqueId<"DocumentId">;
+export type KeyframeId = OpaqueId<"KeyframeId">;
 export type NodeId = OpaqueId<"NodeId">;
+export type TrackId = OpaqueId<"TrackId">;
 export type TransactionId = OpaqueId<"TransactionId">;
 export type VolumeId = OpaqueId<"VolumeId">;
 export type MaterialId = number & { readonly __kind: "MaterialId" };
@@ -123,9 +126,14 @@ export const animationId = (value: string): AnimationId =>
   opaqueId(value, "AnimationId");
 export const commandId = (value: string): CommandId =>
   opaqueId(value, "CommandId");
+export const componentId = (value: string): ComponentId =>
+  opaqueId(value, "ComponentId");
 export const documentId = (value: string): DocumentId =>
   opaqueId(value, "DocumentId");
+export const keyframeId = (value: string): KeyframeId =>
+  opaqueId(value, "KeyframeId");
 export const nodeId = (value: string): NodeId => opaqueId(value, "NodeId");
+export const trackId = (value: string): TrackId => opaqueId(value, "TrackId");
 export const transactionId = (value: string): TransactionId =>
   opaqueId(value, "TransactionId");
 export const volumeId = (value: string): VolumeId =>

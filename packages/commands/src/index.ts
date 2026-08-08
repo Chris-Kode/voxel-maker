@@ -1,5 +1,5 @@
 import { commandId, type CommandId } from "@voxel-maker/shared";
-import type { TraceDocument } from "@voxel-maker/model";
+import type { VoxelDocument } from "@voxel-maker/model";
 import type { TraceVoxel } from "@voxel-maker/voxel";
 
 export interface TraceCommandResult {
@@ -10,7 +10,7 @@ export interface TraceCommandResult {
 
 /** Minimal command-facing seam; persistent command execution starts in issue #6. */
 export function traceCommand(
-  document: TraceDocument,
+  document: VoxelDocument,
   voxel: TraceVoxel,
 ): TraceCommandResult {
   void document;

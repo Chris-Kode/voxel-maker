@@ -184,7 +184,7 @@ Public reads return immutable snapshots, copies, or immutable accessors. A mutab
 
 ### Document aggregate
 
-A document contains explicit schema versions, metadata, ordered scene nodes, material records, volume descriptors, generic components, and animation data. Bulk chunk bytes live in the associated voxel repository and serialize separately.
+A document contains explicit schema versions, metadata, ordered scene nodes, material records, volume descriptors, generic components, and animation data. Bulk chunk bytes live in the associated voxel repository and serialize separately. The frozen v1 schema, canonical encoding, semantic hash framing, and validation codes are defined in [`docs/format/document-v1.md`](./docs/format/document-v1.md).
 
 A node has exactly one parent reference and one ordered children list. Validators enforce reciprocity, uniqueness, acyclicity, and complete references. Deleting referenced nodes, volumes, materials, components, or animation records is rejected unless the command declares an explicit valid cascade or replacement policy.
 

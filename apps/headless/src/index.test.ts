@@ -1,11 +1,61 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { canonicalDocumentHash, parseDocument } from "@voxel-maker/model";
 import { runHeadlessTrace } from "./index.js";
 
+const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+
+const DEMO_HASH =
+  "df47c5c2e864cf2bda23b8cd6d184266eb0659fa47d572a18eb6c1af2254161b";
+
 describe("headless workspace tracer", () => {
-  it("crosses shared, model, voxel, and command seams deterministically", () => {
-    expect(runHeadlessTrace()).toBe(
-      '{"command":{"accepted":true,"commandId":"command:trace:0001","revision":1},"document":{"documentId":"document:trace:0001","formatVersion":1,"rootNodeId":"node:trace:root","volumeId":"volume:trace:0001"},"voxel":{"chunk":[-1,0,0],"local":[15,0,1],"material":1}}',
+  it("round-trips a versioned document deterministically", () => {
+    const output = runHeadlessTrace();
+    const parsed = JSON.parse(output) as {
+      command: { accepted: boolean; commandId: string; revision: number };
+      document: {
+        documentId: string;
+        hash: string;
+        nodeCount: number;
+        reloadedHash: string;
+        roundTripStable: boolean;
+      };
+      serialized: string;
+      voxel: { chunk: number[]; local: number[]; material: number };
+    };
+    expect(parsed.command).toEqual({
+      accepted: true,
+      commandId: "command:trace:0001",
+      revision: 1,
+    });
+    expect(parsed.document).toEqual({
+      documentId: "document:demo:0001",
+      hash: DEMO_HASH,
+      nodeCount: 2,
+      reloadedHash: DEMO_HASH,
+      roundTripStable: true,
+    });
+    expect(typeof parsed.serialized).toBe("string");
+    expect(parsed.voxel).toEqual({
+      chunk: [-1, 0, 0],
+      local: [15, 0, 1],
+      material: 1,
+    });
+    expect(canonicalDocumentHash(parseDocument(parsed.serialized))).toBe(
+      parsed.document.hash,
     );
-    expect(runHeadlessTrace()).toBe(runHeadlessTrace());
+    expect(runHeadlessTrace()).toBe(output);
+  });
+
+  it("serializes byte-identically across fresh processes", () => {
+    const first = execFileSync(process.execPath, [CLI_PATH], {
+      encoding: "utf8",
+    });
+    const second = execFileSync(process.execPath, [CLI_PATH], {
+      encoding: "utf8",
+    });
+    expect(first).toBe(second);
+    expect(first).toContain('"roundTripStable":true');
   });
 });
