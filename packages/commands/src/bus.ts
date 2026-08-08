@@ -40,6 +40,22 @@ import type {
 } from "./registry.js";
 import { CommandRegistry } from "./registry.js";
 
+/** Read-only view of one history entry (plan 4.7). */
+export interface HistoryEntryInfo {
+  readonly transactionId: TransactionId;
+  readonly revisionBefore: number;
+  readonly revisionAfter: number;
+  readonly source: DocumentCommitted["source"];
+  readonly correlationId?: string;
+  readonly label?: string;
+}
+
+/** Read-only snapshot of the bounded undo/redo history (plan 4.7). */
+export interface HistorySnapshot {
+  readonly past: readonly HistoryEntryInfo[];
+  readonly future: readonly HistoryEntryInfo[];
+}
+
 /** One undoable transaction in the bounded past/future history (plan 4.2). */
 interface HistoryEntry {
   readonly transactionId: TransactionId;
@@ -166,6 +182,14 @@ export class CommandBus {
 
   canRedo(): boolean {
     return this.#future.length > 0;
+  }
+
+  /** Read-only snapshot of the bounded undo/redo history (plan 4.7). */
+  historySnapshot(): HistorySnapshot {
+    return {
+      past: this.#past.map(toHistoryEntryInfo),
+      future: this.#future.map(toHistoryEntryInfo),
+    };
   }
 
   #runTransaction(
@@ -443,6 +467,19 @@ export class CommandBus {
       this.#inverseBytes -= dropped.inverseBytes;
     }
   }
+}
+
+function toHistoryEntryInfo(entry: HistoryEntry): HistoryEntryInfo {
+  return {
+    transactionId: entry.transactionId,
+    revisionBefore: entry.revisionBefore,
+    revisionAfter: entry.revisionAfter,
+    source: entry.source,
+    ...(entry.correlationId !== undefined
+      ? { correlationId: entry.correlationId }
+      : {}),
+    ...(entry.label !== undefined ? { label: entry.label } : {}),
+  };
 }
 
 function historyMetadata(

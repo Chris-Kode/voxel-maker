@@ -48,4 +48,18 @@ describe("CommandRegistry", () => {
     registry.register(v2);
     expect(registry.get("test.cmd", 2)).toBe(v2);
   });
+
+  it("lists registered type and schema version pairs in stable order", () => {
+    const registry = new CommandRegistry();
+    const v2: CommandHandler<"test.cmd", { value: number }> = {
+      ...handler,
+      schemaVersion: 2,
+    };
+    registry.register(v2);
+    registry.register(handler);
+    expect(registry.list()).toEqual([
+      { type: "test.cmd", schemaVersion: 1 },
+      { type: "test.cmd", schemaVersion: 2 },
+    ]);
+  });
 });

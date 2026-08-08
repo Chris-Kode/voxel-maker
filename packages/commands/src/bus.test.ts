@@ -466,6 +466,37 @@ describe("undo and redo", () => {
     expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(0);
   });
 
+  it("exposes a read-only history snapshot with entry metadata", () => {
+    const { bus, store } = createBus();
+    bus.execute(set("hs:0001", [0, 0, 0]), {
+      ...options("hs:0001", 0),
+      source: "ai",
+      correlationId: "correlation:bus:hs:0001",
+      label: "history snapshot commit",
+    });
+    let snapshot = bus.historySnapshot();
+    expect(snapshot.past).toHaveLength(1);
+    expect(snapshot.future).toHaveLength(0);
+    expect(snapshot.past[0]).toMatchObject({
+      transactionId: "transaction:bus:hs:0001",
+      revisionBefore: 0,
+      revisionAfter: 1,
+      source: "ai",
+      correlationId: "correlation:bus:hs:0001",
+      label: "history snapshot commit",
+    });
+    bus.undo(options("hs:undo:0001", 1));
+    snapshot = bus.historySnapshot();
+    expect(snapshot.past).toHaveLength(0);
+    expect(snapshot.future).toHaveLength(1);
+    expect(snapshot.future[0]?.transactionId).toBe(
+      "transaction:bus:hs:undo:0001",
+    );
+    expect(snapshot.future[0]?.revisionBefore).toBe(1);
+    expect(snapshot.future[0]?.revisionAfter).toBe(2);
+    expect(store.revision).toBe(2);
+  });
+
   it("bounded history drops the oldest entries", () => {
     const { bus, store } = createBus({
       maxCommandsPerTransaction: 1_024,

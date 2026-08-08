@@ -100,4 +100,17 @@ export class CommandRegistry {
     }
     return false;
   }
+
+  /** Registered `type@schemaVersion` pairs in stable order (plan 4.1). */
+  list(): readonly { readonly type: string; readonly schemaVersion: number }[] {
+    return [...this.#handlers.values()]
+      .map((handler) => ({
+        type: handler.type,
+        schemaVersion: handler.schemaVersion,
+      }))
+      .sort(
+        (a, b) =>
+          a.type.localeCompare(b.type) || a.schemaVersion - b.schemaVersion,
+      );
+  }
 }

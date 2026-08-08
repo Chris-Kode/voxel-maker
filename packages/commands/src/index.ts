@@ -1,4 +1,8 @@
-export { CommandBus } from "./bus.js";
+export {
+  CommandBus,
+  type HistoryEntryInfo,
+  type HistorySnapshot,
+} from "./bus.js";
 export {
   CommandRegistry,
   type CommandExecution,
@@ -15,6 +19,11 @@ export {
   type TransactionResult,
   type TransactionSuccess,
 } from "./types.js";
+export {
+  runCommandConformanceSuite,
+  type CommandConformanceSpec,
+  type ConformanceTestApi,
+} from "./conformance.js";
 export {
   VOXEL_COMMAND_SCHEMA_VERSION,
   VOXEL_REMOVE_COMMAND,
