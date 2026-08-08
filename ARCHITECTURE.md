@@ -198,6 +198,8 @@ Each in-session chunk may carry runtime revision and content-hash metadata, but 
 
 Bulk operations estimate and validate bounds before allocation. Their change sets contain the affected chunks and compact old values required for inversion, not entire document snapshots.
 
+Region operations (copy, delete, translate, rotate, mirror) use half-open integer regions, snapshot the source before any destination write, and overwrite collisions explicitly. Rotation and mirror are around the region center with exact integer semantics: v1 rotation requires matching parity on the rotation-plane extents (resampling is deferred), four quarter turns and two mirrors are identity, and the exact post-operation occupied count, chunk count, and bounds are preflighted so moves near a limit are not falsely rejected.
+
 ### Materials
 
 Material IDs are exact unsigned 16-bit values supplied by callers. Zero is absent from the material table. IDs are not reused while reachable history or recovery records can mention them. Initial material properties are bounded name, canonical color, opacity, roughness, metallic, and emissive values. Opacity is in `[0,1]`; transparent voxels remain occupied and pickable, and adjacency to a non-opaque voxel does not hide a face.

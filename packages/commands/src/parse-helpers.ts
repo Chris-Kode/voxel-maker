@@ -4,8 +4,9 @@ import {
   type MaterialId,
   type VolumeId,
 } from "@voxel-maker/shared";
-import type { Vec3i } from "@voxel-maker/math";
+import type { IntAabb, Vec3i } from "@voxel-maker/math";
 import type { DocumentLimits } from "@voxel-maker/model";
+import type { ShapeAxis } from "@voxel-maker/voxel";
 
 /**
  * Shared parse/validation helpers for command handlers (plan 4.1). Every
@@ -103,4 +104,137 @@ export function missingMaterial(material: MaterialId): WorkspaceError {
     message: "Material is not defined in the document",
     context: { material: String(material) },
   });
+}
+
+/**
+ * Parses a half-open region payload (plan S4.4). Regions are half-open, so
+ * the exclusive `max` bound may reach `maxVoxelCoordinate + 1` to include
+ * the boundary voxel; the volume clips anything beyond its domain.
+ */
+export function parseRegion(
+  value: unknown,
+  limits: DocumentLimits,
+  path: readonly (string | number)[],
+): IntAabb {
+  if (!isRecord(value)) {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_FIELD_TYPE",
+      message: "Expected a region object with min and max",
+      path,
+    });
+  }
+  const bound = limits.maxVoxelCoordinate + 1;
+  const parsePoint = (
+    point: unknown,
+    pointPath: readonly (string | number)[],
+  ): Vec3i => {
+    if (!Array.isArray(point) || point.length !== 3) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_VECTOR",
+        message: "Expected a 3-component integer vector",
+        path: pointPath,
+      });
+    }
+    const raw = point as unknown[];
+    const components: number[] = [];
+    for (let axis = 0; axis < 3; axis += 1) {
+      const component = raw[axis];
+      if (
+        typeof component !== "number" ||
+        !Number.isInteger(component) ||
+        Math.abs(component) > bound
+      ) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "INVALID_VOXEL_COORDINATE",
+          message: `Region coordinates must be integers within +-${String(bound)}`,
+          path: [...pointPath, axis],
+          context: { value: String(component) },
+        });
+      }
+      components.push(component);
+    }
+    return [
+      components[0] as number,
+      components[1] as number,
+      components[2] as number,
+    ];
+  };
+  const min = parsePoint(value.min, [...path, "min"]);
+  const max = parsePoint(value.max, [...path, "max"]);
+  for (let axis = 0; axis < 3; axis += 1) {
+    if ((min[axis] as number) > (max[axis] as number)) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_AABB",
+        message: "Region minimum must not exceed maximum on any axis",
+        path: [...path, axis],
+      });
+    }
+  }
+  return { min, max };
+}
+
+/**
+ * Parses a translation delta. A delta may reach `2 * maxVoxelCoordinate + 1`
+ * because a region at one extreme of the domain can validly move to the
+ * other; the volume's destination check then bounds the result.
+ */
+export function parseDelta(
+  value: unknown,
+  limits: DocumentLimits,
+  path: readonly (string | number)[],
+): Vec3i {
+  if (!Array.isArray(value) || value.length !== 3) {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_VECTOR",
+      message: "Expected a 3-component integer vector",
+      path,
+    });
+  }
+  const raw = value as unknown[];
+  const bound = 2 * limits.maxVoxelCoordinate + 1;
+  const components: number[] = [];
+  for (let axis = 0; axis < 3; axis += 1) {
+    const component = raw[axis];
+    if (
+      typeof component !== "number" ||
+      !Number.isInteger(component) ||
+      Math.abs(component) > bound
+    ) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_VOXEL_COORDINATE",
+        message: `Delta coordinates must be integers within +-${String(bound)}`,
+        path: [...path, axis],
+        context: { value: String(component) },
+      });
+    }
+    components.push(component);
+  }
+  return [
+    components[0] as number,
+    components[1] as number,
+    components[2] as number,
+  ];
+}
+
+/** Parses an axis name: "x", "y", or "z". */
+export function parseAxis(
+  value: unknown,
+  path: readonly (string | number)[] = [],
+): ShapeAxis {
+  if (value !== "x" && value !== "y" && value !== "z") {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_AXIS",
+      message: 'Axis must be one of "x", "y", or "z"',
+      path,
+      context: { value: String(value) },
+    });
+  }
+  return value;
 }

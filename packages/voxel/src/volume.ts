@@ -14,6 +14,12 @@ import {
   type ShapeAxis,
   type ShapeIterationOptions,
 } from "./shapes.js";
+import {
+  mirrorCoordinate,
+  rotateRegionPlan,
+  translateAabb,
+  type QuarterTurns,
+} from "./regions.js";
 
 /** Frozen v1 chunk edge length (plan 3.1 / ADR-0004): 16 voxels per axis. */
 export const CHUNK_EDGE = 16;
@@ -673,6 +679,144 @@ export class VoxelVolume implements VoxelVolumeReadView {
     return this.#applyPlan(plan);
   }
 
+  /**
+   * Copies the occupied voxels of the half-open source region to the
+   * destination AABB whose min corner is `destination` (plan S3.9). The
+   * source is snapshotted before any destination write, so an overlapping
+   * source copies from the pre-operation state; destination collisions
+   * overwrite explicitly. Returns the compact change set for exact
+   * inversion.
+   */
+  copyRegion(
+    source: IntAabb,
+    destination: Vec3i,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const parsedSource = this.#parseRegion(source);
+    this.#assertRegionInDomain(parsedSource, "source");
+    const parsedDestination = this.#parsePoint(
+      destination,
+      "destination",
+      this.limits.maxCoordinate,
+    );
+    const delta: Vec3i = [
+      parsedDestination[0] - parsedSource.min[0],
+      parsedDestination[1] - parsedSource.min[1],
+      parsedDestination[2] - parsedSource.min[2],
+    ];
+    const destinationAabb = translateAabb(parsedSource, delta);
+    this.#assertRegionInDomain(destinationAabb, "destination");
+    const snapshot = this.#snapshotRegion(parsedSource);
+    const entries = snapshot.map((entry) => ({
+      coordinate: addVec3i(entry.coordinate, delta),
+      material: entry.material,
+    }));
+    return this.#applyPlan(
+      this.#planEntries(entries, (entry) => entry.material),
+    );
+  }
+
+  /**
+   * Removes every occupied voxel in the half-open region (plan S3.9).
+   * Returns the compact change set for exact inversion.
+   */
+  deleteRegion(
+    region: IntAabb,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const parsed = this.#parseRegion(region);
+    this.#assertRegionInDomain(parsed, "region");
+    const snapshot = this.#snapshotRegion(parsed);
+    return this.#applyPlan(
+      this.#planEntries(
+        snapshot.map((entry) => ({
+          coordinate: entry.coordinate,
+          material: 0 as MaterialId,
+        })),
+        (entry) => entry.material,
+      ),
+    );
+  }
+
+  /**
+   * Moves the occupied voxels of the half-open region by an integer delta
+   * (plan S3.10). The source is snapshotted before the source is cleared and
+   * the destination is written, so an overlapping source moves from the
+   * pre-operation state; destination collisions overwrite explicitly
+   * (`overwrite` is the v1 collision mode). Returns the compact change set
+   * for exact inversion.
+   */
+  translateRegion(
+    region: IntAabb,
+    delta: Vec3i,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const parsed = this.#parseRegion(region);
+    this.#assertRegionInDomain(parsed, "region");
+    const parsedDelta = this.#parsePoint(
+      delta,
+      "delta",
+      2 * this.limits.maxCoordinate + 1,
+    );
+    const destinationAabb = translateAabb(parsed, parsedDelta);
+    this.#assertRegionInDomain(destinationAabb, "destination");
+    const snapshot = this.#snapshotRegion(parsed);
+    return this.#applyRegionMove(parsed, snapshot, (entry) =>
+      addVec3i(entry.coordinate, parsedDelta),
+    );
+  }
+
+  /**
+   * Rotates the occupied voxels of the half-open region around the region
+   * center by exact 90-degree increments (plan S3.11). The source is
+   * snapshotted, cleared, and rewritten to the rotated AABB; destination
+   * collisions overwrite explicitly. A region whose extents on the two
+   * rotation-plane axes have different parities is rejected
+   * (`INVALID_ROTATION_REGION`) because the exact lattice rotation would
+   * land on half-integer positions; resampling is deferred in v1. Four
+   * quarter turns are the identity.
+   */
+  rotateRegion(
+    region: IntAabb,
+    axis: ShapeAxis,
+    quarterTurns: QuarterTurns,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const parsed = this.#parseRegion(region);
+    this.#assertRegionInDomain(parsed, "region");
+    const rotation = rotateRegionPlan(parsed, axis, quarterTurns);
+    this.#assertRegionInDomain(rotation.destination, "destination");
+    const snapshot = this.#snapshotRegion(parsed);
+    return this.#applyRegionMove(parsed, snapshot, (entry) =>
+      rotation.map(entry.coordinate),
+    );
+  }
+
+  /**
+   * Mirrors the occupied voxels of the half-open region across the plane
+   * through the region center perpendicular to `axis` (plan S3.12). The
+   * destination is the source region itself, so mirroring twice is the
+   * identity. The source is snapshotted, cleared, and rewritten; destination
+   * collisions overwrite explicitly.
+   */
+  mirrorRegion(
+    region: IntAabb,
+    axis: ShapeAxis,
+    capability: VoxelWriteCapability,
+  ): VoxelChangeSet {
+    this.#assertWriteCapability(capability);
+    const parsed = this.#parseRegion(region);
+    this.#assertRegionInDomain(parsed, "region");
+    const snapshot = this.#snapshotRegion(parsed);
+    return this.#applyRegionMove(parsed, snapshot, (entry) =>
+      mirrorCoordinate(parsed, axis, entry.coordinate),
+    );
+  }
+
   /** Deep copy for copy-on-write transaction staging; shares the write token. */
   clone(): VoxelVolume {
     const clone = new VoxelVolume(this.volumeId, this.limits, this.#capability);
@@ -702,6 +846,237 @@ export class VoxelVolume implements VoxelVolumeReadView {
     };
   }
 
+  /** Rejects a half-open region that exceeds the volume coordinate domain. */
+  #assertRegionInDomain(region: IntAabb, name: string): void {
+    const domain = this.#coordinateDomain();
+    for (let axis = 0; axis < 3; axis += 1) {
+      if (
+        (region.min[axis] as number) < (domain.min[axis] as number) ||
+        (region.max[axis] as number) > (domain.max[axis] as number)
+      ) {
+        throw new WorkspaceError({
+          family: "limit",
+          code: "REGION_OUT_OF_BOUNDS",
+          message: `${name} region exceeds the volume coordinate domain`,
+          context: {
+            volumeId: this.volumeId,
+            region: {
+              min: [region.min[0], region.min[1], region.min[2]],
+              max: [region.max[0], region.max[1], region.max[2]],
+            },
+            domain: {
+              min: [domain.min[0], domain.min[1], domain.min[2]],
+              max: [domain.max[0], domain.max[1], domain.max[2]],
+            },
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Snapshots the occupied voxels of an in-domain half-open region with
+   * bounded iteration (ADR-0009): the iteration domain is guarded and the
+   * inspected count is capped at the per-operation voxel limit.
+   */
+  #snapshotRegion(region: IntAabb): VoxelEntry[] {
+    assertIterationDomain(region, this.limits.maxCoordinatesPerOperation);
+    const entries: VoxelEntry[] = [];
+    let inspected = 0;
+    for (let z = region.min[2]; z < region.max[2]; z += 1) {
+      for (let y = region.min[1]; y < region.max[1]; y += 1) {
+        for (let x = region.min[0]; x < region.max[0]; x += 1) {
+          inspected += 1;
+          if (inspected > this.limits.maxCoordinatesPerOperation) {
+            throw this.#operationLimitError(inspected);
+          }
+          const material = this.getVoxel([x, y, z]);
+          if (material !== 0) {
+            entries.push({ coordinate: [x, y, z], material });
+          }
+        }
+      }
+    }
+    return entries;
+  }
+
+  /**
+   * Applies a region move: clears the source region and writes the mapped
+   * snapshot content, with an exact preflight estimate (plan S3.9-S3.12).
+   * The clear entries precede the write entries so overlapping coordinates
+   * resolve last-write-wins to the moved content.
+   */
+  #applyRegionMove(
+    sourceRegion: IntAabb,
+    snapshot: readonly VoxelEntry[],
+    map: (entry: VoxelEntry) => Vec3i,
+  ): VoxelChangeSet {
+    const clears: VoxelEntry[] = [];
+    const writes: VoxelEntry[] = [];
+    for (const entry of snapshot) {
+      clears.push({
+        coordinate: entry.coordinate,
+        material: 0 as MaterialId,
+      });
+      writes.push({ coordinate: map(entry), material: entry.material });
+    }
+    const plan = this.#planEntries(
+      [...clears, ...writes],
+      (entry) => entry.material,
+      2 * this.limits.maxCoordinatesPerOperation,
+    );
+    const estimate = this.#estimateRegionResult(
+      plan,
+      sourceRegion,
+      boundsOfEntries(writes),
+    );
+    return this.#applyPlan(plan, estimate);
+  }
+
+  /**
+   * Exact post-operation resource estimate for a region move (plan
+   * S3.9-S3.12): net occupied count, net chunk count (emptied source chunks
+   * are reclaimed), and the exact post-operation occupied bounds. The bounds
+   * are computed exactly only when the conservative union of the current
+   * bounds and the destination content exceeds the extent limit; that scan
+   * is bounded by the occupied-voxel limit.
+   */
+  #estimateRegionResult(
+    plan: readonly PlannedPatch[],
+    sourceRegion: IntAabb,
+    destContentBounds: OccupiedBounds | undefined,
+  ): RegionResultEstimate {
+    let additions = 0;
+    let removals = 0;
+    const newChunks = new Set<string>();
+    const removedByChunk = new Map<string, number>();
+    const addedByChunk = new Map<string, number>();
+    for (const patch of plan) {
+      const key = chunkKey(patch.chunk);
+      if (patch.oldValue === 0 && patch.newValue !== 0) {
+        additions += 1;
+        addedByChunk.set(key, (addedByChunk.get(key) ?? 0) + 1);
+      } else if (patch.oldValue !== 0 && patch.newValue === 0) {
+        removals += 1;
+        removedByChunk.set(key, (removedByChunk.get(key) ?? 0) + 1);
+      }
+      if (!this.#chunks.has(key)) newChunks.add(key);
+    }
+    const occupiedAfter = this.#occupiedCount + additions - removals;
+    let chunksAfter = this.#chunks.size + newChunks.size;
+    if (chunksAfter > this.limits.maxChunks) {
+      // A chunk is reclaimed only when every occupied voxel is removed and
+      // nothing is written back into it; scan only the touched chunks.
+      let emptied = 0;
+      for (const [key, removedCount] of removedByChunk) {
+        if ((addedByChunk.get(key) ?? 0) > 0) continue;
+        const chunk = this.#chunks.get(key);
+        if (chunk === undefined) continue;
+        let occupied = 0;
+        for (const value of chunk.values) {
+          if (value !== 0) occupied += 1;
+        }
+        if (occupied === removedCount) emptied += 1;
+      }
+      chunksAfter = this.#chunks.size + newChunks.size - emptied;
+    }
+    const current = this.#bounds ?? this.#recomputeBounds();
+    let bounds: OccupiedBounds | undefined;
+    if (current === undefined) {
+      bounds = destContentBounds;
+    } else if (destContentBounds === undefined) {
+      bounds = current;
+    } else {
+      const candidate = unionBounds(current, destContentBounds);
+      if (this.#extentWithinLimit(candidate)) {
+        bounds = candidate;
+      } else {
+        const remaining = this.#boundsOutsideRegion(sourceRegion);
+        bounds =
+          remaining === undefined
+            ? destContentBounds
+            : unionBounds(remaining, destContentBounds);
+      }
+    }
+    return { occupiedAfter, chunksAfter, bounds };
+  }
+
+  /** True when every axis extent of the bounds is within the volume limit. */
+  #extentWithinLimit(bounds: OccupiedBounds): boolean {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const extent =
+        (bounds.max[axis] as number) - (bounds.min[axis] as number);
+      if (extent > this.limits.maxExtent) return false;
+    }
+    return true;
+  }
+
+  /** Throws `EXTENT_LIMIT_EXCEEDED` when any axis extent exceeds the limit. */
+  #assertExtentWithinLimit(bounds: OccupiedBounds): void {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const extent =
+        (bounds.max[axis] as number) - (bounds.min[axis] as number);
+      if (extent > this.limits.maxExtent) {
+        throw new WorkspaceError({
+          family: "limit",
+          code: "EXTENT_LIMIT_EXCEEDED",
+          message: "Volume occupied extent exceeds its per-axis limit",
+          context: {
+            volumeId: this.volumeId,
+            axis,
+            extent,
+            maxExtent: this.limits.maxExtent,
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Bounds of the currently occupied voxels outside a half-open region
+   * (exact scan used when the conservative extent estimate fails).
+   */
+  #boundsOutsideRegion(region: IntAabb): OccupiedBounds | undefined {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    for (const [key, chunk] of this.#chunks) {
+      const [cx, cy, cz] = parseChunkKey(key);
+      for (let index = 0; index < CHUNK_VOXEL_COUNT; index += 1) {
+        if (chunk.values[index] === 0) continue;
+        const x = cx * CHUNK_EDGE + (index % CHUNK_EDGE);
+        const y =
+          cy * CHUNK_EDGE + (Math.floor(index / CHUNK_EDGE) % CHUNK_EDGE);
+        const z =
+          cz * CHUNK_EDGE + Math.floor(index / (CHUNK_EDGE * CHUNK_EDGE));
+        if (
+          x >= region.min[0] &&
+          x < region.max[0] &&
+          y >= region.min[1] &&
+          y < region.max[1] &&
+          z >= region.min[2] &&
+          z < region.max[2]
+        ) {
+          continue;
+        }
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (z < minZ) minZ = z;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+        if (z > maxZ) maxZ = z;
+      }
+    }
+    if (!Number.isFinite(minX)) return undefined;
+    return {
+      min: [minX, minY, minZ],
+      max: [maxX + 1, maxY + 1, maxZ + 1],
+    };
+  }
+
   #operationLimitError(requested: number): WorkspaceError {
     return new WorkspaceError({
       family: "limit",
@@ -726,6 +1101,29 @@ export class VoxelVolume implements VoxelVolumeReadView {
       });
     }
     return value as MaterialId;
+  }
+
+  /**
+   * Validates an integer point within a per-axis magnitude bound. The
+   * destination anchor is bounded by the coordinate domain; a translation
+   * delta may reach `2 * maxCoordinate + 1` because a region at one extreme
+   * can validly move to the other (the destination AABB check then bounds
+   * the result).
+   */
+  #parsePoint(point: Vec3i, name: string, bound: number): Vec3i {
+    this.#assertIntegerPoint(point, name);
+    for (let axis = 0; axis < 3; axis += 1) {
+      if (Math.abs(point[axis] as number) > bound) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "INVALID_VOXEL_COORDINATE",
+          message: `${name} coordinates must be integers within +-${String(bound)}`,
+          path: [name, axis],
+          context: { value: String(point[axis]) },
+        });
+      }
+    }
+    return point;
   }
 
   /** Validates that a point has integer components (no domain bound). */
@@ -790,8 +1188,14 @@ export class VoxelVolume implements VoxelVolumeReadView {
   #planEntries(
     entries: readonly VoxelEntry[],
     valueOf: (entry: VoxelEntry) => number,
+    rawLimit: number = this.limits.maxCoordinatesPerOperation,
   ): PlannedPatch[] {
-    if (entries.length > this.limits.maxCoordinatesPerOperation) {
+    // The raw entry count is a memory bound (the dedup map is built from
+    // it); region moves pass twice the per-operation limit because each
+    // moved voxel appears once as a clear and once as a write. The net
+    // plan (after dedup and no-op filtering) is the semantic bound: the
+    // voxels actually changed by the operation (ADR-0009).
+    if (entries.length > rawLimit) {
       throw this.#operationLimitError(entries.length);
     }
     const byKey = new Map<string, PlannedPatch>();
@@ -814,24 +1218,40 @@ export class VoxelVolume implements VoxelVolumeReadView {
           ? (0 as MaterialId)
           : (chunk.values[patch.index] as MaterialId);
     }
-    return plan.filter((patch) => patch.oldValue !== patch.newValue);
+    const net = plan.filter((patch) => patch.oldValue !== patch.newValue);
+    if (net.length > this.limits.maxCoordinatesPerOperation) {
+      throw this.#operationLimitError(net.length);
+    }
+    return net;
   }
 
   /**
    * Verifies every hard limit against the plan before any allocation or
    * mutation (ADR-0009): occupied-voxel count, occupied extent, and chunk
-   * count. Rejection leaves the volume byte-identical.
+   * count. Rejection leaves the volume byte-identical. The occupied count
+   * is the exact net of additions and removals, so moves that free voxels
+   * are not falsely rejected near the limit. Region moves pass an exact
+   * estimate (net chunks and post-operation bounds) computed by
+   * `#estimateRegionResult`.
    */
-  #preflightPlan(plan: readonly PlannedPatch[]): void {
+  #preflightPlan(
+    plan: readonly PlannedPatch[],
+    estimate?: RegionResultEstimate,
+  ): void {
     let additions = 0;
+    let removals = 0;
     const candidateChunks = new Set<string>();
     for (const patch of plan) {
       if (patch.oldValue === 0 && patch.newValue !== 0) additions += 1;
+      if (patch.oldValue !== 0 && patch.newValue === 0) removals += 1;
       if (!this.#chunks.has(chunkKey(patch.chunk))) {
         candidateChunks.add(chunkKey(patch.chunk));
       }
     }
-    const occupiedAfter = this.#occupiedCount + additions;
+    const occupiedAfter =
+      estimate === undefined
+        ? this.#occupiedCount + additions - removals
+        : estimate.occupiedAfter;
     if (occupiedAfter > this.limits.maxOccupiedVoxels) {
       throw new WorkspaceError({
         family: "limit",
@@ -844,7 +1264,10 @@ export class VoxelVolume implements VoxelVolumeReadView {
         },
       });
     }
-    const chunksAfter = this.#chunks.size + candidateChunks.size;
+    const chunksAfter =
+      estimate === undefined
+        ? this.#chunks.size + candidateChunks.size
+        : estimate.chunksAfter;
     if (chunksAfter > this.limits.maxChunks) {
       throw new WorkspaceError({
         family: "limit",
@@ -856,6 +1279,12 @@ export class VoxelVolume implements VoxelVolumeReadView {
           limit: this.limits.maxChunks,
         },
       });
+    }
+    if (estimate !== undefined) {
+      if (estimate.bounds !== undefined) {
+        this.#assertExtentWithinLimit(estimate.bounds);
+      }
+      return;
     }
     if (additions > 0) {
       const current = this.#bounds ?? this.#recomputeBounds();
@@ -899,10 +1328,14 @@ export class VoxelVolume implements VoxelVolumeReadView {
   /**
    * Applies a preflighted plan. Cannot fail after `#preflightPlan`: chunk
    * allocation is bounded by the preflighted chunk count and every write is
-   * a plain array store. Returns the compact per-chunk change set.
+   * a plain array store. Returns the compact per-chunk change set. Region
+   * moves pass their exact preflight estimate.
    */
-  #applyPlan(plan: readonly PlannedPatch[]): VoxelChangeSet {
-    this.#preflightPlan(plan);
+  #applyPlan(
+    plan: readonly PlannedPatch[],
+    estimate?: RegionResultEstimate,
+  ): VoxelChangeSet {
+    this.#preflightPlan(plan, estimate);
     // Canonical change-set order: chunk X, then Y, then Z; local index within
     // a chunk. Every caller (batch, fill, replace, patch) funnels through
     // here, so the emitted change set is always sorted.
@@ -986,6 +1419,48 @@ interface MutableChunkChange {
   readonly revision: number;
   readonly patches: VoxelPatch[];
 }
+
+/** Exact post-operation resource estimate for region moves (plan S3.9-S3.12). */
+interface RegionResultEstimate {
+  readonly occupiedAfter: number;
+  readonly chunksAfter: number;
+  readonly bounds: OccupiedBounds | undefined;
+}
+
+/** Component-wise integer vector addition. */
+const addVec3i = (a: Vec3i, b: Vec3i): Vec3i => [
+  a[0] + b[0],
+  a[1] + b[1],
+  a[2] + b[2],
+];
+
+/** Half-open bounds of a list of voxel entries; undefined when empty. */
+const boundsOfEntries = (
+  entries: readonly VoxelEntry[],
+): OccupiedBounds | undefined => {
+  if (entries.length === 0) return undefined;
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  for (const entry of entries) {
+    const x = entry.coordinate[0];
+    const y = entry.coordinate[1];
+    const z = entry.coordinate[2];
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (z < minZ) minZ = z;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+    if (z > maxZ) maxZ = z;
+  }
+  return {
+    min: [minX, minY, minZ],
+    max: [maxX + 1, maxY + 1, maxZ + 1],
+  };
+};
 
 /** One planned write; the unit of preflight and application. */
 interface PlannedPatch {

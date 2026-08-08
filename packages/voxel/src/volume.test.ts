@@ -458,6 +458,31 @@ describe("VoxelVolume.setVoxels", () => {
     }
     expectSameVoxels(snapshot(volume), before);
   });
+
+  it("preflights the net occupied count for mixed add/remove patches", () => {
+    // A patch list that removes one voxel and adds another keeps the
+    // occupied count unchanged, so it must pass at the occupied limit
+    // (regression: the preflight used to count additions only).
+    const volume = createVolume({ maxOccupiedVoxels: 1 });
+    volume.setVoxel([0, 0, 0], 1, capability);
+    const changeSet = volume.applyPatches(
+      [
+        {
+          coordinate: [0, 0, 0],
+          patches: [{ index: 0, oldValue: 0 }],
+        },
+        {
+          coordinate: [0, 0, 0],
+          patches: [{ index: 256, oldValue: 1 }],
+        },
+      ],
+      capability,
+    );
+    expect(volume.getVoxel([0, 0, 0])).toBe(0);
+    expect(volume.getVoxel([0, 0, 1])).toBe(1);
+    expect(volume.occupiedCount()).toBe(1);
+    expect(changeSet.chunks).toHaveLength(1);
+  });
 });
 
 describe("VoxelVolume.removeVoxels", () => {

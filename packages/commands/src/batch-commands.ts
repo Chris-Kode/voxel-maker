@@ -23,8 +23,10 @@ import {
   isRecord,
   missingMaterial,
   missingVolume,
+  parseAxis,
   parseCoordinate,
   parseMaterial,
+  parseRegion,
   parseVolumeId,
 } from "./parse-helpers.js";
 import type { Command } from "./types.js";
@@ -261,91 +263,6 @@ function parseMaterialOrEmpty(
   return value;
 }
 
-function parseRegion(
-  value: unknown,
-  limits: DocumentLimits,
-  path: readonly (string | number)[],
-): IntAabb {
-  if (!isRecord(value)) {
-    throw new WorkspaceError({
-      family: "validation",
-      code: "INVALID_FIELD_TYPE",
-      message: "Expected a region object with min and max",
-      path,
-    });
-  }
-  // Regions are half-open, so the exclusive `max` bound may reach
-  // `maxVoxelCoordinate + 1` to include the boundary voxel; the volume clips
-  // anything beyond the domain.
-  const bound = limits.maxVoxelCoordinate + 1;
-  const parsePoint = (
-    point: unknown,
-    pointPath: readonly (string | number)[],
-  ): Vec3i => {
-    if (!Array.isArray(point) || point.length !== 3) {
-      throw new WorkspaceError({
-        family: "validation",
-        code: "INVALID_VECTOR",
-        message: "Expected a 3-component integer vector",
-        path: pointPath,
-      });
-    }
-    const raw = point as unknown[];
-    const components: number[] = [];
-    for (let axis = 0; axis < 3; axis += 1) {
-      const component = raw[axis];
-      if (
-        typeof component !== "number" ||
-        !Number.isInteger(component) ||
-        Math.abs(component) > bound
-      ) {
-        throw new WorkspaceError({
-          family: "validation",
-          code: "INVALID_VOXEL_COORDINATE",
-          message: `Region coordinates must be integers within +-${String(bound)}`,
-          path: [...pointPath, axis],
-          context: { value: String(component) },
-        });
-      }
-      components.push(component);
-    }
-    return [
-      components[0] as number,
-      components[1] as number,
-      components[2] as number,
-    ];
-  };
-  const min = parsePoint(value.min, [...path, "min"]);
-  const max = parsePoint(value.max, [...path, "max"]);
-  for (let axis = 0; axis < 3; axis += 1) {
-    if ((min[axis] as number) > (max[axis] as number)) {
-      throw new WorkspaceError({
-        family: "validation",
-        code: "INVALID_AABB",
-        message: "Region minimum must not exceed maximum on any axis",
-        path: [...path, axis],
-      });
-    }
-  }
-  return { min, max };
-}
-
-function parseAxis(
-  value: unknown,
-  path: readonly (string | number)[] = [],
-): ShapeAxis {
-  if (value !== "x" && value !== "y" && value !== "z") {
-    throw new WorkspaceError({
-      family: "validation",
-      code: "INVALID_AXIS",
-      message: 'Axis must be one of "x", "y", or "z"',
-      path,
-      context: { value: String(value) },
-    });
-  }
-  return value;
-}
-
 function parseNonNegativeInteger(
   value: unknown,
   name: string,
@@ -542,8 +459,8 @@ function chunkIndexValue(value: unknown): number {
   return value;
 }
 
-/** Exact inverse of any batch/fill command: restore the change set's old values. */
-function patchesInverse(changeSet: VoxelChangeSet): InverseCommand {
+/** Exact inverse of any batch/fill/region command: restore the change set's old values. */
+export function patchesInverse(changeSet: VoxelChangeSet): InverseCommand {
   return {
     type: VOXEL_APPLY_PATCHES_COMMAND,
     schemaVersion: VOXEL_COMMAND_SCHEMA_VERSION,
@@ -560,7 +477,7 @@ function patchesInverse(changeSet: VoxelChangeSet): InverseCommand {
   };
 }
 
-function affectedResources(
+export function affectedResources(
   document: VoxelDocument,
   volumeId: VolumeId,
   materialIds: readonly number[],

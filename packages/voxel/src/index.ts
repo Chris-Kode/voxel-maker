@@ -26,3 +26,12 @@ export {
   type ShapeAxis,
   type ShapeIterationOptions,
 } from "./shapes.js";
+export {
+  assertExactRotationRegion,
+  canRotateExactly,
+  mirrorCoordinate,
+  rotateRegionPlan,
+  translateAabb,
+  type QuarterTurns,
+  type RegionRotationPlan,
+} from "./regions.js";

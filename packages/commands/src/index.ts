@@ -59,3 +59,21 @@ export {
   type SetBatchEntry,
   type SetBatchPayload,
 } from "./batch-commands.js";
+export {
+  VOXEL_COPY_REGION_COMMAND,
+  VOXEL_DELETE_REGION_COMMAND,
+  VOXEL_MIRROR_REGION_COMMAND,
+  VOXEL_ROTATE_REGION_COMMAND,
+  VOXEL_TRANSLATE_REGION_COMMAND,
+  copyRegionCommand,
+  deleteRegionCommand,
+  mirrorRegionCommand,
+  registerRegionCommands,
+  rotateRegionCommand,
+  translateRegionCommand,
+  type CopyRegionPayload,
+  type DeleteRegionPayload,
+  type MirrorRegionPayload,
+  type RotateRegionPayload,
+  type TranslateRegionPayload,
+} from "./region-commands.js";
