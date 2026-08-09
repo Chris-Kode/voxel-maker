@@ -151,6 +151,8 @@ describe("encodePng", () => {
 
   it("splits large payloads across multiple stored blocks", () => {
     // 2048x10 raw scanlines exceed the 65535-byte stored block limit.
+    // The work is ~10ms; the 20s budget below keeps a loaded CI runner
+    // (turbo runs every package's suite concurrently) from flaking.
     const width = PNG_MAX_DIMENSION;
     const height = 10;
     const pixels = new Uint8Array(width * height * 4);
@@ -159,7 +161,7 @@ describe("encodePng", () => {
     expect(decoded.width).toBe(width);
     expect(decoded.height).toBe(height);
     expect([...decoded.rgba]).toEqual([...pixels]);
-  });
+  }, 20_000);
 
   it("is byte-deterministic", () => {
     const pixels = pattern2x2();
