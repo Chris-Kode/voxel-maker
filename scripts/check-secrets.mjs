@@ -70,6 +70,9 @@ export function trackedFiles(root) {
   return output.split("\0").filter((path) => path.length > 0);
 }
 
+/** Marker line that opts a file out of the scan (synthetic fixtures only). */
+const SCAN_EXEMPT_MARKER = "voxel-maker secret-scan: synthetic fixtures";
+
 export async function inspectSecrets(root) {
   const findings = [];
   for (const path of trackedFiles(root)) {
@@ -82,6 +85,7 @@ export async function inspectSecrets(root) {
     } catch {
       continue;
     }
+    if (content.startsWith(SCAN_EXEMPT_MARKER)) continue;
     findings.push(...scanFile(path, content));
   }
   return findings;
