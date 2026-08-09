@@ -108,7 +108,7 @@ export function clampName(name: string, limits: InspectionLimits): string {
 
 /** True when `value` is an integer array of exactly three numbers. */
 export function isVec3i(
-  value: JsonValue,
+  value: JsonValue | undefined,
 ): value is readonly [number, number, number] {
   return (
     Array.isArray(value) &&

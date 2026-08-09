@@ -11,6 +11,9 @@ import type { JsonSchema } from "./schema.js";
 /** Contract version of the v1 inspection surface. */
 export const INSPECTION_CONTRACT_VERSION = 1;
 
+/** Contract version of the v1 mutation surface (plan S11.5/S11.6). */
+export const MUTATION_CONTRACT_VERSION = 1;
+
 /**
  * Capability classes (plan S11.9): inspection is authorized separately
  * from mutation. The v1 surface ships inspection tools only; mutation
@@ -98,6 +101,34 @@ export function outputSchema(
     },
     required: [...BASE_RESPONSE_REQUIRED, ...requiredPayload],
   };
+}
+
+/**
+ * Output schema shared by every mutation tool (plan S11.5): the response
+ * envelope plus `baseRevision` (the revision the proposal is anchored to),
+ * the constructed `command` (id/type/schemaVersion/payload), and the
+ * bounded `voxelEstimate` the command would touch.
+ */
+export function mutationOutputSchema(toolName: string): JsonSchema {
+  return outputSchema(
+    toolName,
+    {
+      baseRevision: { type: "integer", minimum: 0 },
+      voxelEstimate: { type: "integer", minimum: 0 },
+      command: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string", minLength: 1, maxLength: 128 },
+          type: { type: "string", minLength: 1, maxLength: 128 },
+          schemaVersion: { type: "integer", minimum: 1 },
+          payload: { type: "object" },
+        },
+        required: ["id", "type", "schemaVersion", "payload"],
+      },
+    },
+    ["baseRevision", "voxelEstimate", "command"],
+  );
 }
 
 /** JSON Schema of a three-number vector (real coordinates). */
@@ -213,6 +244,29 @@ export function inspectionLimit(
     context: { limit, value, max },
   });
 }
+
+/**
+ * Throws the stable mutation limit error (plan S11.10): a caller-supplied
+ * value exceeds the configured mutation budget (`maxBatchEntries`). The
+ * error is bounded and stable so provider adapters can surface it verbatim.
+ */
+export function mutationLimit(
+  limit: string,
+  value: number,
+  max: number,
+  path: readonly (string | number)[],
+): never {
+  throw new WorkspaceError({
+    family: "limit",
+    code: MUTATION_LIMIT_CODE,
+    message: `${limit} must be <= ${String(max)} (requested ${String(value)})`,
+    path,
+    context: { limit, value, max },
+  });
+}
+
+/** Stable error code for arguments that exceed a mutation budget. */
+export const MUTATION_LIMIT_CODE = "MUTATION_LIMIT";
 
 /** Throws the stable missing-reference error for one id lookup. */
 export function missingReference(

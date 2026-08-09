@@ -73,3 +73,61 @@ export function resolveInspectionLimits(
   }
   return Object.freeze(clamped) as unknown as InspectionLimits;
 }
+
+/**
+ * Resource limits for the bounded AI mutation surface (plan S11.10,
+ * ticket #32). Tool calls are bounded per call (`maxResponseBytes`,
+ * `maxBatchEntries`); a preview session is bounded across the whole
+ * staging run (`maxStagedCommands`, `maxProposedVoxelChanges`,
+ * `maxDiffEntries`). Every limit has a hard default; callers may lower
+ * them at composition time but never raise them.
+ */
+
+/** Default mutation resource limits (ADR-0009-aligned; callers may lower). */
+export interface MutationLimits {
+  /**
+   * Maximum serialized response size in JSON code units. Mutation
+   * responses carry one full constructed command, so the default matches
+   * the command payload byte budget.
+   */
+  readonly maxResponseBytes: number;
+  /** Maximum entries/coordinates accepted by one batch tool call. */
+  readonly maxBatchEntries: number;
+  /** Maximum commands one preview session may stage. */
+  readonly maxStagedCommands: number;
+  /** Maximum cumulative proposed voxel changes one session may stage. */
+  readonly maxProposedVoxelChanges: number;
+  /** Maximum ids reported by one bounded semantic diff. */
+  readonly maxDiffEntries: number;
+}
+
+/** ADR-0009-aligned hard defaults for the v1 mutation surface. */
+export const DEFAULT_MUTATION_LIMITS: MutationLimits = Object.freeze({
+  maxResponseBytes: 1_048_576,
+  maxBatchEntries: 100_000,
+  maxStagedCommands: 1_024,
+  maxProposedVoxelChanges: 1_000_000,
+  maxDiffEntries: 1_024,
+});
+
+/**
+ * Resolves caller-supplied overrides against the hard defaults. Only
+ * strict lowerings are honored; every limit is clamped to `[0, default]`
+ * so no caller can raise a bound past the default budget.
+ */
+export function resolveMutationLimits(
+  overrides: Partial<MutationLimits> | undefined,
+): MutationLimits {
+  const merged = { ...DEFAULT_MUTATION_LIMITS, ...overrides };
+  const clamped = {} as Record<keyof MutationLimits, number>;
+  for (const key of Object.keys(DEFAULT_MUTATION_LIMITS) as Array<
+    keyof MutationLimits
+  >) {
+    const value = merged[key];
+    const max = DEFAULT_MUTATION_LIMITS[key];
+    clamped[key] = Number.isFinite(value)
+      ? Math.max(0, Math.min(value, max))
+      : max;
+  }
+  return Object.freeze(clamped) as unknown as MutationLimits;
+}
