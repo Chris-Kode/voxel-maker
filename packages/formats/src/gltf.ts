@@ -54,16 +54,16 @@ interface AccessorExport {
   readonly byteOffset: number;
   readonly componentType: number;
   readonly count: number;
-  readonly type: "VEC3" | "SCALAR";
+  readonly type: "VEC3" | "SCALAR" | "VEC4";
   readonly min?: readonly number[];
   readonly max?: readonly number[];
 }
 
-/** One bufferView in deterministic JSON form. */
+/** One bufferView in deterministic JSON form; `target` is omitted for data views. */
 interface BufferViewExport {
   readonly byteOffset: number;
   readonly byteLength: number;
-  readonly target: number;
+  readonly target?: number;
 }
 
 /** Accessor indices for one mesh (position, normal, one per primitive). */
@@ -73,12 +73,24 @@ interface MeshAccessorPlan {
   readonly primitiveAccessors: readonly number[];
 }
 
+/** Accessor indices for one animation sampler (input times, output values). */
+interface SamplerAccessorPlan {
+  readonly inputAccessor: number;
+  readonly outputAccessor: number;
+}
+
+/** Accessor plans for one animation, aligned with its sampler order. */
+interface AnimationAccessorPlan {
+  readonly samplers: readonly SamplerAccessorPlan[];
+}
+
 /** The assembled binary buffer plus its accessor/bufferView plans. */
 interface BuiltBuffer {
   readonly bytes: Uint8Array;
   readonly accessors: readonly AccessorExport[];
   readonly bufferViews: readonly BufferViewExport[];
   readonly meshes: readonly MeshAccessorPlan[];
+  readonly animations: readonly AnimationAccessorPlan[];
 }
 
 const minOf = (values: Float32Array, width: number): number[] => {
@@ -116,11 +128,15 @@ function buildBuffer(sceneGraph: GltfSceneGraph): BuiltBuffer {
 
   const pushView = (
     bytes: Uint8Array,
-    target: number,
+    target: number | undefined,
   ): { readonly viewIndex: number; readonly byteOffset: number } => {
     parts.push(bytes);
     const byteOffset = offset;
-    bufferViews.push({ byteOffset, byteLength: bytes.byteLength, target });
+    bufferViews.push({
+      byteOffset,
+      byteLength: bytes.byteLength,
+      ...(target !== undefined ? { target } : {}),
+    });
     offset += bytes.byteLength;
     return { viewIndex: bufferViews.length - 1, byteOffset };
   };
@@ -180,13 +196,57 @@ function buildBuffer(sceneGraph: GltfSceneGraph): BuiltBuffer {
     });
   }
 
+  // Animation data: per animation, per sampler in order, the input times
+  // (SCALAR float with min/max) then the output values (VEC3/VEC4 float).
+  // Every element is 4-byte aligned, so no alignment padding is needed.
+  const animationPlans: AnimationAccessorPlan[] = [];
+  for (const animation of sceneGraph.animations ?? []) {
+    const samplerPlans: SamplerAccessorPlan[] = [];
+    for (const sampler of animation.samplers) {
+      const timeBytes = new Uint8Array(
+        sampler.input.buffer,
+        sampler.input.byteOffset,
+        sampler.input.byteLength,
+      );
+      const timeView = pushView(timeBytes, undefined);
+      const inputAccessor = accessors.length;
+      accessors.push({
+        bufferView: timeView.viewIndex,
+        byteOffset: 0,
+        componentType: GLTF_COMPONENT_FLOAT,
+        count: sampler.input.length,
+        type: "SCALAR",
+        min: minOf(sampler.input, 1),
+        max: maxOf(sampler.input, 1),
+      });
+      const valueBytes = new Uint8Array(
+        sampler.output.buffer,
+        sampler.output.byteOffset,
+        sampler.output.byteLength,
+      );
+      const valueView = pushView(valueBytes, undefined);
+      samplerPlans.push({
+        inputAccessor,
+        outputAccessor: accessors.length,
+      });
+      accessors.push({
+        bufferView: valueView.viewIndex,
+        byteOffset: 0,
+        componentType: GLTF_COMPONENT_FLOAT,
+        count: sampler.output.length / (sampler.outputType === "VEC4" ? 4 : 3),
+        type: sampler.outputType,
+      });
+    }
+    animationPlans.push({ samplers: samplerPlans });
+  }
+
   const bytes = new Uint8Array(offset);
   let target = 0;
   for (const part of parts) {
     bytes.set(part, target);
     target += part.byteLength;
   }
-  return { bytes, accessors, bufferViews, meshes: meshPlans };
+  return { bytes, accessors, bufferViews, meshes: meshPlans, animations: animationPlans };
 }
 
 const nodeToJson = (
@@ -231,8 +291,8 @@ const bufferViewToJson = (view: BufferViewExport): Record<string, unknown> => {
   const out: Record<string, unknown> = {
     buffer: 0,
     byteLength: view.byteLength,
-    target: view.target,
   };
+  if (view.target !== undefined) out.target = view.target;
   if (view.byteOffset !== 0) out.byteOffset = view.byteOffset;
   return out;
 };
@@ -278,6 +338,42 @@ function buildGltfJson(
       ? [{ byteLength: buffers }]
       : [{ uri: bufferUri, byteLength: buffers }];
 
+  const animations = sceneGraph.animations ?? [];
+  const animationsJson = animations.map((animation, animationIndex) => {
+    const plan = built.animations[animationIndex];
+    if (plan === undefined) {
+      throw new WorkspaceError({
+        family: "internal",
+        code: "GLTF_ANIMATION_MISSING",
+        message: "Animation missing from the buffer plan",
+        context: { animation: animationIndex },
+      });
+    }
+    return {
+      name: animation.name,
+      channels: animation.channels.map((channel) => ({
+        sampler: channel.sampler,
+        target: { node: channel.node, path: channel.path },
+      })),
+      samplers: animation.samplers.map((sampler, samplerIndex) => {
+        const samplerPlan = plan.samplers[samplerIndex];
+        if (samplerPlan === undefined) {
+          throw new WorkspaceError({
+            family: "internal",
+            code: "GLTF_ANIMATION_MISSING",
+            message: "Animation sampler missing from the buffer plan",
+            context: { animation: animationIndex, sampler: samplerIndex },
+          });
+        }
+        return {
+          input: samplerPlan.inputAccessor,
+          output: samplerPlan.outputAccessor,
+          interpolation: sampler.interpolation,
+        };
+      }),
+    };
+  });
+
   const json: Record<string, unknown> = {
     asset: { version: GLTF_JSON_VERSION, generator: GLTF_GENERATOR },
     scene: 0,
@@ -285,6 +381,7 @@ function buildGltfJson(
     nodes: sceneGraph.nodes.map(nodeToJson),
     meshes,
     materials: sceneGraph.materials.map(materialToJson),
+    ...(animationsJson.length > 0 ? { animations: animationsJson } : {}),
     accessors: built.accessors.map(accessorToJson),
     bufferViews: built.bufferViews.map(bufferViewToJson),
     buffers: buffersJson,
