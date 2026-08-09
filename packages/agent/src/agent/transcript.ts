@@ -55,13 +55,13 @@ function messageToJson(message: ChatMessage): JsonValue {
         ...(message.content === undefined ? {} : { content: message.content }),
         ...(message.toolCalls === undefined
           ? {}
-          : { toolCalls: message.toolCalls }),
+          : { toolCalls: message.toolCalls as unknown as JsonValue }),
       };
     case "tool":
       return {
         role: "tool",
         toolCallId: message.toolCallId,
-        result: message.result,
+        result: message.result as unknown as JsonValue,
       };
   }
 }

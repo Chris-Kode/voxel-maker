@@ -276,7 +276,12 @@ export async function streamToResponse(
       retryable: false,
     });
   }
-  return chatResponse({ text: text.join(""), toolCalls, usage, finishReason: finished });
+  return chatResponse({
+    text: text.join(""),
+    toolCalls,
+    usage,
+    finishReason: finished,
+  });
 }
 
 /** Deterministic text token estimate: 4 characters per token. */
@@ -292,15 +297,16 @@ function messageTokens(message: ChatMessage): number {
     case "assistant": {
       let tokens = estimateTextTokens(message.content ?? "");
       for (const call of message.toolCalls ?? []) {
-        tokens += estimateTextTokens(call.name) + estimateTextTokens(JSON.stringify(call.arguments));
+        tokens +=
+          estimateTextTokens(call.name) +
+          estimateTextTokens(JSON.stringify(call.arguments));
       }
       return tokens;
     }
     case "tool": {
-      const payload =
-        message.result.ok === true
-          ? JSON.stringify(message.result.value)
-          : JSON.stringify(message.result.error);
+      const payload = message.result.ok
+        ? JSON.stringify(message.result.value)
+        : JSON.stringify(message.result.error);
       return estimateTextTokens(payload);
     }
   }
@@ -328,7 +334,8 @@ export interface RetryPolicy {
 /** Default safe retry policy: 3 attempts, bounded exponential backoff. */
 export const DEFAULT_RETRY_POLICY: RetryPolicy = Object.freeze({
   maxAttempts: 3,
-  delayMs: (attempt: number): number => Math.min(250 * 2 ** (attempt - 1), 1000),
+  delayMs: (attempt: number): number =>
+    Math.min(250 * 2 ** (attempt - 1), 1000),
   shouldRetry: (error: ProviderError): boolean => error.retryable,
 });
 

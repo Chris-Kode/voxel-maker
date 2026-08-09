@@ -5,6 +5,7 @@ import {
   BudgetLedger,
   budgetLimitError,
   resolveAgentBudgets,
+  type AgentBudgets,
 } from "./budgets.js";
 
 /**
@@ -55,17 +56,26 @@ describe("agent budget defaults (ADR-0009)", () => {
 });
 
 describe("BudgetLedger: per-resource enforcement", () => {
-  function makeLedger(overrides: Partial<DEFAULT_AGENT_BUDGETS> = {}) {
+  function makeLedger(overrides: Partial<AgentBudgets> = {}) {
     const clock = new VirtualClock();
     const budgets = resolveAgentBudgets(overrides);
     return { ledger: new BudgetLedger(budgets, clock), clock, budgets };
   }
 
-  function expectLimit(result: { ok: false; error: WorkspaceError }, resource: string, maximum: number, requested: number) {
+  function expectLimit(
+    result: { ok: false; error: WorkspaceError },
+    resource: string,
+    maximum: number,
+    requested: number,
+  ) {
     expect(result.ok).toBe(false);
     expect(result.error.family).toBe("limit");
     expect(result.error.code).toBe("LIMIT_EXCEEDED");
-    expect(result.error.context).toMatchObject({ resource, maximum, requested });
+    expect(result.error.context).toMatchObject({
+      resource,
+      maximum,
+      requested,
+    });
   }
 
   it("enforces the round budget and the elapsed-time budget", () => {
@@ -77,7 +87,12 @@ describe("BudgetLedger: per-resource enforcement", () => {
     expect(ledger.round).toBe(2);
     clock.advance(101);
     const timed = ledger.reserveRound();
-    expectLimit(timed as { ok: false; error: WorkspaceError }, "duration", 100, 101);
+    expectLimit(
+      timed as { ok: false; error: WorkspaceError },
+      "duration",
+      100,
+      101,
+    );
   });
 
   it("enforces the tool-call budget", () => {
@@ -92,7 +107,10 @@ describe("BudgetLedger: per-resource enforcement", () => {
   });
 
   it("enforces command and proposed-voxel budgets cumulatively", () => {
-    const { ledger } = makeLedger({ maxCommands: 2, maxProposedVoxelChanges: 10 });
+    const { ledger } = makeLedger({
+      maxCommands: 2,
+      maxProposedVoxelChanges: 10,
+    });
     expect(ledger.reserveCommand(6).ok).toBe(true);
     expect(ledger.reserveCommand(4).ok).toBe(true);
     expectLimit(
@@ -104,7 +122,10 @@ describe("BudgetLedger: per-resource enforcement", () => {
     const voxelLedger = makeLedger({ maxProposedVoxelChanges: 10 });
     expect(voxelLedger.ledger.reserveCommand(6).ok).toBe(true);
     expectLimit(
-      voxelLedger.ledger.reserveCommand(5) as { ok: false; error: WorkspaceError },
+      voxelLedger.ledger.reserveCommand(5) as {
+        ok: false;
+        error: WorkspaceError;
+      },
       "proposedVoxelChanges",
       10,
       11,
@@ -117,21 +138,36 @@ describe("BudgetLedger: per-resource enforcement", () => {
       maxKeyframes: 5,
       maxClipDurationSeconds: 10,
     });
-    expect(ledger.reserveAnimation({ tracks: 2, keyframes: 3, clipDurationSeconds: 4 }).ok).toBe(true);
+    expect(
+      ledger.reserveAnimation({
+        tracks: 2,
+        keyframes: 3,
+        clipDurationSeconds: 4,
+      }).ok,
+    ).toBe(true);
     expectLimit(
-      ledger.reserveAnimation({ tracks: 1 }) as { ok: false; error: WorkspaceError },
+      ledger.reserveAnimation({ tracks: 1 }) as {
+        ok: false;
+        error: WorkspaceError;
+      },
       "tracks",
       2,
       3,
     );
     expectLimit(
-      ledger.reserveAnimation({ keyframes: 3 }) as { ok: false; error: WorkspaceError },
+      ledger.reserveAnimation({ keyframes: 3 }) as {
+        ok: false;
+        error: WorkspaceError;
+      },
       "keyframes",
       5,
       6,
     );
     expectLimit(
-      ledger.reserveAnimation({ clipDurationSeconds: 7 }) as { ok: false; error: WorkspaceError },
+      ledger.reserveAnimation({ clipDurationSeconds: 7 }) as {
+        ok: false;
+        error: WorkspaceError;
+      },
       "clipDurationSeconds",
       10,
       11,
@@ -152,10 +188,17 @@ describe("BudgetLedger: per-resource enforcement", () => {
 
   it("enforces the combined token budget", () => {
     const { ledger } = makeLedger({ maxTokens: 100 });
-    expect(ledger.recordUsage({ inputTokens: 30, outputTokens: 20 }).ok).toBe(true);
-    expect(ledger.recordUsage({ inputTokens: 30, outputTokens: 20 }).ok).toBe(true);
+    expect(ledger.recordUsage({ inputTokens: 30, outputTokens: 20 }).ok).toBe(
+      true,
+    );
+    expect(ledger.recordUsage({ inputTokens: 30, outputTokens: 20 }).ok).toBe(
+      true,
+    );
     expectLimit(
-      ledger.recordUsage({ inputTokens: 1, outputTokens: 1 }) as { ok: false; error: WorkspaceError },
+      ledger.recordUsage({ inputTokens: 1, outputTokens: 1 }) as {
+        ok: false;
+        error: WorkspaceError;
+      },
       "tokens",
       100,
       102,
@@ -179,7 +222,12 @@ describe("BudgetLedger: per-resource enforcement", () => {
     expect(ledger.recordError().ok).toBe(true);
     expect(ledger.recordError().ok).toBe(true);
     const third = ledger.recordError();
-    expectLimit(third as { ok: false; error: WorkspaceError }, "consecutiveErrors", 2, 3);
+    expectLimit(
+      third as { ok: false; error: WorkspaceError },
+      "consecutiveErrors",
+      2,
+      3,
+    );
     ledger.resetErrors();
     expect(ledger.recordError().ok).toBe(true);
   });
@@ -200,7 +248,11 @@ describe("BudgetLedger: per-resource enforcement", () => {
     ledger.reserveToolCall();
     ledger.reserveCommand(10);
     ledger.recordOutputBytes(5);
-    ledger.recordUsage({ inputTokens: 1, outputTokens: 2, estimatedCostUsd: 0.5 });
+    ledger.recordUsage({
+      inputTokens: 1,
+      outputTokens: 2,
+      estimatedCostUsd: 0.5,
+    });
     expect(ledger.round).toBe(1);
     expect(ledger.toolCalls).toBe(1);
     expect(ledger.commands).toBe(1);
@@ -221,7 +273,8 @@ describe("budgetLimitError", () => {
     expect(error.toJSON()).toEqual({
       family: "limit",
       code: "LIMIT_EXCEEDED",
-      message: "Session budget exceeded: tokens (maximum 128000, requested 130000)",
+      message:
+        "Session budget exceeded: tokens (maximum 128000, requested 130000)",
       context: { resource: "tokens", maximum: 128_000, requested: 130_000 },
     });
   });

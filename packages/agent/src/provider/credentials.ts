@@ -69,26 +69,29 @@ export interface CredentialStore {
 export class MemoryCredentialStore implements CredentialStore {
   readonly #entries = new Map<string, Secret>();
 
-  async save(service: string, account: string, value: Secret): Promise<void> {
+  save(service: string, account: string, value: Secret): Promise<void> {
     this.#entries.set(`${service}\u0000${account}`, value);
+    return Promise.resolve();
   }
 
-  async get(service: string, account: string): Promise<Secret | undefined> {
-    return this.#entries.get(`${service}\u0000${account}`);
+  get(service: string, account: string): Promise<Secret | undefined> {
+    return Promise.resolve(this.#entries.get(`${service}\u0000${account}`));
   }
 
-  async delete(service: string, account: string): Promise<boolean> {
-    return this.#entries.delete(`${service}\u0000${account}`);
+  delete(service: string, account: string): Promise<boolean> {
+    return Promise.resolve(this.#entries.delete(`${service}\u0000${account}`));
   }
 
-  async list(): Promise<readonly CredentialReference[]> {
-    return [...this.#entries.entries()].map(([key]) => {
-      const separator = key.indexOf("\u0000");
-      return {
-        service: key.slice(0, separator),
-        account: key.slice(separator + 1),
-        present: true,
-      };
-    });
+  list(): Promise<readonly CredentialReference[]> {
+    return Promise.resolve(
+      [...this.#entries.entries()].map(([key]) => {
+        const separator = key.indexOf("\u0000");
+        return {
+          service: key.slice(0, separator),
+          account: key.slice(separator + 1),
+          present: true,
+        };
+      }),
+    );
   }
 }

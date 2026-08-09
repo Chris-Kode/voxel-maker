@@ -46,9 +46,14 @@ describe("AgentTranscript", () => {
   });
 
   it("refuses to export after the retention window and can be deleted", () => {
-    const transcript = new AgentTranscript({ createdAt: now, retentionDays: 1 });
+    const transcript = new AgentTranscript({
+      createdAt: now,
+      retentionDays: 1,
+    });
     transcript.recordMessage({ role: "user", content: "hello" });
-    expect(transcript.exportRedacted(now + 24 * 60 * 60 * 1000 + 1)).toBeUndefined();
+    expect(
+      transcript.exportRedacted(now + 24 * 60 * 60 * 1000 + 1),
+    ).toBeUndefined();
     transcript.delete();
     expect(transcript.entryCount).toBe(0);
   });

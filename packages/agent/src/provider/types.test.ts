@@ -57,35 +57,131 @@ describe("ProviderError normalization (AC: no vendor types)", () => {
   });
 
   it("classifies transient failures as retryable and policy failures as not", () => {
-    expect(isRetryable(new ProviderError({ family: "network", code: "NETWORK", message: "", retryable: true }))).toBe(true);
-    expect(isRetryable(new ProviderError({ family: "timeout", code: "TIMEOUT", message: "", retryable: true }))).toBe(true);
-    expect(isRetryable(new ProviderError({ family: "rate-limit", code: "RATE_LIMIT", message: "", retryable: true }))).toBe(true);
-    expect(isRetryable(new ProviderError({ family: "server", code: "SERVER", message: "", retryable: true }))).toBe(true);
-    expect(isRetryable(new ProviderError({ family: "authentication", code: "AUTH", message: "", retryable: false }))).toBe(false);
-    expect(isRetryable(new ProviderError({ family: "validation", code: "BAD_REQUEST", message: "", retryable: false }))).toBe(false);
-    expect(isRetryable(new ProviderError({ family: "invalid-response", code: "MALFORMED", message: "", retryable: false }))).toBe(false);
-    expect(isRetryable(new ProviderError({ family: "budget", code: "BUDGET", message: "", retryable: false }))).toBe(false);
-    expect(isRetryable(new ProviderError({ family: "canceled", code: "CANCELED", message: "", retryable: false }))).toBe(false);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "network",
+          code: "NETWORK",
+          message: "",
+          retryable: true,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "timeout",
+          code: "TIMEOUT",
+          message: "",
+          retryable: true,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "rate-limit",
+          code: "RATE_LIMIT",
+          message: "",
+          retryable: true,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "server",
+          code: "SERVER",
+          message: "",
+          retryable: true,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "authentication",
+          code: "AUTH",
+          message: "",
+          retryable: false,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "validation",
+          code: "BAD_REQUEST",
+          message: "",
+          retryable: false,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "invalid-response",
+          code: "MALFORMED",
+          message: "",
+          retryable: false,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "budget",
+          code: "BUDGET",
+          message: "",
+          retryable: false,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryable(
+        new ProviderError({
+          family: "canceled",
+          code: "CANCELED",
+          message: "",
+          retryable: false,
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("never retries non-transient failures and bounds total attempts", () => {
     expect(
       shouldRetry(
-        new ProviderError({ family: "invalid-response", code: "MALFORMED", message: "", retryable: false }),
+        new ProviderError({
+          family: "invalid-response",
+          code: "MALFORMED",
+          message: "",
+          retryable: false,
+        }),
         DEFAULT_RETRY_POLICY,
         1,
       ),
     ).toBe(false);
     expect(
       shouldRetry(
-        new ProviderError({ family: "network", code: "NETWORK", message: "", retryable: true }),
+        new ProviderError({
+          family: "network",
+          code: "NETWORK",
+          message: "",
+          retryable: true,
+        }),
         DEFAULT_RETRY_POLICY,
         3,
       ),
     ).toBe(false);
     expect(
       shouldRetry(
-        new ProviderError({ family: "network", code: "NETWORK", message: "", retryable: true }),
+        new ProviderError({
+          family: "network",
+          code: "NETWORK",
+          message: "",
+          retryable: true,
+        }),
         DEFAULT_RETRY_POLICY,
         1,
       ),
@@ -94,7 +190,11 @@ describe("ProviderError normalization (AC: no vendor types)", () => {
 
   it("computes deterministic bounded backoff delays", () => {
     const delays: number[] = [];
-    for (let attempt = 1; attempt <= DEFAULT_RETRY_POLICY.maxAttempts; attempt += 1) {
+    for (
+      let attempt = 1;
+      attempt <= DEFAULT_RETRY_POLICY.maxAttempts;
+      attempt += 1
+    ) {
       delays.push(DEFAULT_RETRY_POLICY.delayMs(attempt));
     }
     expect(delays).toEqual([250, 500, 1000]);
@@ -148,7 +248,10 @@ describe("stream accumulation", () => {
     const events: ProviderEvent[] = [
       textEvent("Short"),
       textEvent("en legs"),
-      { kind: "tool-call", call: { id: "c1", name: "inspectSummary", arguments: {} } },
+      {
+        kind: "tool-call",
+        call: { id: "c1", name: "inspectSummary", arguments: {} },
+      },
       usageEvent(),
       { kind: "done", finishReason: "tool-calls" },
     ];
@@ -168,7 +271,15 @@ describe("stream accumulation", () => {
   it("throws a normalized error when the stream fails mid-way", async () => {
     const events: ProviderEvent[] = [
       textEvent("partial"),
-      { kind: "error", error: new ProviderError({ family: "network", code: "NETWORK", message: "dropped", retryable: true }) },
+      {
+        kind: "error",
+        error: new ProviderError({
+          family: "network",
+          code: "NETWORK",
+          message: "dropped",
+          retryable: true,
+        }),
+      },
     ];
     await expect(streamToResponse(events)).rejects.toMatchObject({
       family: "network",
@@ -186,7 +297,9 @@ describe("stream accumulation", () => {
   });
 
   it("detects a missing done event as an invalid response", async () => {
-    await expect(streamToResponse([textEvent("never done")])).rejects.toMatchObject({
+    await expect(
+      streamToResponse([textEvent("never done")]),
+    ).rejects.toMatchObject({
       family: "invalid-response",
     });
   });
@@ -218,7 +331,11 @@ describe("deterministic token estimation", () => {
     const messages: ChatMessage[] = [
       { role: "system", content: "You are a voxel editor agent." },
       { role: "user", content: "Make the chair legs shorter." },
-      { role: "assistant", content: "I will inspect first.", toolCalls: [{ id: "c1", name: "inspectSummary", arguments: {} }] },
+      {
+        role: "assistant",
+        content: "I will inspect first.",
+        toolCalls: [{ id: "c1", name: "inspectSummary", arguments: {} }],
+      },
     ];
     const tokens = estimateRequestTokens({
       model: "gpt-4o-mini",
@@ -232,8 +349,17 @@ describe("deterministic token estimation", () => {
 
 describe("ProviderError interop", () => {
   it("serializes as a stable WorkspaceError-shaped record when needed", () => {
-    const error = new ProviderError({ family: "server", code: "SERVER_500", message: "boom", retryable: true });
+    const error = new ProviderError({
+      family: "server",
+      code: "SERVER_500",
+      message: "boom",
+      retryable: true,
+    });
     expect(isProviderError(error)).toBe(true);
-    expect(isProviderError(new WorkspaceError({ family: "limit", code: "X", message: "y" }))).toBe(false);
+    expect(
+      isProviderError(
+        new WorkspaceError({ family: "limit", code: "X", message: "y" }),
+      ),
+    ).toBe(false);
   });
 });

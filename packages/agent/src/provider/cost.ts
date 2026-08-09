@@ -55,9 +55,7 @@ export const OPENAI_MODEL_PRICES: Readonly<Record<string, ModelPrice>> =
   });
 
 /** Price table lookup; undefined for unknown models. */
-export function priceForModel(
-  model: string,
-): ModelPrice | undefined {
+export function priceForModel(model: string): ModelPrice | undefined {
   return OPENAI_MODEL_PRICES[model];
 }
 

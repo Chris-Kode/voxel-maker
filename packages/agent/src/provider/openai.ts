@@ -89,14 +89,14 @@ function statusError(status: number, body: string): ProviderError {
     return normalizedError(
       "server",
       "SERVER_ERROR",
-      `The provider failed (HTTP ${status})`,
+      `The provider failed (HTTP ${String(status)})`,
       true,
     );
   }
   return normalizedError(
     "validation",
     "REQUEST_REJECTED",
-    `The provider rejected the request (HTTP ${status}): ${excerpt}`,
+    `The provider rejected the request (HTTP ${String(status)}): ${excerpt}`,
     false,
   );
 }
@@ -147,10 +147,9 @@ function toVendorMessages(request: ProviderChatRequest): unknown[] {
         });
         break;
       case "tool": {
-        const payload =
-          message.result.ok === true
-            ? message.result.value
-            : message.result.error;
+        const payload = message.result.ok
+          ? message.result.value
+          : message.result.error;
         messages.push({
           role: "tool",
           tool_call_id: message.toolCallId,
@@ -227,26 +226,34 @@ export class OpenAIProvider implements ProviderAdapter {
 
     const controller = new AbortController();
     const userSignal = options.signal;
-    let timedOut = false;
-    let canceled = false;
-    const abort = (): void => controller.abort();
+    // Object flags: assignments inside the abort listener and the timer
+    // are invisible to control-flow analysis, so plain booleans would
+    // be narrowed to their initializers at the catch site.
+    const state = { timedOut: false, canceled: false };
+    const abort = (): void => {
+      controller.abort();
+    };
     if (userSignal !== undefined) {
       if (userSignal.aborted) {
-        canceled = true;
+        state.canceled = true;
         controller.abort();
       } else {
-        userSignal.addEventListener("abort", () => {
-          canceled = true;
-          controller.abort();
-        }, { once: true });
+        userSignal.addEventListener(
+          "abort",
+          () => {
+            state.canceled = true;
+            controller.abort();
+          },
+          { once: true },
+        );
       }
     }
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const timer = setTimeout(() => {
-      timedOut = true;
+      state.timedOut = true;
       controller.abort();
     }, timeoutMs);
-    timer.unref?.();
+    timer.unref();
 
     try {
       const response = await this.#fetch(ENDPOINT, {
@@ -290,11 +297,10 @@ export class OpenAIProvider implements ProviderAdapter {
         return;
       }
       let buffer = "";
-      let text = "";
       const toolCalls = new Map<number, StreamedToolCall>();
       let usage: ProviderUsage | undefined;
       let finish: ProviderFinishReason | undefined;
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -350,7 +356,6 @@ export class OpenAIProvider implements ProviderAdapter {
             for (const choice of chunk.choices ?? []) {
               const delta = choice.delta;
               if (delta?.content !== undefined && delta.content !== null) {
-                text += delta.content;
                 yield { kind: "text", delta: delta.content };
               }
               for (const part of delta?.tool_calls ?? []) {
@@ -366,7 +371,10 @@ export class OpenAIProvider implements ProviderAdapter {
                     current.arguments + (part.function?.arguments ?? ""),
                 });
               }
-              if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
+              if (
+                choice.finish_reason !== undefined &&
+                choice.finish_reason !== null
+              ) {
                 finish = finishReason(choice.finish_reason);
               }
             }
@@ -375,7 +383,7 @@ export class OpenAIProvider implements ProviderAdapter {
                 inputTokens: chunk.usage.prompt_tokens,
                 outputTokens: chunk.usage.completion_tokens,
                 ...(chunk.usage.prompt_tokens_details?.cached_tokens ===
-                  undefined
+                undefined
                   ? {}
                   : {
                       cachedInputTokens:
@@ -427,7 +435,7 @@ export class OpenAIProvider implements ProviderAdapter {
       yield { kind: "usage", usage };
       yield { kind: "done", finishReason: finish ?? "stop" };
     } catch (error) {
-      if (canceled) {
+      if (state.canceled) {
         yield {
           kind: "error",
           error: normalizedError(
@@ -439,7 +447,7 @@ export class OpenAIProvider implements ProviderAdapter {
         };
         return;
       }
-      if (timedOut) {
+      if (state.timedOut) {
         yield {
           kind: "error",
           error: normalizedError(
@@ -457,7 +465,9 @@ export class OpenAIProvider implements ProviderAdapter {
         error: normalizedError(
           "network",
           "NETWORK_ERROR",
-          reason.message === "" ? "The provider was unreachable" : reason.message,
+          reason.message === ""
+            ? "The provider was unreachable"
+            : reason.message,
           true,
         ),
       };

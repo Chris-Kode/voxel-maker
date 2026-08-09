@@ -1,7 +1,6 @@
 import type { ProviderErrorData } from "./types.js";
 import {
   ProviderError,
-  chatResponse,
   streamToResponse,
   type ChatOptions,
   type ChatResponse,
@@ -16,10 +15,13 @@ import {
 /**
  * Deterministic provider adapter (plan S12.3, ticket #33): a scripted,
  * provider-neutral adapter that emits exactly the steps a test or
- * headless run orders, on a virtual clock. It is the single fixture that
- * verifies the successful, malformed, repeated-error, timeout,
- * cancellation, and budget-exhaustion paths of the bounded loop without
- * any network or vendor SDK.
+ * headless run orders, on a virtual clock. Each `complete`/`chat` call
+ * consumes exactly one scripted step — one step is one provider
+ * response — so a scripted run's rounds, retries, and failure sequences
+ * are fully deterministic. It is the single fixture that verifies the
+ * successful, malformed, repeated-error, timeout, cancellation, and
+ * budget-exhaustion paths of the bounded loop without any network or
+ * vendor SDK.
  */
 
 /** One scripted step of a deterministic response. */
@@ -63,7 +65,7 @@ function isErrorStep(
 export class DeterministicProvider implements ProviderAdapter {
   readonly providerId: string;
   readonly defaultModel: string;
-  readonly #script: readonly DeterministicStep[];
+  #script: readonly DeterministicStep[];
   readonly #clock: { now(): number };
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #repeatLast: boolean;
@@ -81,18 +83,38 @@ export class DeterministicProvider implements ProviderAdapter {
     this.providerId = options.providerId ?? "deterministic";
     this.defaultModel = options.model ?? "deterministic-model";
     this.#clock = options.clock ?? { now: () => Date.now() };
-    this.#sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.#sleep =
+      options.sleep ??
+      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.#repeatLast = options.repeatLastOnExhaustion ?? true;
     const finalStep = this.#script[this.#script.length - 1];
     this.#repeatError =
       this.#repeatLast && finalStep !== undefined && isErrorStep(finalStep);
-    this.#defaultUsage =
-      options.defaultUsage ?? { inputTokens: 0, outputTokens: 0 };
+    this.#defaultUsage = options.defaultUsage ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+    };
   }
 
   /** Number of chat responses completed (one per adapter call). */
   get callCount(): number {
     return this.#calls;
+  }
+
+  /**
+   * Replaces the scripted steps and resets the cursor, call count, and
+   * repeat-error state. Used by the loop harness to re-script one shared
+   * provider per session; the adapter stays deterministic either way.
+   */
+  setScript(script: readonly DeterministicStep[]): void {
+    this.#script = script;
+    this.#calls = 0;
+    this.#cursor = 0;
+    this.#repeatError = false;
+    this.#lastErrorStep = undefined;
+    const finalStep = this.#script[this.#script.length - 1];
+    this.#repeatError =
+      this.#repeatLast && finalStep !== undefined && isErrorStep(finalStep);
   }
 
   async *chat(
@@ -102,7 +124,7 @@ export class DeterministicProvider implements ProviderAdapter {
     this.#calls += 1;
     const startedAt = this.#clock.now();
     const signal = options.signal;
-    while (true) {
+    for (;;) {
       if (signal?.aborted === true) {
         yield {
           kind: "error",
@@ -154,9 +176,7 @@ export class DeterministicProvider implements ProviderAdapter {
           ((step.toolCalls?.length ?? 0) > 0 ? "tool-calls" : "stop"),
       };
       this.#cursor += 1;
-      if (this.#cursor >= this.#script.length && !this.#repeatError) {
-        return;
-      }
+      return;
     }
   }
 

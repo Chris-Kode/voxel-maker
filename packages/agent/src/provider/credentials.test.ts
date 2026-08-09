@@ -37,7 +37,6 @@ describe("Secret values (AC: credentials in the keychain)", () => {
     expect(value.reveal()).toBe("sk-super-secret-123456");
     expect(value.toString()).toBe(REDACTION_MARKER);
     expect(JSON.stringify(value)).toBe(`"${REDACTION_MARKER}"`);
-    expect(`${value}`).toBe(REDACTION_MARKER);
     expect(String(value)).toBe(REDACTION_MARKER);
   });
 
@@ -90,7 +89,13 @@ describe("explicit consent (AC: provider use is consented)", () => {
     expect(consent.consentedAt).toBe(now);
     expect(consent.expiresAt).toBe(now + DEFAULT_CONSENT_DURATION_MS);
     expect(consent.consentVersion).toBe(1);
-    expect(consentCovers(consent, { providerId: "openai", model: "gpt-4o-mini" }, now)).toBe(true);
+    expect(
+      consentCovers(
+        consent,
+        { providerId: "openai", model: "gpt-4o-mini" },
+        now,
+      ),
+    ).toBe(true);
   });
 
   it("rejects unknown disclosure categories and invalid expiry", () => {
@@ -98,7 +103,10 @@ describe("explicit consent (AC: provider use is consented)", () => {
       createConsent({
         providerId: "openai",
         model: "gpt-4o-mini",
-        categories: ["user-prompt-and-run-messages", "full-document-upload" as never],
+        categories: [
+          "user-prompt-and-run-messages",
+          "full-document-upload" as never,
+        ],
         consentedAt: now,
       }),
     ).toThrow(WorkspaceError);
@@ -120,10 +128,26 @@ describe("explicit consent (AC: provider use is consented)", () => {
       categories: DISCLOSURE_CATEGORIES,
       consentedAt: now,
     });
-    expect(consentCovers(consent, { providerId: "openai", model: "gpt-4o" }, now)).toBe(false);
-    expect(consentCovers(consent, { providerId: "anthropic", model: "gpt-4o-mini" }, now)).toBe(false);
-    expect(consentExpired(consent, now + DEFAULT_CONSENT_DURATION_MS + 1)).toBe(true);
-    expect(consentCovers(consent, { providerId: "openai", model: "gpt-4o-mini" }, now + DEFAULT_CONSENT_DURATION_MS + 1)).toBe(false);
+    expect(
+      consentCovers(consent, { providerId: "openai", model: "gpt-4o" }, now),
+    ).toBe(false);
+    expect(
+      consentCovers(
+        consent,
+        { providerId: "anthropic", model: "gpt-4o-mini" },
+        now,
+      ),
+    ).toBe(false);
+    expect(consentExpired(consent, now + DEFAULT_CONSENT_DURATION_MS + 1)).toBe(
+      true,
+    );
+    expect(
+      consentCovers(
+        consent,
+        { providerId: "openai", model: "gpt-4o-mini" },
+        now + DEFAULT_CONSENT_DURATION_MS + 1,
+      ),
+    ).toBe(false);
     const error = consentRequiredError();
     expect(error.family).toBe("conflict");
     expect(error.code).toBe("CONSENT_REQUIRED");
@@ -138,7 +162,9 @@ describe("explicit consent (AC: provider use is consented)", () => {
       consentedAt: now,
     });
     await store.save(consent);
-    expect((await store.get("openai", "gpt-4o-mini"))?.model).toBe("gpt-4o-mini");
+    expect((await store.get("openai", "gpt-4o-mini"))?.model).toBe(
+      "gpt-4o-mini",
+    );
     expect(await store.list()).toHaveLength(1);
     expect(await store.delete("openai", "gpt-4o-mini")).toBe(true);
     expect(await store.get("openai", "gpt-4o-mini")).toBeUndefined();

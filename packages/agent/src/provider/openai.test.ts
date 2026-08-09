@@ -3,11 +3,7 @@ import { FILL_BOX_CONTRACT } from "../mutation/index.js";
 import { INSPECT_SUMMARY_CONTRACT } from "../tools/index.js";
 import { secret } from "./credentials.js";
 import { OpenAIProvider } from "./openai.js";
-import type {
-  ChatMessage,
-  ProviderChatRequest,
-  ToolCall,
-} from "./types.js";
+import type { ChatMessage, ProviderChatRequest, ToolCall } from "./types.js";
 
 /**
  * OpenAI adapter tests (plan S12.3, ticket #33): the sole v1 cloud
@@ -41,7 +37,9 @@ function chunkPayload(payload: Record<string, unknown>): string {
   return sseLine(payload);
 }
 
-function request(overrides: Partial<ProviderChatRequest> = {}): ProviderChatRequest {
+function request(
+  overrides: Partial<ProviderChatRequest> = {},
+): ProviderChatRequest {
   return {
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: "shorten the legs" }],
@@ -56,7 +54,7 @@ function summaryCall(): ToolCall {
 describe("OpenAI adapter: streaming normalization", () => {
   it("streams text deltas, accumulates tool calls, and reports usage", async () => {
     const calls: RequestInit[] = [];
-    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchImpl = ((_input: RequestInfo | URL, init?: RequestInit) => {
       calls.push(init ?? {});
       const chunks = [
         chunkPayload({
@@ -74,7 +72,15 @@ describe("OpenAI adapter: streaming normalization", () => {
           choices: [
             {
               index: 0,
-              delta: { tool_calls: [{ index: 0, id: "call_abc", function: { name: "inspectSummary", arguments: "" } }] },
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call_abc",
+                    function: { name: "inspectSummary", arguments: "" },
+                  },
+                ],
+              },
               finish_reason: null,
             },
           ],
@@ -84,7 +90,9 @@ describe("OpenAI adapter: streaming normalization", () => {
           choices: [
             {
               index: 0,
-              delta: { tool_calls: [{ index: 0, function: { arguments: "{}" } }] },
+              delta: {
+                tool_calls: [{ index: 0, function: { arguments: "{}" } }],
+              },
               finish_reason: "tool_calls",
             },
           ],
@@ -100,7 +108,7 @@ describe("OpenAI adapter: streaming normalization", () => {
         }),
         "data: [DONE]\n\n",
       ];
-      return sseResponse(chunks);
+      return Promise.resolve(sseResponse(chunks));
     }) as typeof fetch;
 
     const provider = new OpenAIProvider({
@@ -121,14 +129,18 @@ describe("OpenAI adapter: streaming normalization", () => {
   });
 
   it("emits a stop reason for a plain text stream", async () => {
-    const fetchImpl = (async () =>
-      sseResponse([
-        chunkPayload({
-          id: "chatcmpl-2",
-          choices: [{ index: 0, delta: { content: "done" }, finish_reason: "stop" }],
-        }),
-        "data: [DONE]\n\n",
-      ])) as typeof fetch;
+    const fetchImpl = (() =>
+      Promise.resolve(
+        sseResponse([
+          chunkPayload({
+            id: "chatcmpl-2",
+            choices: [
+              { index: 0, delta: { content: "done" }, finish_reason: "stop" },
+            ],
+          }),
+          "data: [DONE]\n\n",
+        ]),
+      )) as typeof fetch;
     const provider = new OpenAIProvider({
       getApiKey: () => secret("sk-test-1234567890"),
       fetch: fetchImpl,
@@ -144,15 +156,19 @@ describe("OpenAI adapter: streaming normalization", () => {
 
   it("sends provider-neutral messages, tool contracts, and a fixed temperature", async () => {
     let captured: RequestInit | undefined;
-    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchImpl = ((_input: RequestInfo | URL, init?: RequestInit) => {
       captured = init;
-      return sseResponse([
-        chunkPayload({
-          id: "chatcmpl-3",
-          choices: [{ index: 0, delta: { content: "" }, finish_reason: "stop" }],
-        }),
-        "data: [DONE]\n\n",
-      ]);
+      return Promise.resolve(
+        sseResponse([
+          chunkPayload({
+            id: "chatcmpl-3",
+            choices: [
+              { index: 0, delta: { content: "" }, finish_reason: "stop" },
+            ],
+          }),
+          "data: [DONE]\n\n",
+        ]),
+      );
     }) as typeof fetch;
     const provider = new OpenAIProvider({
       getApiKey: () => secret("sk-test-1234567890"),
@@ -179,20 +195,32 @@ describe("OpenAI adapter: streaming normalization", () => {
         maxTokens: 512,
       }),
     );
-    const body = JSON.parse(String(captured?.body)) as Record<string, unknown>;
+    const body = JSON.parse(captured?.body as string) as Record<
+      string,
+      unknown
+    >;
     expect(body["model"]).toBe("gpt-4o-mini");
     expect(body["temperature"]).toBe(0);
     expect(body["stream"]).toBe(true);
-    expect((body["stream_options"] as Record<string, unknown>)["include_usage"]).toBe(true);
+    expect(
+      (body["stream_options"] as Record<string, unknown>)["include_usage"],
+    ).toBe(true);
     expect(body["max_tokens"]).toBe(512);
     const sent = body["messages"] as unknown[];
     expect(sent).toHaveLength(4);
-    expect(sent[0]).toEqual({ role: "system", content: "You are a voxel agent." });
+    expect(sent[0]).toEqual({
+      role: "system",
+      content: "You are a voxel agent.",
+    });
     expect(sent[2]).toEqual({
       role: "assistant",
       content: "On it.",
       tool_calls: [
-        { id: "call_abc", type: "function", function: { name: "inspectSummary", arguments: "{}" } },
+        {
+          id: "call_abc",
+          type: "function",
+          function: { name: "inspectSummary", arguments: "{}" },
+        },
       ],
     });
     expect(sent[3]).toEqual({
@@ -217,12 +245,15 @@ describe("OpenAI adapter: normalized errors", () => {
   function providerFor(status: number, body: string): OpenAIProvider {
     return new OpenAIProvider({
       getApiKey: () => secret("sk-test-1234567890"),
-      fetch: (async () => new Response(body, { status })) as typeof fetch,
+      fetch: (() =>
+        Promise.resolve(new Response(body, { status }))) as typeof fetch,
     });
   }
 
   it("maps 401 to a non-retryable authentication error", async () => {
-    await expect(providerFor(401, "bad key").complete(request())).rejects.toMatchObject({
+    await expect(
+      providerFor(401, "bad key").complete(request()),
+    ).rejects.toMatchObject({
       family: "authentication",
       code: "AUTHENTICATION_FAILED",
       retryable: false,
@@ -230,7 +261,9 @@ describe("OpenAI adapter: normalized errors", () => {
   });
 
   it("maps 429 to a retryable rate-limit error", async () => {
-    await expect(providerFor(429, "slow down").complete(request())).rejects.toMatchObject({
+    await expect(
+      providerFor(429, "slow down").complete(request()),
+    ).rejects.toMatchObject({
       family: "rate-limit",
       code: "RATE_LIMITED",
       retryable: true,
@@ -238,7 +271,9 @@ describe("OpenAI adapter: normalized errors", () => {
   });
 
   it("maps 5xx to a retryable server error", async () => {
-    await expect(providerFor(503, "unavailable").complete(request())).rejects.toMatchObject({
+    await expect(
+      providerFor(503, "unavailable").complete(request()),
+    ).rejects.toMatchObject({
       family: "server",
       code: "SERVER_ERROR",
       retryable: true,
@@ -246,7 +281,9 @@ describe("OpenAI adapter: normalized errors", () => {
   });
 
   it("maps other 4xx to a non-retryable validation error", async () => {
-    await expect(providerFor(400, "bad request").complete(request())).rejects.toMatchObject({
+    await expect(
+      providerFor(400, "bad request").complete(request()),
+    ).rejects.toMatchObject({
       family: "validation",
       code: "REQUEST_REJECTED",
       retryable: false,
@@ -256,7 +293,7 @@ describe("OpenAI adapter: normalized errors", () => {
   it("maps network failures to a retryable network error", async () => {
     const provider = new OpenAIProvider({
       getApiKey: () => secret("sk-test-1234567890"),
-      fetch: (async () => {
+      fetch: (() => {
         throw new TypeError("fetch failed");
       }) as typeof fetch,
     });
@@ -270,7 +307,10 @@ describe("OpenAI adapter: normalized errors", () => {
   it("maps malformed SSE to an invalid-response error", async () => {
     const provider = new OpenAIProvider({
       getApiKey: () => secret("sk-test-1234567890"),
-      fetch: (async () => sseResponse(["data: {not json\n\n", "data: [DONE]\n\n"])) as typeof fetch,
+      fetch: (() =>
+        Promise.resolve(
+          sseResponse(["data: {not json\n\n", "data: [DONE]\n\n"]),
+        )) as typeof fetch,
     });
     await expect(provider.complete(request())).rejects.toMatchObject({
       family: "invalid-response",
@@ -282,20 +322,33 @@ describe("OpenAI adapter: normalized errors", () => {
   it("rejects tool call arguments that are not valid JSON", async () => {
     const provider = new OpenAIProvider({
       getApiKey: () => secret("sk-test-1234567890"),
-      fetch: (async () =>
-        sseResponse([
-          chunkPayload({
-            id: "chatcmpl-4",
-            choices: [
-              {
-                index: 0,
-                delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "inspectSummary", arguments: "{oops" } }] },
-                finish_reason: "tool_calls",
-              },
-            ],
-          }),
-          "data: [DONE]\n\n",
-        ])) as typeof fetch,
+      fetch: (() =>
+        Promise.resolve(
+          sseResponse([
+            chunkPayload({
+              id: "chatcmpl-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "c1",
+                        function: {
+                          name: "inspectSummary",
+                          arguments: "{oops",
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: "tool_calls",
+                },
+              ],
+            }),
+            "data: [DONE]\n\n",
+          ]),
+        )) as typeof fetch,
     });
     await expect(provider.complete(request())).rejects.toMatchObject({
       family: "invalid-response",
@@ -308,9 +361,9 @@ describe("OpenAI adapter: normalized errors", () => {
     let fetched = false;
     const provider = new OpenAIProvider({
       getApiKey: () => secret("sk-test-1234567890"),
-      fetch: (async () => {
+      fetch: (() => {
         fetched = true;
-        return sseResponse([]);
+        return Promise.resolve(sseResponse([]));
       }) as typeof fetch,
     });
     await expect(
@@ -327,9 +380,9 @@ describe("OpenAI adapter: normalized errors", () => {
     let fetched = false;
     const provider = new OpenAIProvider({
       getApiKey: () => secret(""),
-      fetch: (async () => {
+      fetch: (() => {
         fetched = true;
-        return sseResponse([]);
+        return Promise.resolve(sseResponse([]));
       }) as typeof fetch,
     });
     await expect(provider.complete(request())).rejects.toMatchObject({
@@ -357,7 +410,9 @@ describe("OpenAI adapter: cancellation and timeout", () => {
     const pending = provider.complete(request(), { signal: controller.signal });
     // Abort after the request is in flight (microtask turn) so the
     // adapter's signal listener is registered when cancellation lands.
-    setTimeout(() => controller.abort(), 0);
+    setTimeout(() => {
+      controller.abort();
+    }, 0);
     await expect(pending).rejects.toMatchObject({
       family: "canceled",
       code: "CANCELED",

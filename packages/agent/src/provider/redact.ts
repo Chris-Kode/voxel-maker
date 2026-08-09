@@ -31,7 +31,10 @@ export function isRedacted(value: string): boolean {
 }
 
 /** Replaces every occurrence of any known secret with the marker. */
-export function redactSecrets(value: string, secrets: readonly string[]): string {
+export function redactSecrets(
+  value: string,
+  secrets: readonly string[],
+): string {
   let out = value;
   for (const secret of secrets) {
     if (secret.length === 0) continue;
@@ -43,8 +46,10 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
 /** Applies all deterministic secret and protected-content patterns. */
 export function redactDiagnostics(value: string): string {
   let out = value;
-  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, REDACTION_MARKER);
-  for (const pattern of PROTECTED_PATTERNS) out = out.replace(pattern, REDACTION_MARKER);
+  for (const pattern of SECRET_PATTERNS)
+    out = out.replace(pattern, REDACTION_MARKER);
+  for (const pattern of PROTECTED_PATTERNS)
+    out = out.replace(pattern, REDACTION_MARKER);
   return out;
 }
 
@@ -61,7 +66,9 @@ export function redactJson(
     return redactSecrets(redactDiagnostics(value), secrets);
   }
   if (Array.isArray(value)) {
-    return Object.freeze(value.map((item) => redactJson(item, secrets)));
+    return Object.freeze(
+      (value as readonly JsonValue[]).map((item) => redactJson(item, secrets)),
+    );
   }
   if (value !== null && typeof value === "object") {
     const out: Record<string, JsonValue> = {};
@@ -91,7 +98,11 @@ const PROTECTED_KEYS = new Set([
  */
 export function redactProviderPayload(value: JsonValue): JsonValue {
   if (Array.isArray(value)) {
-    return Object.freeze(value.map((item) => redactProviderPayload(item)));
+    return Object.freeze(
+      (value as readonly JsonValue[]).map((item) =>
+        redactProviderPayload(item),
+      ),
+    );
   }
   if (value !== null && typeof value === "object") {
     const out: Record<string, JsonValue> = {};

@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  DeterministicProvider,
-  type DeterministicStep,
-} from "./deterministic.js";
-import type {
-  ChatOptions,
-  ProviderChatRequest,
-  ToolCall,
-} from "./types.js";
+import { DeterministicProvider } from "./deterministic.js";
+import type { ChatOptions, ProviderChatRequest, ToolCall } from "./types.js";
 
 /**
  * Deterministic provider adapter tests (plan S12.3, ticket #33 AC): the
@@ -20,12 +13,15 @@ import type {
 class VirtualClock {
   #now = 0;
   now = (): number => this.#now;
-  sleep = async (ms: number): Promise<void> => {
+  sleep = (ms: number): Promise<void> => {
     this.#now += ms;
+    return Promise.resolve();
   };
 }
 
-function request(overrides: Partial<ProviderChatRequest> = {}): ProviderChatRequest {
+function request(
+  overrides: Partial<ProviderChatRequest> = {},
+): ProviderChatRequest {
   return {
     model: "deterministic-model",
     messages: [{ role: "user", content: "shorten the chair legs" }],
@@ -38,7 +34,7 @@ function summaryCall(id: string): ToolCall {
 }
 
 describe("deterministic provider: successful path", () => {
-  it("streams text deltas, tool calls, usage, and a finish reason", async () => {
+  it("emits one scripted response per call: text, tool calls, usage, finish", async () => {
     const clock = new VirtualClock();
     const provider = new DeterministicProvider({
       script: [
@@ -46,24 +42,32 @@ describe("deterministic provider: successful path", () => {
         {
           text: " at the chair",
           toolCalls: [summaryCall("call_1")],
-          usage: { inputTokens: 100, outputTokens: 20, estimatedCostUsd: 0.0001 },
+          usage: {
+            inputTokens: 100,
+            outputTokens: 20,
+            estimatedCostUsd: 0.0001,
+          },
           delayMs: 10,
         },
       ],
       clock,
       sleep: clock.sleep,
     });
-    const response = await provider.complete(request(), { timeoutMs: 1000 });
-    expect(response.text).toBe("Let me look at the chair");
-    expect(response.toolCalls).toEqual([summaryCall("call_1")]);
-    expect(response.usage).toEqual({
+    const first = await provider.complete(request(), { timeoutMs: 1000 });
+    expect(first.text).toBe("Let me look");
+    expect(first.toolCalls).toEqual([]);
+    expect(first.finishReason).toBe("stop");
+    const second = await provider.complete(request(), { timeoutMs: 1000 });
+    expect(second.text).toBe(" at the chair");
+    expect(second.toolCalls).toEqual([summaryCall("call_1")]);
+    expect(second.usage).toEqual({
       inputTokens: 100,
       outputTokens: 20,
       estimatedCostUsd: 0.0001,
     });
-    expect(response.finishReason).toBe("tool-calls");
+    expect(second.finishReason).toBe("tool-calls");
     expect(clock.now()).toBe(15);
-    expect(provider.callCount).toBe(1);
+    expect(provider.callCount).toBe(2);
   });
 
   it("emits a plain stop when no tools are requested", async () => {
@@ -201,9 +205,10 @@ describe("deterministic provider: cancellation path", () => {
         { text: "second", delayMs: 10 },
       ],
       clock,
-      sleep: async (ms: number) => {
+      sleep: (ms: number) => {
         void ms;
         controller.abort();
+        return Promise.resolve();
       },
     });
     await expect(
@@ -234,7 +239,9 @@ describe("deterministic provider: budget-exhaustion fixture", () => {
 
   it("exposes a chat() stream for event-level assertions", async () => {
     const provider = new DeterministicProvider({
-      script: [{ text: "streamed", usage: { inputTokens: 1, outputTokens: 1 } }],
+      script: [
+        { text: "streamed", usage: { inputTokens: 1, outputTokens: 1 } },
+      ],
     });
     const events: string[] = [];
     const options: ChatOptions = {};

@@ -35,12 +35,7 @@ describe("agent state machine (AC: explicit states)", () => {
     const machine = new AgentStateMachine();
     expect(machine.state).toBe("understand");
     expect(machine.terminated).toBe(false);
-    expect(TERMINAL_STATES).toEqual([
-      "commit",
-      "discard",
-      "cancel",
-      "error",
-    ]);
+    expect(TERMINAL_STATES).toEqual(["commit", "discard", "cancel", "error"]);
   });
 
   it("walks the canonical happy path and terminates at commit", () => {
@@ -138,8 +133,12 @@ describe("agent state machine (AC: explicit states)", () => {
 
   it("ignores cancel/fail once a terminal state is reached", () => {
     const machine = new AgentStateMachine("commit");
-    expect(() => machine.cancel()).toThrow(WorkspaceError);
-    expect(() => machine.fail()).toThrow(WorkspaceError);
+    expect(() => {
+      machine.cancel();
+    }).toThrow(WorkspaceError);
+    expect(() => {
+      machine.fail();
+    }).toThrow(WorkspaceError);
     expect(machine.state).toBe("commit");
   });
 

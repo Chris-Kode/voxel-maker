@@ -81,7 +81,10 @@ export function createConsent(input: ConsentInput): ProviderConsent {
     }
   }
   if (!Number.isFinite(consentedAt) || !Number.isFinite(expiresAt)) {
-    throw consentError("Consent timestamps must be finite", "INVALID_CONSENT_TIME");
+    throw consentError(
+      "Consent timestamps must be finite",
+      "INVALID_CONSENT_TIME",
+    );
   }
   if (expiresAt <= consentedAt) {
     throw consentError(
@@ -148,19 +151,20 @@ export interface ConsentStore {
 export class MemoryConsentStore implements ConsentStore {
   readonly #entries = new Map<string, ProviderConsent>();
 
-  async save(consent: ProviderConsent): Promise<void> {
+  save(consent: ProviderConsent): Promise<void> {
     this.#entries.set(`${consent.providerId}\u0000${consent.model}`, consent);
+    return Promise.resolve();
   }
 
-  async get(providerId: string, model: string): Promise<ProviderConsent | undefined> {
-    return this.#entries.get(`${providerId}\u0000${model}`);
+  get(providerId: string, model: string): Promise<ProviderConsent | undefined> {
+    return Promise.resolve(this.#entries.get(`${providerId}\u0000${model}`));
   }
 
-  async delete(providerId: string, model: string): Promise<boolean> {
-    return this.#entries.delete(`${providerId}\u0000${model}`);
+  delete(providerId: string, model: string): Promise<boolean> {
+    return Promise.resolve(this.#entries.delete(`${providerId}\u0000${model}`));
   }
 
-  async list(): Promise<readonly ProviderConsent[]> {
-    return [...this.#entries.values()];
+  list(): Promise<readonly ProviderConsent[]> {
+    return Promise.resolve([...this.#entries.values()]);
   }
 }

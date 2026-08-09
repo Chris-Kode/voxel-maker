@@ -66,7 +66,8 @@ export function resolveAgentBudgets(
   const clamped = {} as Record<string, number>;
   for (const key of Object.keys(DEFAULT_AGENT_BUDGETS)) {
     const value = (merged as Record<string, unknown>)[key];
-    const max = (DEFAULT_AGENT_BUDGETS as Record<string, number>)[key];
+    const max =
+      (DEFAULT_AGENT_BUDGETS as unknown as Record<string, number>)[key] ?? 0;
     clamped[key] =
       typeof value === "number" && Number.isFinite(value)
         ? Math.max(0, Math.min(value, max))
@@ -84,7 +85,7 @@ export function budgetLimitError(
   return new WorkspaceError({
     family: "limit",
     code: "LIMIT_EXCEEDED",
-    message: `Session budget exceeded: ${resource} (maximum ${maximum}, requested ${requested})`,
+    message: `Session budget exceeded: ${resource} (maximum ${String(maximum)}, requested ${String(requested)})`,
     context: { resource, maximum, requested },
   });
 }
@@ -272,14 +273,21 @@ export class BudgetLedger {
 
   recordUsage(usage: ProviderUsage): BudgetResult {
     const nextTokens =
-      this.#inputTokens + usage.inputTokens + this.#outputTokens + usage.outputTokens;
+      this.#inputTokens +
+      usage.inputTokens +
+      this.#outputTokens +
+      usage.outputTokens;
     if (nextTokens > this.budgets.maxTokens) {
       return limit("tokens", this.budgets.maxTokens, nextTokens);
     }
     const cost = usage.estimatedCostUsd ?? 0;
     const nextCost = this.#costUsd + cost;
     if (nextCost > this.budgets.maxEstimatedCostUsd) {
-      return limit("estimatedCostUsd", this.budgets.maxEstimatedCostUsd, nextCost);
+      return limit(
+        "estimatedCostUsd",
+        this.budgets.maxEstimatedCostUsd,
+        nextCost,
+      );
     }
     this.#inputTokens += usage.inputTokens;
     this.#outputTokens += usage.outputTokens;
@@ -299,7 +307,11 @@ export class BudgetLedger {
   recordError(): BudgetResult {
     const next = this.#consecutiveErrors + 1;
     if (next > this.budgets.maxConsecutiveErrors) {
-      return limit("consecutiveErrors", this.budgets.maxConsecutiveErrors, next);
+      return limit(
+        "consecutiveErrors",
+        this.budgets.maxConsecutiveErrors,
+        next,
+      );
     }
     this.#consecutiveErrors = next;
     return { ok: true };
