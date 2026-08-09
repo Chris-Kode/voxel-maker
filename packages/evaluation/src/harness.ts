@@ -1,0 +1,340 @@
+import { CommandBus } from "@voxel-maker/commands";
+import {
+  canonicalAssetSemanticHash,
+  type DocumentStoreHandle,
+  type DocumentStoreRead,
+} from "@voxel-maker/document";
+import type { AgentBudgets, ProviderUsage } from "@voxel-maker/agent";
+import {
+  createAgentSession,
+  createConsent,
+  createInspector,
+  createMutator,
+  createPreviewRegistry,
+  createPreviewSession,
+  DeterministicProvider,
+  DISCLOSURE_CATEGORIES,
+  previewSessionId,
+  type AgentEvent,
+  type AgentLoopOptions,
+  type AgentRunReason,
+  type DeterministicStep,
+  type ProviderConsent,
+} from "@voxel-maker/agent";
+import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
+import type { VolumeId } from "@voxel-maker/shared";
+import {
+  createChairStore,
+  createEmptyScaffoldStore,
+  createEvalSelectionPort,
+  EVAL_IDS,
+} from "./fixtures.js";
+import {
+  occupiedMetrics,
+  structuralIssues,
+  type OccupiedMetrics,
+} from "./metrics.js";
+import { renderPreviewEvidence, type PreviewEvidenceSet } from "./previews.js";
+import {
+  computeScores,
+  type GeometryEvalScores,
+  type ToolLogEntry,
+} from "./score.js";
+import { evaluationVersions, type EvaluationVersions } from "./versions.js";
+import { scenarioById, type GeometryScenario, type ScenarioId } from "./scenarios.js";
+
+/**
+ * Fixed geometry evaluation harness (plan S12.12, ticket #35): runs one
+ * scenario end to end — deterministic fixture store, injected selection
+ * port, isolated preview session, recorded tool trace through the
+ * DeterministicProvider, bounded agent loop, explicit Apply, structural
+ * metrics, rendered previews, and the seven scoring dimensions. The
+ * harness is deterministic: no network, no wall clock, no live model.
+ */
+
+/** Virtual clock whose sleep advances synchronously (deterministic runs). */
+export class VirtualClock {
+  #now = 0;
+  now = (): number => this.#now;
+  sleep = (ms: number): Promise<void> => {
+    this.#now += ms;
+    return Promise.resolve();
+  };
+}
+
+/** Integrity evidence: live state must change only via one Apply. */
+export interface IntegrityReport {
+  readonly revisionBefore: number;
+  readonly revisionAfter: number;
+  readonly historyBefore: number;
+  readonly historyAfter: number;
+  /** True when live state changed although Apply failed or was skipped. */
+  readonly partialCommit: boolean;
+  /** Failed/skipped runs must leave the live store unchanged. */
+  readonly zeroStateChangeOnFailure: boolean;
+}
+
+/** Run counters and proposal facts of one evaluation run. */
+export interface RunReport {
+  readonly ok: boolean;
+  readonly state: string;
+  readonly reason: AgentRunReason | undefined;
+  readonly errorCode: string | undefined;
+  readonly rounds: number;
+  readonly toolCalls: number;
+  readonly stagedCommands: number;
+  readonly voxelEstimate: number;
+  readonly usage: ProviderUsage;
+  readonly applyOk: boolean;
+  readonly applyLabel: string | undefined;
+}
+
+/** The complete recorded result of one scenario evaluation. */
+export interface GeometryEvalResult {
+  readonly scenarioId: ScenarioId;
+  readonly scenario: GeometryScenario;
+  readonly versions: EvaluationVersions;
+  readonly run: RunReport;
+  readonly scores: GeometryEvalScores;
+  readonly toolLog: readonly ToolLogEntry[];
+  readonly integrity: IntegrityReport;
+  readonly metrics: {
+    readonly before: OccupiedMetrics;
+    readonly after: OccupiedMetrics;
+    readonly structuralIssues: readonly string[];
+  };
+  readonly previews: {
+    readonly before: PreviewEvidenceSet;
+    readonly after: PreviewEvidenceSet;
+  };
+  readonly hashes: {
+    readonly input: string;
+    readonly output: string;
+  };
+}
+
+export interface EvaluateScenarioOptions {
+  readonly scenarioId: ScenarioId;
+  /** Recorded trace; defaults to the scenario's golden trace. */
+  readonly script?: readonly DeterministicStep[];
+  /** Optional lowerings of the fixed budget profile. */
+  readonly budgets?: Partial<AgentBudgets>;
+  /** Revision-conflict guard override (default: live stays current). */
+  readonly isLiveCurrent?: () => boolean;
+  /** Optional progress projection (headless UI). */
+  readonly onEvent?: (event: AgentEvent) => void;
+}
+
+/** Builds a committed fixture store of a scenario. */
+function createFixtureStore(
+  scenario: GeometryScenario,
+): { readonly store: DocumentStoreRead; readonly handle: DocumentStoreHandle } {
+  switch (scenario.fixture) {
+    case "empty-scaffold":
+      return createEmptyScaffoldStore();
+    case "chair":
+      return createChairStore(false);
+    case "chair-armrest":
+      return createChairStore(true);
+  }
+}
+
+/** Canonical semantic hash of a committed store. */
+function semanticHashOf(store: DocumentStoreRead): string {
+  const document = store.getDocument();
+  const volumes = new Map<VolumeId, VoxelVolumeReadView>();
+  for (const key of Object.keys(document.volumes)) {
+    const volumeId = key as VolumeId;
+    const volume = store.getVolume(volumeId);
+    if (volume !== undefined) volumes.set(volumeId, volume);
+  }
+  return canonicalAssetSemanticHash(document, volumes);
+}
+
+/** The fixed consent record of the deterministic suite provider. */
+function suiteConsent(providerId: string, model: string): ProviderConsent {
+  return createConsent({
+    providerId,
+    model,
+    categories: DISCLOSURE_CATEGORIES,
+    consentedAt: 0,
+    expiresAt: 1_000_000_000_000,
+  });
+}
+
+/** Runs one fixed scenario and returns the complete scored result. */
+export async function evaluateScenario(
+  options: EvaluateScenarioOptions,
+): Promise<GeometryEvalResult> {
+  const scenario = scenarioById(options.scenarioId);
+  const clock = new VirtualClock();
+  // The reference "before" state: a second identical fixture commit, so
+  // the diff evidence never aliases the live store mutated by Apply.
+  const beforeStore = createFixtureStore(scenario).store;
+  const { handle } = createFixtureStore(scenario);
+  const revisionBefore = handle.store.revision;
+  const registry = createPreviewRegistry();
+  const bus = new CommandBus(handle.store, registry, handle.writeCapability);
+  const historyBefore = bus.historySnapshot().past.length;
+  const preview = createPreviewSession({
+    live: handle.store,
+    applyBus: bus,
+    sessionId: previewSessionId(`preview:eval:${scenario.id}`),
+  });
+  const inspector = createInspector({
+    store: preview,
+    capabilities: ["inspect"],
+    port: createEvalSelectionPort(scenario.selection),
+  });
+  const mutator = createMutator({
+    store: preview,
+    registry,
+    session: preview,
+    capabilities: ["mutate"],
+  });
+  const provider = new DeterministicProvider({
+    script: options.script ?? scenario.goldenTrace,
+    providerId: "deterministic",
+    model: "deterministic-model",
+    clock,
+    sleep: clock.sleep,
+  });
+  const consent = suiteConsent(provider.providerId, provider.defaultModel);
+  const toolLog: ToolLogEntry[] = [];
+  const inspectionNames = new Set(inspector.contracts.map((c) => c.name));
+  let index = 0;
+  const onEvent = (event: AgentEvent): void => {
+    if (event.kind !== "tool") return;
+    toolLog.push({
+      index,
+      tool: event.tool,
+      callId: event.call.id,
+      ok: event.result.ok,
+      kind: inspectionNames.has(event.tool) ? "inspection" : "mutation",
+      ...(event.result.ok
+        ? {}
+        : {
+            errorCode: event.result.error.code,
+            errorFamily: event.result.error.family,
+          }),
+    });
+    index += 1;
+    options.onEvent?.(event);
+  };
+  const loopOptions: AgentLoopOptions = {
+    provider,
+    inspector,
+    mutator,
+    preview,
+    consent,
+    userPrompt: scenario.prompt,
+    clock,
+    sleep: clock.sleep,
+    ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
+    onEvent,
+    ...(options.isLiveCurrent === undefined
+      ? {}
+      : { isLiveCurrent: options.isLiveCurrent }),
+  };
+  const session = createAgentSession(loopOptions);
+  const inputHash = semanticHashOf(handle.store);
+  const beforeMetrics = occupiedMetrics(
+    beforeStore,
+    EVAL_IDS.volumeMain,
+    scenario.scanRegion,
+  );
+  const beforePreviews = renderPreviewEvidence(beforeStore);
+
+  const result = await session.run();
+  // Capture the staged proposal facts BEFORE apply (apply closes the
+  // preview and releases its counters).
+  const stagedCommands = result.ok ? result.stagedCommands : 0;
+  const voxelEstimate = result.ok ? preview.voxelEstimate : 0;
+  const usage = result.ok
+    ? result.usage
+    : { inputTokens: 0, outputTokens: 0 };
+  let applyOk = false;
+  let applyLabel: string | undefined;
+  if (result.ok) {
+    const applied = session.apply({ label: `AI eval: ${scenario.name}` });
+    applyOk = applied.ok;
+    applyLabel = applied.ok ? `AI eval: ${scenario.name}` : undefined;
+  }
+  const revisionAfter = handle.store.revision;
+  const historyAfter = bus.historySnapshot().past.length;
+  const afterMetrics = occupiedMetrics(
+    handle.store,
+    EVAL_IDS.volumeMain,
+    scenario.scanRegion,
+  );
+  const afterPreviews = renderPreviewEvidence(handle.store);
+  const afterIssues = structuralIssues(handle.store);
+  const scores = computeScores({
+    scenario,
+    runOk: result.ok,
+    runReason: result.ok ? undefined : result.reason,
+    applyOk,
+    toolLog,
+    rounds: result.ok ? result.rounds : 0,
+    toolCalls: result.ok ? result.toolCalls : toolLog.length,
+    commands: result.ok ? result.stagedCommands : 0,
+    before: beforeStore,
+    after: handle.store,
+    beforeMetrics,
+    afterMetrics,
+    beforePreviews,
+    afterPreviews,
+    limitErrorCode: result.ok ? undefined : errorCodeOf(result.error),
+  });
+
+  return {
+    scenarioId: scenario.id,
+    scenario,
+    versions: evaluationVersions({
+      scenarioPrompt: scenario.prompt,
+      fixtureVersion: scenario.fixtureVersion,
+      inputDocumentHash: inputHash,
+      providerId: provider.providerId,
+      model: provider.defaultModel,
+    }),
+    run: {
+      ok: result.ok,
+      state: result.state,
+      reason: result.ok ? undefined : result.reason,
+      errorCode: result.ok ? undefined : errorCodeOf(result.error),
+      rounds: result.ok ? result.rounds : 0,
+      toolCalls: result.ok ? result.toolCalls : toolLog.length,
+      stagedCommands,
+      voxelEstimate,
+      usage,
+      applyOk,
+      applyLabel,
+    },
+    scores,
+    toolLog,
+    integrity: {
+      revisionBefore,
+      revisionAfter,
+      historyBefore,
+      historyAfter,
+      partialCommit: !applyOk && revisionAfter !== revisionBefore,
+      zeroStateChangeOnFailure:
+        applyOk || revisionAfter === revisionBefore,
+    },
+    metrics: {
+      before: beforeMetrics,
+      after: afterMetrics,
+      structuralIssues: afterIssues,
+    },
+    previews: { before: beforePreviews, after: afterPreviews },
+    hashes: {
+      input: inputHash,
+      output: semanticHashOf(handle.store),
+    },
+  };
+}
+
+function errorCodeOf(error: Error): string | undefined {
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}

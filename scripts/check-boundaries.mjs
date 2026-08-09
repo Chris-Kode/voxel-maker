@@ -83,6 +83,16 @@ const allowedDependencies = {
   // boundary tests that stage proposals into a real preview session.
   skills: ["shared", "agent", "commands", "model", "document"],
   testkit: ["shared"],
+  evaluation: [
+    "shared",
+    "math",
+    "model",
+    "document",
+    "voxel",
+    "commands",
+    "agent",
+    "renderer",
+  ],
 };
 const packageOnlyAdapterPattern =
   /^(react|@react-three|@tauri-apps|@anthropic-ai|openai|node:(?:child_process|fs|http|https|net|path|worker_threads))(\/|$)/u;
