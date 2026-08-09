@@ -433,9 +433,27 @@ function AiDiffSummary({
         {String(diff.changedMaterialIds.length)} material
         {diff.changedMaterialIds.length === 1 ? "" : "s"} ·{" "}
         {String(diff.changedVolumeIds.length)} volume
-        {diff.changedVolumeIds.length === 1 ? "" : "s"}
+        {diff.changedVolumeIds.length === 1 ? "" : "s"} ·{" "}
+        {String(diff.changedAnimationIds.length)} clip
+        {diff.changedAnimationIds.length === 1 ? "" : "s"}
         {diff.truncated ? " · list truncated" : ""}
       </p>
+      {state.stagedClips.length > 0 ? (
+        <div className="ai-staged-clips">
+          <p>Staged overlay clips (playable before Apply):</p>
+          <ul>
+            {state.stagedClips.map((clip) => (
+              <li key={clip.animationId}>
+                {clip.name} · {String(clip.duration)}s · {clip.loop} ·{" "}
+                {String(clip.trackCount)} track
+                {clip.trackCount === 1 ? "" : "s"} ·{" "}
+                {String(clip.keyframeCount)} keyframe
+                {clip.keyframeCount === 1 ? "" : "s"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

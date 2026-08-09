@@ -120,6 +120,70 @@ const SUCCESS_SCRIPT: readonly DeterministicStep[] = [
   { text: "The proposal is ready for approval." },
 ];
 
+/** A deterministic rig+clip proposal script (plan S13.5, ticket #36). */
+const RIG_SCRIPT: readonly DeterministicStep[] = [
+  { text: "I will inspect the box.", toolCalls: [summaryCall()] },
+  {
+    text: "Rigging the child and staging a clip.",
+    toolCalls: [
+      {
+        id: "call_pivot",
+        name: "setNodePivot",
+        arguments: { nodeId: "node:ai:child", pivot: [0, 0, 0] },
+      },
+      {
+        id: "call_anim",
+        name: "createAnimation",
+        arguments: {
+          animationId: "anim:ai:test",
+          name: "AI Spin",
+          duration: 2,
+          loop: "loop",
+        },
+      },
+      {
+        id: "call_track",
+        name: "addTrack",
+        arguments: {
+          animationId: "anim:ai:test",
+          trackId: "track:ai:test",
+          targetNodeId: "node:ai:child",
+          interpolation: "linear",
+        },
+      },
+      {
+        id: "call_k0",
+        name: "setKeyframe",
+        arguments: {
+          animationId: "anim:ai:test",
+          trackId: "track:ai:test",
+          keyframeId: "keyframe:ai:test:0",
+          time: 0,
+          channel: "rotation",
+          value: [0, 0, 0, 1],
+        },
+      },
+      {
+        id: "call_k1",
+        name: "setKeyframe",
+        arguments: {
+          animationId: "anim:ai:test",
+          trackId: "track:ai:test",
+          keyframeId: "keyframe:ai:test:1",
+          time: 2,
+          channel: "rotation",
+          value: [0, 0, 0, -1],
+        },
+      },
+    ],
+  },
+  {
+    text: "Verifying the staged rig and clip.",
+    toolCalls: [summaryCall("call_summary2")],
+  },
+  { text: "The proposal is ready for approval." },
+];
+
 /** Virtual clock whose sleep advances synchronously. */
 class VirtualClock {
   #now = 0;
@@ -207,6 +271,54 @@ function flushAll(composition: DesktopComposition): void {
   }
   throw new Error("meshing queues did not drain");
 }
+
+describe("ai controller: overlay clip playback (plan S13.5)", () => {
+  it("exposes staged clip summaries and a read-only overlay clip before Apply", async () => {
+    const h = createHarness({ script: RIG_SCRIPT });
+    await h.composition.ai.refreshStatus();
+    await h.composition.ai.run("Rig the child and animate it.");
+    expect(h.composition.ai.state.phase).toBe("approve");
+    expect(h.composition.ai.state.stagedClips).toHaveLength(1);
+    const clip = h.composition.ai.state.stagedClips[0];
+    expect(clip?.animationId).toBe("anim:ai:test");
+    expect(clip?.name).toBe("AI Spin");
+    expect(clip?.duration).toBe(2);
+    expect(clip?.loop).toBe("loop");
+    expect(clip?.trackCount).toBe(1);
+    expect(clip?.keyframeCount).toBe(2);
+    // The staged overlay clip is readable for playback; the live session
+    // document does not contain it yet.
+    const overlay = h.composition.ai.overlayClip("anim:ai:test");
+    expect(overlay?.tracks[0]?.keyframes).toHaveLength(2);
+    expect(
+      h.composition.session.current?.store.getDocument().animations[
+        "anim:ai:test" as never
+      ],
+    ).toBeUndefined();
+    // After Apply the preview is released; overlay reads return undefined
+    // and the live document now owns the clip.
+    h.composition.ai.apply();
+    expect(h.composition.ai.state.phase).toBe("idle");
+    expect(h.composition.ai.overlayClip("anim:ai:test")).toBeUndefined();
+    expect(
+      h.composition.session.current?.store.getDocument().animations[
+        "anim:ai:test" as never
+      ],
+    ).toBeDefined();
+    h.dispose();
+  });
+
+  it("returns no staged clips after discard", async () => {
+    const h = createHarness({ script: RIG_SCRIPT });
+    await h.composition.ai.refreshStatus();
+    await h.composition.ai.run("Rig the child and animate it.");
+    expect(h.composition.ai.state.phase).toBe("approve");
+    h.composition.ai.discard();
+    expect(h.composition.ai.state.stagedClips).toEqual([]);
+    expect(h.composition.ai.overlayClip("anim:ai:test")).toBeUndefined();
+    h.dispose();
+  });
+});
 
 describe("ai controller", () => {
   it("reports unconfigured status and keeps manual editing functional", () => {
