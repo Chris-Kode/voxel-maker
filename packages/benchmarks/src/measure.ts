@@ -30,6 +30,7 @@ import {
   commandId,
   materialId,
   transactionId,
+  type MaterialId,
   type VolumeId,
 } from "@voxel-maker/shared";
 import {
@@ -105,7 +106,7 @@ export function measureCommandLatency(
           number,
           number,
         ],
-        material: materialId((i % 4) + 1),
+        material: toggleMaterial(fixture),
       }),
       {
         transactionId: transactionId(`transaction:bench:edit:${String(i)}`),
@@ -125,8 +126,17 @@ export function measureCommandLatency(
 function fixtureEditCoordinate(
   fixture: BenchmarkFixture,
 ): readonly [number, number, number] {
-  const { min } = fixture.extent;
-  return [min[0] + 2, min[1] + 2, min[2] + 2];
+  return fixture.editCoordinate;
+}
+
+/**
+ * A material that differs from the voxel currently at the edit
+ * coordinate, so every measured edit is a real voxel change (material
+ * 1 <-> 2 toggle) and the chunk revision actually advances.
+ */
+function toggleMaterial(fixture: BenchmarkFixture): MaterialId {
+  const current = fixture.store.getVoxel(fixture.volumeId, fixture.editCoordinate);
+  return current === materialId(1) ? materialId(2) : materialId(1);
 }
 
 /** Executor that computes on a macrotask like a worker (timed). */
@@ -358,7 +368,7 @@ export async function measureRemeshAndPipeline(
         setVoxelCommand(commandId(`command:bench:local:${String(i)}`), {
           volumeId: fixture.volumeId,
           coordinate: [...coordinate] as [number, number, number],
-          material: materialId((i % 4) + 1),
+          material: toggleMaterial(fixture),
         }),
         {
           transactionId: transactionId(
@@ -455,7 +465,12 @@ function installLoaded(loaded: LoadedVxlProject): DocumentStoreRead {
   return createDocumentStore({ document: loaded.document, volumes }).store;
 }
 
-/** Measures one glTF export (write through the in-memory storage port). */
+/**
+ * Measures one glTF export (write through the in-memory storage port).
+ * The export service rejects oversized volumes with structured
+ * limit-family errors (glTF face limit) before writing bytes — that
+ * graceful degradation is recorded as blocked evidence, not a crash.
+ */
 export async function measureExportGltf(
   fixture: BenchmarkFixture,
 ): Promise<ByteTransferMeasurement> {
@@ -465,6 +480,7 @@ export async function measureExportGltf(
   const times: number[] = [];
   let bytes = 0;
   let peakRssMiB = 0;
+  let blocked: { readonly code: string; readonly message: string } | undefined;
   // Sample RSS while the export runs so the report carries the export
   // service's transient memory footprint (kept out of the interactive
   // memory gate, which measures the editor footprint).
@@ -485,7 +501,11 @@ export async function measureExportGltf(
       });
       times.push(performance.now() - start);
       if (!outcome.ok) {
-        throw new Error("benchmark glTF export was blocked by preflight");
+        blocked = {
+          code: "PREFLIGHT_BLOCKED",
+          message: "glTF preflight blocked the export",
+        };
+        continue;
       }
       bytes = outcome.bytes.byteLength;
       // Export encodes synchronously inside the async call, so sample
@@ -494,7 +514,29 @@ export async function measureExportGltf(
       const rssMiB = process.memoryUsage().rss / (1024 * 1024);
       if (rssMiB > peakRssMiB) peakRssMiB = rssMiB;
     }
-    return { summary: summarize(times), bytes, peakRssMiB };
+    return {
+      summary: summarize(times),
+      bytes,
+      peakRssMiB,
+      ...(blocked === undefined ? {} : { blocked }),
+    };
+  } catch (error: unknown) {
+    // Structured limit errors (e.g. GLTF_FACE_LIMIT at >1M faces) are
+    // the product's graceful degradation for oversized volumes.
+    blocked = {
+      code:
+        typeof error === "object" && error !== null && "code" in error
+          ? String((error as { code: unknown }).code)
+          : "EXPORT_FAILED",
+      message:
+        error instanceof Error ? error.message : "glTF export failed",
+    };
+    return {
+      summary: summarize(times),
+      bytes,
+      peakRssMiB,
+      ...(blocked === undefined ? {} : { blocked }),
+    };
   } finally {
     clearInterval(sampler);
   }

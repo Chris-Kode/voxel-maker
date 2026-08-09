@@ -1,0 +1,81 @@
+name: Performance benchmarks
+
+on:
+  schedule:
+    # Nightly full benchmark (UTC); ad-hoc via workflow_dispatch.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "apps/bench-cli/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/benchmark.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  full-benchmark:
+    # Named hardware is recorded in the report (CPU model, platform,
+    # arch, cores, memory); the tier resolves to ci-smoke on this runner,
+    # so the scheduled run asserts smoke thresholds PLUS retained-trend
+    # regression detection on the same hardware class over time.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build benchmark tooling
+        run: pnpm --filter @voxel-maker/bench-cli build
+      - name: Fetch retained trends
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify origin/benchmark-trends >/dev/null 2>&1; then
+            git show origin/benchmark-trends:benchmarks/trends.json > benchmarks/trends.json
+            echo "trends baseline loaded: $(wc -l < benchmarks/trends.json) lines"
+          else
+            echo "no trend baseline yet"
+          fi
+      - name: Run full benchmark
+        run: >-
+          node apps/bench-cli/dist/cli.js
+          --tier auto --full --samples 100 --save-load-runs 5
+          --preview-samples 8 --animation-frames 60
+          --json benchmarks/out/full.json --trends benchmarks/trends.json
+          --no-progress
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-full-${{ github.run_id }}
+          path: |
+            benchmarks/out/full.json
+            benchmarks/trends.json
+          if-no-files-found: error
+      - name: Publish retained trends
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse --verify origin/benchmark-trends >/dev/null 2>&1; then
+            git checkout -B benchmark-trends origin/benchmark-trends
+          else
+            git checkout --orphan benchmark-trends
+            git rm -rf --quiet . || true
+          fi
+          mkdir -p benchmarks
+          # The gitignored trends file survives the branch switch in the
+          # working tree; force-add it so it becomes the retained history.
+          git add -f benchmarks/trends.json
+          git commit -m "benchmark trends $(date -u +%Y-%m-%d)" || echo "no trend change"
+          git push origin benchmark-trends

@@ -220,8 +220,9 @@ async function main(): Promise<number> {
       console.log(`trend baseline: ${history.rows[history.rows.length - 1]?.date ?? "none"}`);
       for (const comparison of comparisons) {
         const flag = comparison.regressed ? " REGRESSED" : "";
+        const unit = comparison.key.endsWith("rssMiB") ? "MiB" : "ms";
         console.log(
-          `[${comparison.regressed ? "FAIL" : "ok"}] ${comparison.key}: ${formatNumber(comparison.previous, "ms")} -> ${formatNumber(comparison.current, "ms")} (${(comparison.deltaPct * 100).toFixed(1)}%)${flag}`,
+          `[${comparison.regressed ? "FAIL" : "ok"}] ${comparison.key}: ${formatNumber(comparison.previous, unit)} -> ${formatNumber(comparison.current, unit)} (${(comparison.deltaPct * 100).toFixed(1)}%)${flag}`,
         );
       }
       if (regressions.length > 0) exitCode = 1;

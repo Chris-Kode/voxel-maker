@@ -52,6 +52,12 @@ export interface ByteTransferMeasurement {
   readonly bytes: number;
   /** Peak process RSS observed while the operation ran (MiB). */
   readonly peakRssMiB: number;
+  /**
+   * Structured rejection evidence when the export service refused the
+   * volume (e.g. the glTF face limit): graceful degradation is recorded,
+   * not hidden.
+   */
+  readonly blocked?: { readonly code: string; readonly message: string };
 }
 
 /** Process memory snapshot (MiB). */

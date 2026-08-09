@@ -5,6 +5,7 @@ import {
   BENCHMARK_SCENE_KINDS,
   BENCHMARK_SIZES,
   createBenchmarkFixture,
+  type BenchmarkFixture,
   type BenchmarkSceneKind,
 } from "./fixtures.js";
 import {
@@ -111,6 +112,11 @@ export async function runBenchmarks(
     sparse: {},
     checkerboard: {},
   };
+  // Phase 1 — interactive footprint: every scene is built and measured
+  // (save/load, command latency, remesh + frame pipeline) BEFORE any
+  // transient-heavy operation runs, so export/preview garbage from one
+  // scene can never pollute another scene's memory gate.
+  const fixtures: BenchmarkFixture[] = [];
   for (const kind of kinds) {
     for (const size of sizes) {
       progress(options.onProgress, `building fixture ${kind} ${String(size)}`);
@@ -121,18 +127,16 @@ export async function runBenchmarks(
         options.onProgress,
         `  built ${String(fixture.occupiedCount)} voxels in ${buildMs.toFixed(1)} ms`,
       );
+      fixtures.push(fixture);
 
-      // Order matters: save/load, export, and preview measure the
-      // pristine fixture; command latency and the remesh pipeline are
-      // the last measurements because they mutate the store.
       progress(options.onProgress, `  measuring save/load`);
       const saveLoad = measureSaveLoad(fixture, saveLoadRuns);
 
       // The interactive memory gate measures the editor footprint: the
       // open fixture plus installed meshes. Export and preview allocate
       // large transient buffers, so their memory is reported separately
-      // (`export.peakRssMiB`, preview documented) and never distorts the
-      // ADR-0008 open/navigate memory gate.
+      // (`export.peakRssMiB`) and never distorts the ADR-0008
+      // open/navigate memory gate.
       const snapshots: MemorySnapshot[] = [memorySnapshot()];
 
       progress(options.onProgress, `  measuring command latency`);
@@ -142,25 +146,11 @@ export async function runBenchmarks(
       const remesh = await measureRemeshAndPipeline(fixture, samples);
       snapshots.push(memorySnapshot());
 
-      const exportMeasurement =
-        full || size === 100_000
-          ? await measureExportGltf(fixture)
-          : { summary: emptySummary(), bytes: 0, peakRssMiB: 0 };
-
-      // Preview renders are software-rasterized: measure them on the 100k
-      // interactive target only (larger scenes gate on the frame pipeline).
-      const preview =
-        size === 100_000
-          ? measurePreviewLatency(fixture, previewSamples, previewSize)
-          : undefined;
-
+      // Composite headless input-to-preview proxy: commit + remesh +
+      // flush + (preview, added in phase 2). Preview is rendered in
+      // phase 2; the composite is finalized there.
       const inputToPreview95Ms =
-        preview === undefined
-          ? command.p95 + remesh.remesh.p95 + remesh.flush.p95
-          : command.p95 +
-            remesh.remesh.p95 +
-            remesh.flush.p95 +
-            preview.p95;
+        command.p95 + remesh.remesh.p95 + remesh.flush.p95;
 
       scenes[kind][String(size)] = {
         buildMs,
@@ -172,11 +162,54 @@ export async function runBenchmarks(
         meshing: remesh.meshing,
         save: saveLoad.save,
         load: saveLoad.load,
-        export: exportMeasurement,
-        ...(preview === undefined ? {} : { preview }),
+        export: { summary: emptySummary(), bytes: 0, peakRssMiB: 0 },
         inputToPreview95Ms,
         memory: peakMemory(snapshots),
       } satisfies SceneMeasurements;
+    }
+  }
+
+  // Phase 2 — transient operations: glTF export and software preview
+  // renders, which allocate large short-lived buffers. Export peak RSS
+  // is sampled during the export itself; preview latency is measured on
+  // the 100k interactive target only (larger scenes gate on the frame
+  // pipeline).
+  for (const kind of kinds) {
+    for (const size of sizes) {
+      const fixture = fixtures.find(
+        (candidate) =>
+          candidate.kind === kind && candidate.targetOccupied === size,
+      );
+      if (fixture === undefined) continue;
+      progress(options.onProgress, `  exporting ${kind} ${String(size)}`);
+      const current = scenes[kind][String(size)];
+      if (current === undefined) continue;
+      // Export intermediates scale with the scene's voxel count (the
+      // export service builds per-voxel box geometry before the byte
+      // limits apply), so large exports are measured only when the
+      // named machine can hold them; otherwise they are skipped and
+      // reported with zero samples. 100k is always exported (the
+      // interactive reference size).
+      const estimatedExportBytes = size * 24_000;
+      const canHoldExport =
+        size === 100_000 ||
+        (full && hardware.totalMemoryGiB * 1024 ** 3 >= estimatedExportBytes);
+      const exportMeasurement = canHoldExport
+        ? await measureExportGltf(fixture)
+        : { summary: emptySummary(), bytes: 0, peakRssMiB: 0 };
+      scenes[kind][String(size)] = { ...current, export: exportMeasurement };
+
+      if (size === 100_000) {
+        progress(options.onProgress, `  rendering preview ${kind}`);
+        const preview = measurePreviewLatency(
+          fixture,
+          previewSamples,
+          previewSize,
+        );
+        const withExport = scenes[kind][String(size)];
+        if (withExport === undefined) continue;
+        scenes[kind][String(size)] = { ...withExport, preview };
+      }
     }
   }
 

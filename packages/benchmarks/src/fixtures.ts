@@ -171,6 +171,12 @@ export interface BenchmarkFixture {
   readonly volumeId: VolumeId;
   /** Canonical semantic hash of the committed fixture. */
   readonly semanticHash: string;
+  /**
+   * A coordinate that is occupied in every fixture kind, so a one-voxel
+   * edit REPLACES a voxel and never exceeds the occupied-voxel limit
+   * (which is exactly 1M at the 1M size). Deterministic per fixture.
+   */
+  readonly editCoordinate: readonly [number, number, number];
 }
 
 /** Deterministic material for a scene voxel (1..4, by coordinate hash). */
@@ -236,13 +242,18 @@ export function createBenchmarkFixture(
   const { store, writeCapability } = handle;
   const staged = store.stageVolume(ids.volumeId);
   if (staged === undefined) throw new Error("benchmark volume missing");
-  for (const [x, y, z] of sceneEntries(kind, targetOccupied)) {
+  const entries = sceneEntries(kind, targetOccupied);
+  for (const [x, y, z] of entries) {
     staged.setVoxel(
       [x, y, z],
       materialFor(x, y, z, ids),
       writeCapability,
     );
   }
+  // The first generated entry is occupied in every kind and stable per
+  // seed; it becomes the fixture's localized edit coordinate.
+  const first = entries[0];
+  if (first === undefined) throw new Error("benchmark scene is empty");
   const event: DocumentCommitted = {
     revisionBefore: store.revision,
     revisionAfter: store.revision + 1,
@@ -284,6 +295,7 @@ export function createBenchmarkFixture(
     // Hash the COMMITTED state (revision 1), which is what save/load
     // round trips must reproduce.
     semanticHash: canonicalAssetSemanticHash(store.getDocument(), volumes),
+    editCoordinate: [first[0], first[1], first[2]],
   };
 }
 

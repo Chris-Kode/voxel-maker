@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   ANIMATION_TRACK_COUNTS,
-  BENCHMARK_EDIT_COORDINATE,
   BENCHMARK_SCENE_KINDS,
   createAnimationScaleDocument,
   createBenchmarkFixture,
@@ -81,10 +80,10 @@ describe("createBenchmarkFixture", () => {
     expect(again.store.revision).toBe(1);
   });
 
-  it("the localized edit coordinate is inside every extent", () => {
+  it("the localized edit coordinate is inside every extent and occupied", () => {
     for (const kind of BENCHMARK_SCENE_KINDS) {
       const fixture = createBenchmarkFixture(kind, 100_000);
-      const [x, y, z] = BENCHMARK_EDIT_COORDINATE;
+      const [x, y, z] = fixture.editCoordinate;
       const { min, max } = fixture.extent;
       expect(x).toBeGreaterThanOrEqual(min[0]);
       expect(x).toBeLessThan(max[0]);
@@ -92,6 +91,7 @@ describe("createBenchmarkFixture", () => {
       expect(y).toBeLessThan(max[1]);
       expect(z).toBeGreaterThanOrEqual(min[2]);
       expect(z).toBeLessThan(max[2]);
+      expect(fixture.store.getVoxel(fixture.volumeId, fixture.editCoordinate)).not.toBe(0);
     }
   });
 

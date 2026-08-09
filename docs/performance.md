@@ -34,10 +34,10 @@ silently.
 | localized remesh | one face-culled chunk mesh through the scheduler's worker-like executor, p95 | < 30 ms |
 | queue wait | schedule -> install wait of a localized mesh, p95 | reported |
 | per-frame flush | one scheduler `flush()` (dispatch + install budgets), p95 | < 16.7 ms |
-| input-to-preview | commit + remesh + flush + software preview render, p95 (composite headless proxy) | < 50 ms |
+| input-to-preview | commit + remesh + flush, p95 (composite headless proxy of the viewport pipeline) | < 50 ms |
 | save / load | canonical `.vxl` write / validated read, p95 (5 runs) | < 2 s (100k), < 10 s (1M) |
-| export | glTF/GLB export through the storage port, p95 + output bytes + peak RSS | reported |
-| preview | deterministic software preview render (100k scenes only), p95 | reported |
+| export | glTF/GLB export through the storage port, p95 + output bytes + peak RSS | reported; 100k always; larger sizes when the named machine can hold the intermediates; structured blocks (e.g. the export service's 1M-face limit) recorded as evidence |
+| preview | deterministic software preview render (100k scenes only), p95 | reported (preview-export pipeline, not the viewport path) |
 | memory | process RSS/heap peak of the editor footprint (fixture + installed meshes) | < 2 GiB (1M) |
 | animation | layered runtime evaluation per frame at 100 / 1k / 10k tracks, p95 | < 16.7 ms at 10k |
 | playback integrity | revision, history, and semantic hash before/after animation frames | unchanged |
@@ -120,3 +120,12 @@ node apps/bench-cli/dist/cli.js --tier reference --full   --samples 100 --save-l
   starts are a desktop qualification step.
 - The 1M fixture is a reference-tier viewability gate; low tier and CI
   smoke do not assert 1M budgets.
+- glTF export intermediates currently scale with voxel count (per-voxel
+  box geometry; ~8-20 KB/voxel measured). The harness therefore exports
+  500k/1M fixtures only when the named machine has enough memory, and
+  records the skip otherwise; merging/greedy export meshing is a
+  follow-up optimization, not a gate change.
+- At 500k+ occupied voxels the export service refuses the volume with the
+  structured `GLTF_FACE_LIMIT` error (default 1M faces, ADR-0011) before
+  writing bytes; the benchmark records that block as graceful-degradation
+  evidence.

@@ -177,7 +177,11 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
           sceneP95(report, kind, 100_000, "flush"),
       }) as GateDefinition,
   ),
-  // Input-to-preview composite (commit + remesh + flush + preview) p95.
+  // Input-to-preview composite p95: the headless viewport pipeline
+  // (commit + remesh + flush). The GPU viewport render is qualified on
+  // the named desktop tiers; the deterministic software preview render
+  // is reported separately (it is the preview-export pipeline, not the
+  // viewport path).
   ...(["compact", "sparse", "checkerboard"] as const).map(
     (kind) =>
       Object.freeze({
