@@ -26,6 +26,7 @@ import {
   type ToolActionResult,
   type ToolHost,
   type ToolModifiers,
+  type NodeTransformTool,
   type NodeTransformToolHost,
   type TransformTool,
 } from "@voxel-maker/editor";
@@ -123,7 +124,7 @@ export interface ViewportController {
   /** Cancels the active gesture; semantic state is untouched. */
   toolPointerCancel(): void;
   /** The headless transform gizmo tool (plan S7.8, ticket #20). */
-  readonly transformTool: TransformTool;
+  readonly transformTool: NodeTransformTool;
   /** The rendered gizmo overlay (move/rotate/scale handles). */
   readonly gizmo: GizmoOverlay;
   /**
@@ -172,7 +173,7 @@ class ViewportControllerImpl implements ViewportController {
   readonly #rig: CameraRig;
   readonly #overlays: OverlayManager;
   readonly #gizmo: GizmoOverlay;
-  readonly #transform: TransformTool;
+  readonly #transform: NodeTransformTool;
   readonly #select: ReturnType<typeof createSelectTool>;
   readonly #pencil: StrokeTool;
   readonly #erase: StrokeTool;
@@ -421,7 +422,7 @@ class ViewportControllerImpl implements ViewportController {
     if (tool !== undefined) tool.pointerCancel();
   }
 
-  get transformTool(): TransformTool {
+  get transformTool(): NodeTransformTool {
     return this.#transform;
   }
 

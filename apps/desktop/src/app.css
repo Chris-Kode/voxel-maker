@@ -660,14 +660,11 @@ body {
   font-size: 12px;
 }
 
-  padding: 6px 10px;
-  font-size: 12px;
-}
-
 .gizmo-controls button.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
 
 .toolbar .transform-axes {
   display: flex;
@@ -733,4 +730,3 @@ body {
   color: var(--muted);
   font-size: 12px;
 }
-

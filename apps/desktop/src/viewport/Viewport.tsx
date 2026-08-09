@@ -287,8 +287,7 @@ export function Viewport({
           // cannot commit it; then cancel a pending transform preview
           // (rotate/mirror/delete) without touching the selection; only
           // a bare Escape clears the selection.
-          if (controller.transformTool.active)
-            controller.gizmoPointerCancel();
+          if (controller.transformTool.active) controller.gizmoPointerCancel();
           if (controller.toolActive) controller.toolPointerCancel();
           else if (controller.transformApplyPending)
             controller.transformCancel();

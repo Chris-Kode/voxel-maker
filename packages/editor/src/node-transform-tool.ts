@@ -799,6 +799,8 @@ function rotateWorldMatrix(
 }
 
 /** Creates the transform gizmo tool for one composition. */
-export function createNodeTransformTool(host: NodeTransformToolHost): NodeTransformTool {
+export function createNodeTransformTool(
+  host: NodeTransformToolHost,
+): NodeTransformTool {
   return new TransformToolImpl(host);
 }

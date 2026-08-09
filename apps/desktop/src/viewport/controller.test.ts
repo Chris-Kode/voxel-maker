@@ -274,12 +274,12 @@ describe("viewport controller", () => {
     composition.dispose();
   });
 
-  it("drives a coalesced gizmo drag from a projected handle (plan S7.8)", () => {
+  it("drives a coalesced gizmo drag from a projected handle (plan S7.8)", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
     });
-    openFixture(composition);
+    await openFixture(composition);
     const viewport = composition.viewport;
     viewport.setViewportSize(800, 600);
     viewport.setStandardView("front");
@@ -336,12 +336,12 @@ describe("viewport controller", () => {
     composition.dispose();
   });
 
-  it("cancels a gizmo drag and restores the pre-drag transform", () => {
+  it("cancels a gizmo drag and restores the pre-drag transform", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
     });
-    openFixture(composition);
+    await openFixture(composition);
     const viewport = composition.viewport;
     viewport.setViewportSize(800, 600);
     viewport.setStandardView("front");
@@ -371,12 +371,12 @@ describe("viewport controller", () => {
     composition.dispose();
   });
 
-  it("ignores gizmo presses without a node selection", () => {
+  it("ignores gizmo presses without a node selection", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
     });
-    openFixture(composition);
+    await openFixture(composition);
     composition.viewport.setViewportSize(800, 600);
     composition.viewport.focus();
     expect(composition.viewport.gizmo.group.visible).toBe(false);
