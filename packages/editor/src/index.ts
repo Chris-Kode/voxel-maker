@@ -14,6 +14,12 @@ export {
   type EditorStoreSnapshot,
 } from "./runtime.js";
 export {
+  countMaterialUsage,
+  defaultNewMaterialPayload,
+  materialUpdateChanges,
+  type MaterialFieldChanges,
+} from "./materials-panel.js";
+export {
   createStrokeTool,
   type StrokeTool,
   type StrokeToolOptions,
