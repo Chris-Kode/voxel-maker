@@ -21,7 +21,6 @@ const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9]{20,255}\b/u,
   /\bxox[baprs]-[A-Za-z0-9-]{10,255}\b/u,
   /\bAIza[0-9A-Za-z_-]{35}\b/u,
-  /\bAKIA[0-9A-Z]{16}\b/u,
 ];
 
 /** File names that must never be tracked (regardless of content). */

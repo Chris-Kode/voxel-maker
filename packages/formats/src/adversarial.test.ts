@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceError } from "@voxel-maker/shared";
+import {
+  createSeededRng,
+  mutateBytes,
+  randomBytes,
+} from "@voxel-maker/testkit";
 import { createDocument } from "@voxel-maker/model";
 import { encodeVox, parseVox } from "./vox.js";
 import {
@@ -28,39 +33,17 @@ import { encodePng } from "./png.js";
  */
 
 // ---------------------------------------------------------------------------
-// Deterministic PRNG (xorshift32) and corpus builders
+// Corpus builders (seeded RNG helpers live in @voxel-maker/testkit)
 // ---------------------------------------------------------------------------
 
-export function createRng(seed: number): () => number {
-  let state = seed >>> 0;
-  if (state === 0) state = 0x9e37_79b9;
-  return () => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return (state >>> 0) / 0x1_0000_0000;
-  };
+interface StructuredResult<T> {
+  readonly ok: true;
+  readonly value: T;
 }
 
-function randomBytes(rng: () => number, size: number): Uint8Array {
-  const out = new Uint8Array(size);
-  for (let i = 0; i < size; i += 1) out[i] = Math.floor(rng() * 256);
-  return out;
-}
-
-/** Flips up to `count` random bytes of `bytes` (returns a copy). */
-function mutate(
-  bytes: Uint8Array,
-  rng: () => number,
-  count: number,
-): Uint8Array {
-  const out = bytes.slice();
-  const flips = 1 + Math.floor(rng() * count);
-  for (let i = 0; i < flips; i += 1) {
-    out[Math.floor(rng() * out.byteLength)] = Math.floor(rng() * 256);
-  }
-  return out;
-}
+type StructuredOutcome<T> =
+  | StructuredResult<T>
+  | { readonly ok: false; readonly error: WorkspaceError };
 
 /** Asserts structured failure or success; returns the outcome for checks. */
 function structured<T>(fn: () => T): StructuredOutcome<T> {
@@ -79,15 +62,6 @@ function structured<T>(fn: () => T): StructuredOutcome<T> {
     return { ok: false, error };
   }
 }
-
-interface StructuredResult<T> {
-  readonly ok: true;
-  readonly value: T;
-}
-
-type StructuredOutcome<T> =
-  | StructuredResult<T>
-  | { readonly ok: false; readonly error: WorkspaceError };
 
 /** Narrows a structured outcome to its error; throws when it succeeded. */
 function failure<T>(outcome: StructuredOutcome<T>): WorkspaceError {
@@ -247,7 +221,7 @@ function localOffsetOf(bytes: Uint8Array, index: number): number {
 // ---------------------------------------------------------------------------
 
 describe("fuzz: random bytes never crash a reader", () => {
-  const rng = createRng(0x44_f0_0001);
+  const rng = createSeededRng(0x44_f0_0001);
   const sizes = [
     0, 1, 2, 3, 4, 5, 8, 12, 16, 22, 30, 31, 46, 64, 100, 128, 256, 512, 777,
     1024, 2048, 4096,
@@ -289,7 +263,9 @@ describe("fuzz: random bytes never crash a reader", () => {
       new TextEncoder().encode("hello world"),
     );
     for (let i = 0; i < 200; i += 1) {
-      structured(() => readZipArchive(mutate(valid, rng, 8), tinyZipLimits));
+      structured(() =>
+        readZipArchive(mutateBytes(valid, rng, 8), tinyZipLimits),
+      );
     }
     for (let offset = 0; offset <= valid.byteLength; offset += 1) {
       structured(() => readZipArchive(valid.slice(0, offset), tinyZipLimits));
@@ -309,7 +285,7 @@ describe("fuzz: random bytes never crash a reader", () => {
     });
     expect(structured(() => parseVox(valid)).ok).toBe(true);
     for (let i = 0; i < 200; i += 1) {
-      structured(() => parseVox(mutate(valid, rng, 8)));
+      structured(() => parseVox(mutateBytes(valid, rng, 8)));
     }
     for (let offset = 0; offset <= valid.byteLength; offset += 1) {
       structured(() => parseVox(valid.slice(0, offset)));
@@ -749,7 +725,7 @@ describe("adversarial .vxl container", () => {
   });
 
   it("stays structured when every byte of a valid container is flipped", () => {
-    const rng = createRng(0x44_f0_0002);
+    const rng = createSeededRng(0x44_f0_0002);
     const valid = writeVxlProject({
       document: createDocument({
         documentId: "document:adversarial:1" as never,
@@ -776,7 +752,7 @@ describe("adversarial .vxl container", () => {
       }),
     });
     for (let i = 0; i < 250; i += 1) {
-      structured(() => readVxlProject(mutate(valid, rng, 6)));
+      structured(() => readVxlProject(mutateBytes(valid, rng, 6)));
     }
     for (let offset = 0; offset <= valid.byteLength; offset += 1) {
       structured(() => readVxlProject(valid.slice(0, offset)));

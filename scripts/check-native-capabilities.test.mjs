@@ -116,6 +116,20 @@ test("a widened capability permission fails the gate", async () => {
   assert.ok(problems.some((problem) => problem.includes("forbidden prefix")));
 });
 
+test("a second capability file is audited too (Tauri merges all files)", async () => {
+  const root = await tree();
+  await writeFile(
+    join(root, "apps/desktop/src-tauri/capabilities/extra.json"),
+    JSON.stringify({
+      identifier: "extra",
+      description: "extra",
+      permissions: ["shell:allow-open"],
+    }),
+  );
+  const problems = await inspectNativeCapabilities(root);
+  assert.ok(problems.some((problem) => problem.includes("shell:allow-open")));
+});
+
 test("a filesystem permission fails the gate", async () => {
   const root = await tree({
     capabilities: {

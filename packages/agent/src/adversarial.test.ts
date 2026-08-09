@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceError } from "@voxel-maker/shared";
 import {
-  MAX_STREAM_BUFFER_BYTES,
   MAX_TOOL_ARGUMENT_BYTES,
   MAX_TOOL_CALLS_PER_STREAM,
   OpenAIProvider,
@@ -83,13 +82,11 @@ describe("adversarial provider stream", () => {
     expect(errorCodes(events)).toContain("STREAM_LIMIT_EXCEEDED");
   });
 
-  it("caps a single oversized SSE line", async () => {
+  it("caps a single oversized SSE line below the buffer cap", async () => {
+    // 2 MiB in one line: under the 8 MiB buffer cap, over the 1 MiB
+    // per-line cap, so the LINE cap is what fires.
     const events = await collectStream(
-      sseFetch([
-        `data: ${"y".repeat(MAX_STREAM_BUFFER_BYTES + 1)}
-
-`,
-      ]),
+      sseFetch([`data: ${"y".repeat(2 * 1024 * 1024)}\n\n`]),
     );
     expect(errorCodes(events)).toContain("STREAM_LIMIT_EXCEEDED");
   });
@@ -349,6 +346,141 @@ describe("adversarial redaction", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(WorkspaceError);
       expect((error as WorkspaceError).code).toBe("LIMIT_EXCEEDED");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Loop-level adversarial cases: hostile provider usage trips time/cost caps
+// ---------------------------------------------------------------------------
+
+import { CommandBus } from "@voxel-maker/commands";
+import { createInspectionStore } from "./fixtures.js";
+import { createInspector } from "./inspector.js";
+import { createMutator } from "./mutator.js";
+import { createPreviewSession, previewSessionId } from "./preview.js";
+import { createPreviewRegistry } from "./registry.js";
+import {
+  DeterministicProvider,
+  type DeterministicStep,
+} from "./provider/deterministic.js";
+import { DISCLOSURE_CATEGORIES, createConsent } from "./provider/consent.js";
+import type { AgentLoopOptions, AgentRunResult } from "./agent/loop.js";
+import { createAgentSession } from "./agent/loop.js";
+
+/** Virtual clock whose sleep advances synchronously. */
+class VirtualClock {
+  #now = 0;
+  now = (): number => this.#now;
+  sleep = (ms: number): Promise<void> => {
+    this.#now += ms;
+    return Promise.resolve();
+  };
+}
+
+const CONSENT = createConsent({
+  providerId: "deterministic",
+  model: "deterministic-model",
+  categories: DISCLOSURE_CATEGORIES,
+  consentedAt: 0,
+  expiresAt: 1_000_000_000_000,
+});
+
+function loopHarness() {
+  const { handle } = createInspectionStore();
+  const registry = createPreviewRegistry();
+  const bus = new CommandBus(handle.store, registry, handle.writeCapability);
+  const clock = new VirtualClock();
+  const provider = new DeterministicProvider({
+    script: [],
+    clock,
+    sleep: clock.sleep,
+  });
+  const makeSession = (
+    script: readonly DeterministicStep[],
+    options: Partial<AgentLoopOptions> = {},
+  ) => {
+    const session = createPreviewSession({
+      live: handle.store,
+      applyBus: bus,
+      sessionId: previewSessionId("preview:adversarial:loop"),
+    });
+    const inspector = createInspector({
+      store: session,
+      capabilities: ["inspect"],
+    });
+    const mutator = createMutator({
+      store: session,
+      registry,
+      session,
+      capabilities: ["mutate"],
+    });
+    provider.setScript(script);
+    return createAgentSession({
+      provider,
+      inspector,
+      mutator,
+      preview: session,
+      consent: CONSENT,
+      userPrompt: "Make it bigger.",
+      clock,
+      sleep: clock.sleep,
+      ...options,
+    });
+  };
+  return { bus, clock, provider, makeSession };
+}
+
+function runErr(
+  result: AgentRunResult,
+): Extract<AgentRunResult, { ok: false }> {
+  expect(result.ok).toBe(false);
+  return result as Extract<AgentRunResult, { ok: false }>;
+}
+
+describe("adversarial agent loop: hostile provider usage", () => {
+  it("a cost blowup in provider usage terminates the run with a limit error", async () => {
+    const h = loopHarness();
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "I will inspect.",
+        toolCalls: [{ id: "c1", name: "inspectSummary", arguments: {} }],
+      },
+      {
+        text: "Reporting huge usage.",
+        usage: { inputTokens: 1, outputTokens: 1, estimatedCostUsd: 999 },
+      },
+    ];
+    const session = h.makeSession(script, {
+      budgets: { maxEstimatedCostUsd: 1 },
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    expect(session.preview.closed).toBe(true);
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({
+        resource: "estimatedCostUsd",
+      });
+    }
+  });
+
+  it("a token blowup in provider usage terminates the run with a limit error", async () => {
+    const h = loopHarness();
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "I will inspect.",
+        toolCalls: [{ id: "c1", name: "inspectSummary", arguments: {} }],
+      },
+      {
+        text: "Reporting huge usage.",
+        usage: { inputTokens: 10_000_000, outputTokens: 0 },
+      },
+    ];
+    const session = h.makeSession(script, { budgets: { maxTokens: 1000 } });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({ resource: "tokens" });
     }
   });
 });

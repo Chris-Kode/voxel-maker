@@ -8,8 +8,9 @@ This document is the single security reference for the editor. It names
 every trust seam, the threats at each seam, the control that addresses
 each threat (with the code or document that implements it), and the
 residual risk. A change that touches a seam must update this document and
-the matching adversarial suite; the release gate `check:security` fails
-when an enforced invariant is not represented.
+the matching adversarial suite; the release threat-model review (S17.6)
+re-checks that every enforced invariant is still represented here and in
+the gates.
 
 ## Trust model
 
@@ -54,14 +55,14 @@ when an enforced invariant is not represented.
 
 | Domain | Limits | Location |
 |---|---|---|
-| ZIP archive | 4096 entries; per-entry ≤ 4 GiB format cap; total ≤ 4 GiB; ratio and path preflight | `packages/formats/src/zip.ts` |
+| ZIP archive | 4096 entries; 1 GiB per entry; 2 GiB total; ratio and path preflight (DEFAULT_ZIP_ARCHIVE_LIMITS) | `packages/formats/src/zip.ts` |
 | VOX parse | file bytes, chunk count, per-model voxels, total voxels, unknown-chunk bytes | `packages/formats/src/vox.ts` |
 | Document | node/material/clip counts, metadata depth/size, coordinates, volume caps | `packages/model` limits; `packages/voxel` volume limits |
 | Command | 1024 commands/transaction; 1 MiB payload; 16 MiB envelope; 512 history entries | `packages/commands/src/types.ts` |
 | Journal | frame bytes, journal bytes | `packages/storage/src/journal.ts` |
 | Agent session | 16 rounds, 64 tool calls, 1024 commands, 128k tokens, 600 s, $5, 4 MiB output, 12 images, 3 visual iterations | `packages/agent/src/agent/budgets.ts` |
 | Inspection | 64 KiB response, 500 page, 32 hierarchy depth, 4096 ray steps | `packages/agent/src/limits.ts` |
-| Provider stream | request timeout; stream byte cap; per-line cap; per-tool-call argument cap; tool-call count cap; malformed/deep JSON maps to structured errors; schema walker depth cap | `packages/agent/src/provider/openai.ts`, `packages/agent/src/schema.ts` |
+| Provider stream | request timeout; 8 MiB accumulated byte cap; 1 MiB per-line cap; 256 KiB per-tool-call argument cap; 128 tool-call count cap (all byte-accurate UTF-8); malformed/deep JSON maps to structured errors; schema walker depth cap | `packages/agent/src/provider/openai.ts`, `packages/agent/src/schema.ts` |
 
 ## Hostile-input invariants
 
@@ -113,3 +114,7 @@ when an enforced invariant is not represented.
   ADR-0011 native locking).
 - No updater exists in v1; the updater seam becomes active only with the
   S17.10 signed-update work, which requires its own review.
+- Cargo-side supply-chain gates (`cargo audit`, crate license review) and
+  SBOM generation require the Rust toolchain and are release-time gates
+  (S17.6/S17.14), not PR CI gates: the PR CI gates cover npm licenses,
+  npm advisories, boundaries, and checked-in secrets (`check:security`).

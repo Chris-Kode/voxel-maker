@@ -6,6 +6,11 @@ import {
 } from "@voxel-maker/shared";
 import { crc32Hex } from "@voxel-maker/formats";
 import {
+  createSeededRng,
+  mutateBytes,
+  randomBytes,
+} from "@voxel-maker/testkit";
+import {
   decodeJournalFrames,
   encodeJournalFrame,
   encodeJournalHeader,
@@ -33,38 +38,8 @@ import {
  */
 
 // ---------------------------------------------------------------------------
-// Deterministic PRNG (xorshift32) and corpus builders
+// Corpus builders (seeded RNG helpers live in @voxel-maker/testkit)
 // ---------------------------------------------------------------------------
-
-function createRng(seed: number): () => number {
-  let state = seed >>> 0;
-  if (state === 0) state = 0x9e37_79b9;
-  return () => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return (state >>> 0) / 0x1_0000_0000;
-  };
-}
-
-function randomBytes(rng: () => number, size: number): Uint8Array {
-  const out = new Uint8Array(size);
-  for (let i = 0; i < size; i += 1) out[i] = Math.floor(rng() * 256);
-  return out;
-}
-
-function mutate(
-  bytes: Uint8Array,
-  rng: () => number,
-  count: number,
-): Uint8Array {
-  const out = bytes.slice();
-  const flips = 1 + Math.floor(rng() * count);
-  for (let i = 0; i < flips; i += 1) {
-    out[Math.floor(rng() * out.byteLength)] = Math.floor(rng() * 256);
-  }
-  return out;
-}
 
 const IDENTITY = journalIdentity({
   recoverySessionId: "session:adversarial:0001" as never,
@@ -180,7 +155,7 @@ function decodeOrThrow(bytes: Uint8Array): DecodedJournal {
 // ---------------------------------------------------------------------------
 
 describe("fuzz: recovery journal decoding never crashes", () => {
-  const rng = createRng(0x44_f1_0001);
+  const rng = createSeededRng(0x44_f1_0001);
 
   it("stays structured over random bytes", () => {
     for (const size of [0, 1, 4, 8, 12, 16, 64, 128, 512, 1024, 2048]) {
@@ -200,7 +175,7 @@ describe("fuzz: recovery journal decoding never crashes", () => {
   it("stays structured over mutated valid journals", () => {
     const valid = buildJournal(6);
     for (let i = 0; i < 300; i += 1) {
-      const bytes = mutate(valid, rng, 6);
+      const bytes = mutateBytes(valid, rng, 6);
       try {
         const decoded = decodeJournalFrames(bytes);
         // Frames that survived mutation must still be complete and valid.

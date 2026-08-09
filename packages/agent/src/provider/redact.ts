@@ -1,4 +1,8 @@
-import { WorkspaceError, type JsonValue } from "@voxel-maker/shared";
+import {
+  WorkspaceError,
+  depthLimitError,
+  type JsonValue,
+} from "@voxel-maker/shared";
 
 /**
  * Deterministic redaction for logs, transcripts, and diagnostics (plan
@@ -54,11 +58,6 @@ export function redactDiagnostics(value: string): string {
 }
 
 /**
- * Deep-redacts every string in a JSON tree with the secret patterns plus
- * explicit secret values; leaves the structure intact. Used by the
- * transcript and diagnostics exporters.
- */
-/**
  * Hard nesting cap for redaction (issue #44): provider payloads and tool
  * results are untrusted, so a pathologically nested value must fail
  * structured instead of overflowing the stack. 256 levels is far above any
@@ -67,12 +66,13 @@ export function redactDiagnostics(value: string): string {
 export const REDACT_MAX_DEPTH = 256;
 
 const redactDepthError = (): WorkspaceError =>
-  new WorkspaceError({
-    family: "limit",
-    code: "LIMIT_EXCEEDED",
-    message: `Value exceeds the maximum nesting depth of ${String(REDACT_MAX_DEPTH)}`,
-  });
+  depthLimitError(REDACT_MAX_DEPTH);
 
+/**
+ * Deep-redacts every string in a JSON tree with the secret patterns plus
+ * explicit secret values; leaves the structure intact. Used by the
+ * transcript and diagnostics exporters.
+ */
 export function redactJson(
   value: JsonValue,
   secrets: readonly string[] = [],

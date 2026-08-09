@@ -115,21 +115,26 @@ async function listSourceFiles(root) {
 
 export async function inspectNativeCapabilities(root) {
   const problems = [];
-  const capabilitiesPath = join(
-    root,
-    "apps/desktop/src-tauri/capabilities/default.json",
-  );
   const configPath = join(root, "apps/desktop/src-tauri/tauri.conf.json");
   const cargoPath = join(root, "apps/desktop/src-tauri/Cargo.toml");
   const rustPath = join(root, "apps/desktop/src-tauri/src/lib.rs");
 
-  // 1. Capability allowlist.
-  const capabilities = await readJson(capabilitiesPath);
-  for (const window of capabilities.windows ?? []) {
+  // 1. Capability allowlist. Tauri merges EVERY JSON file in the
+  // capabilities directory, so every file is audited, not just
+  // default.json; a file without a `windows` key still grants permissions.
+  const capabilityDir = join(root, "apps/desktop/src-tauri/capabilities");
+  const capabilityFiles = (await readdir(capabilityDir)).filter((name) =>
+    name.endsWith(".json"),
+  );
+  if (capabilityFiles.length === 0) {
+    problems.push("no Tauri capability files found to audit");
+  }
+  for (const capabilityFile of capabilityFiles) {
+    const capabilities = await readJson(join(capabilityDir, capabilityFile));
     for (const permission of capabilities.permissions ?? []) {
       if (!ALLOWED_PERMISSIONS.has(permission)) {
         problems.push(
-          `capability permission ${permission} (window ${String(window)}) is outside the allowlist`,
+          `capability permission ${permission} (${capabilityFile}) is outside the allowlist`,
         );
       }
       for (const prefix of FORBIDDEN_PERMISSION_PREFIXES) {

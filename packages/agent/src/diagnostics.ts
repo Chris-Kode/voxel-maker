@@ -130,7 +130,7 @@ export function buildSessionDiagnostics(
             toolCalls: Object.freeze(
               toolCalls.map((call) => ({
                 name: call.name,
-                arguments: redactJson(call.arguments as never, input.secrets),
+                arguments: redactJson(call.arguments, input.secrets),
               })),
             ),
           };

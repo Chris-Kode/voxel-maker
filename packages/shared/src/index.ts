@@ -107,15 +107,18 @@ export interface WorkspaceErrorInput extends Omit<WorkspaceErrorData, "cause"> {
  */
 export const CANONICAL_JSON_MAX_DEPTH = 512;
 
-const depthLimitError = (): WorkspaceError =>
-  new WorkspaceError({
+/** Structured nesting-cap failure shared by every deep JSON walker. */
+export function depthLimitError(maxDepth: number): WorkspaceError {
+  return new WorkspaceError({
     family: "limit",
     code: "LIMIT_EXCEEDED",
-    message: `Value exceeds the maximum nesting depth of ${String(CANONICAL_JSON_MAX_DEPTH)}`,
+    message: `Value exceeds the maximum nesting depth of ${String(maxDepth)}`,
   });
+}
 
 function cloneJson(value: JsonValue, depth = 0): JsonValue {
-  if (depth > CANONICAL_JSON_MAX_DEPTH) throw depthLimitError();
+  if (depth > CANONICAL_JSON_MAX_DEPTH)
+    throw depthLimitError(CANONICAL_JSON_MAX_DEPTH);
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) {
     const items = value as readonly JsonValue[];
@@ -229,7 +232,8 @@ function normalize(
   ancestors: Set<object>,
   depth = 0,
 ): JsonValue {
-  if (depth > CANONICAL_JSON_MAX_DEPTH) throw depthLimitError();
+  if (depth > CANONICAL_JSON_MAX_DEPTH)
+    throw depthLimitError(CANONICAL_JSON_MAX_DEPTH);
   if (
     typeof value === "number" &&
     (!Number.isFinite(value) || Object.is(value, -0))
