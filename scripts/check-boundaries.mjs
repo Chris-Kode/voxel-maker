@@ -78,7 +78,10 @@ const allowedDependencies = {
     "rigging",
     "animation",
   ],
-  skills: ["shared", "agent", "commands"],
+  // Generators themselves depend only on shared/agent/commands; the
+  // generic document stack is declared for the generator lifecycle and
+  // boundary tests that stage proposals into a real preview session.
+  skills: ["shared", "agent", "commands", "model", "document"],
   testkit: ["shared"],
 };
 const packageOnlyAdapterPattern =

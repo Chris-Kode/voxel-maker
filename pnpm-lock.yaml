@@ -504,6 +504,22 @@ importers:
         version: 5.9.2
 
   packages/skills:
+    dependencies:
+      '@voxel-maker/agent':
+        specifier: workspace:*
+        version: link:../agent
+      '@voxel-maker/commands':
+        specifier: workspace:*
+        version: link:../commands
+      '@voxel-maker/document':
+        specifier: workspace:*
+        version: link:../document
+      '@voxel-maker/model':
+        specifier: workspace:*
+        version: link:../model
+      '@voxel-maker/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       typescript:
         specifier: 'catalog:'
