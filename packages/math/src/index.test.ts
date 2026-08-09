@@ -18,6 +18,7 @@ import {
   quaternionConjugate,
   quaternionFromAxisAngle,
   quaternionMultiply,
+  quaternionSlerp,
   quaternionToEulerXYZ,
   resolveLocalTransform,
   rotateVector,
@@ -392,5 +393,82 @@ describe("quaternion composition utilities", () => {
     const euler = quaternionToEulerXYZ(q);
     expect(euler[1]).toBeGreaterThanOrEqual(-Math.PI / 2);
     expect(euler[1]).toBeLessThanOrEqual(Math.PI / 2);
+  });
+});
+
+describe("quaternion slerp", () => {
+  it("returns exact endpoints and clamps the blend factor", () => {
+    const a = canonicalQuat([0.2, -0.3, 0.4, 0.84]);
+    const b = quaternionFromAxisAngle([1, 0, 0], 2.2);
+    expect(quaternionSlerp(a, b, 0)).toBe(a);
+    expect(quaternionSlerp(a, b, 1)).toBe(b);
+    expect(quaternionSlerp(a, b, -1)).toBe(a);
+    expect(quaternionSlerp(a, b, 2)).toBe(b);
+  });
+
+  it("interpolates halfway between identity and a 90-degree Y turn to 45 degrees", () => {
+    const identity: Quat = [0, 0, 0, 1];
+    const quarter = quaternionFromAxisAngle([0, 1, 0], Math.PI / 2);
+    const half = quaternionSlerp(identity, quarter, 0.5);
+    const expected = quaternionFromAxisAngle([0, 1, 0], Math.PI / 4);
+    for (let index = 0; index < 4; index += 1) {
+      expect(
+        Math.abs((half[index] as number) - (expected[index] as number)),
+      ).toBeLessThan(1e-9);
+    }
+    expect(isNormalizedQuat(half)).toBe(true);
+    expect(isCanonicalQuat(half)).toBe(true);
+  });
+
+  it("travels the shortest arc when the endpoints are far apart", () => {
+    // 170 degrees one way; the short way is 10 degrees the other way.
+    const a = quaternionFromAxisAngle([0, 1, 0], Math.PI - 0.2);
+    const b = quaternionFromAxisAngle([0, 1, 0], -(Math.PI - 0.2));
+    const mid = quaternionSlerp(a, b, 0.5);
+    // Shortest path: half of the 0.4-radian arc (0.2 radians from a).
+    const expected = quaternionFromAxisAngle([0, 1, 0], Math.PI - 0.2 + 0.2);
+    for (let index = 0; index < 4; index += 1) {
+      expect(
+        Math.abs((mid[index] as number) - (expected[index] as number)),
+      ).toBeLessThan(1e-9);
+    }
+  });
+
+  it("handles identical and antipodal endpoints deterministically", () => {
+    const q = quaternionFromAxisAngle([0, 0, 1], 1.1);
+    expect(quaternionSlerp(q, q, 0.3)).toEqual(q);
+    // Antipodal inputs describe the same rotation; the result is a
+    // canonical quaternion equal to the rotation itself.
+    const negated: Quat = [-q[0], -q[1], -q[2], -q[3]];
+    const mid = quaternionSlerp(q, negated, 0.5);
+    expect(isNormalizedQuat(mid)).toBe(true);
+    expect(quaternionSlerp(q, negated, 0.25)).toEqual(
+      quaternionSlerp(q, negated, 0.75),
+    );
+  });
+
+  it("is symmetric under reversed endpoints at the midpoint", () => {
+    const a = quaternionFromAxisAngle([1, 1, 0], 0.8);
+    const b = quaternionFromAxisAngle([0, 1, 1], 1.7);
+    const forward = quaternionSlerp(a, b, 0.5);
+    const backward = quaternionSlerp(b, a, 0.5);
+    expect(Math.abs(forward[0] - backward[0])).toBeLessThan(1e-9);
+    expect(Math.abs(forward[1] - backward[1])).toBeLessThan(1e-9);
+    expect(Math.abs(forward[2] - backward[2])).toBeLessThan(1e-9);
+    expect(Math.abs(forward[3] - backward[3])).toBeLessThan(1e-9);
+  });
+
+  it("matches golden slerp samples at fixed factors", () => {
+    const a: Quat = [0, 0, 0, 1];
+    const b = quaternionFromAxisAngle([0, 1, 0], 2);
+    // u = 1/3: sin(2/3) / sin(2) * w + ... computed independently here
+    // via the closed-form axis-angle equivalent (golden reference).
+    const reference = quaternionFromAxisAngle([0, 1, 0], 2 / 3);
+    const sample = quaternionSlerp(a, b, 1 / 3);
+    for (let index = 0; index < 4; index += 1) {
+      expect(
+        Math.abs((sample[index] as number) - (reference[index] as number)),
+      ).toBeLessThan(1e-12);
+    }
   });
 });

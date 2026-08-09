@@ -24,7 +24,8 @@
     "@voxel-maker/document": "workspace:*",
     "@voxel-maker/formats": "workspace:*",
     "@voxel-maker/math": "workspace:*",
-    "@voxel-maker/storage": "workspace:*"
+    "@voxel-maker/storage": "workspace:*",
+    "@voxel-maker/animation": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:"
