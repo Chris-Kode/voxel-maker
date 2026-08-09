@@ -253,6 +253,10 @@ export function Viewport({
 
     const onKeyDown = (event: KeyboardEvent): void => {
       if (isEditableTarget(event.target)) return;
+      // Modified keys belong to the global shortcut service (ticket #43):
+      // the viewport's bare keys (1-6 views, F/P, overlay toggles) must
+      // never consume Ctrl/Cmd/Alt combinations (e.g. Ctrl+2 = pencil).
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       let handled = true;
       switch (event.key) {
         case "1":

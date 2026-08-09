@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import type { NodeId } from "@voxel-maker/shared";
 import type { DocumentSession } from "@voxel-maker/session";
 import {
@@ -18,8 +18,10 @@ import {
 import {
   createPanelIds,
   executeTransaction,
+  PANEL_FOCUS_IDS,
   useDocument,
   useEditorStore,
+  useRovingFocus,
   type PanelIds,
 } from "./panel-utils.js";
 
@@ -80,17 +82,14 @@ export function HierarchyPanel({
   // rows), the effect moves focus to the freshly visible row. Declared
   // before the early returns so the hook order never varies (React rules
   // of hooks).
-  useEffect(() => {
-    if (focusedNodeId === undefined) return;
-    rowRefs.current.get(focusedNodeId)?.focus();
-  }, [focusedNodeId, expanded, document.revision]);
+  useRovingFocus(rowRefs, focusedNodeId, [expanded, document.revision]);
 
   if (document.document === undefined) {
     return (
       <section
         className="panel"
         aria-label="Hierarchy"
-        id="panel-hierarchy"
+        id={PANEL_FOCUS_IDS.hierarchy}
         tabIndex={-1}
       >
         <h2>Hierarchy</h2>
@@ -105,7 +104,7 @@ export function HierarchyPanel({
       <section
         className="panel"
         aria-label="Hierarchy"
-        id="panel-hierarchy"
+        id={PANEL_FOCUS_IDS.hierarchy}
         tabIndex={-1}
       >
         <h2>Hierarchy</h2>
@@ -190,6 +189,15 @@ export function HierarchyPanel({
         "Delete node",
       )
     ) {
+      // Keep roving focus on a live row: the deleted row is about to
+      // disappear, so focus the next visible row (or the parent).
+      if (focusedNodeId === nodeId) {
+        const visible = visibleNodeIds();
+        const index = visible.indexOf(nodeId);
+        const parentId = document.document.nodes[nodeId]?.parentId;
+        const next = visible[index + 1];
+        setFocusedNodeId(next ?? parentId ?? undefined);
+      }
       editor.setSelection(
         editorState.selection.filter((entry) => {
           if (entry.kind !== "node") return true;
@@ -512,7 +520,7 @@ export function HierarchyPanel({
     <section
       className="panel"
       aria-label="Hierarchy"
-      id="panel-hierarchy"
+      id={PANEL_FOCUS_IDS.hierarchy}
       tabIndex={-1}
     >
       <h2>

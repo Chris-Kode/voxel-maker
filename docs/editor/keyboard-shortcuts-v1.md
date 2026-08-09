@@ -21,7 +21,12 @@ them to the window and the remap dialog.
   selects, or contenteditable targets, and never during IME composition,
   so ordinary typing cannot trigger an editor command. They also never
   fire while a modal dialog (`role="dialog" aria-modal`) or menu owns the
-  keyboard.
+  keyboard, never stack on an event an earlier handler already consumed
+  (`defaultPrevented`), and a bare-Space binding never fires from an
+  activatable control (button, link, summary, `role="button"`), so the
+  platform's Space-activation key keeps working. The viewport's bare
+  keys (1-6, F/P, overlays) ignore modified keys, leaving Ctrl/Cmd
+  combinations to the shortcut service.
 - **Remapping**: the toolbar "Shortcuts" button opens a modal dialog
   listing every command with its current binding. "Change" captures the
   next key combination (Escape cancels); the store rejects duplicates
@@ -69,6 +74,9 @@ them to the window and the remap dialog.
   clicks never leave a ring and keyboard traversal always shows one.
 - `prefers-reduced-motion: reduce` disables transitions and animations;
   no UI meaning depends on motion.
+- 200% UI scaling: the shell uses flexible stage columns and the dialog
+  widths are viewport-relative; formal 200% qualification remains part of
+  the S17.7 release review (ADR-0008).
 
 ## Verification
 

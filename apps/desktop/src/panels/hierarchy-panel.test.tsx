@@ -327,6 +327,22 @@ describe("hierarchy panel keyboard tree", () => {
     mounted.unmount();
   });
 
+  it("moves roving focus to the next row after a keyboard delete", () => {
+    const mounted = mountPanel();
+    expandRoot(mounted);
+    act(() => {
+      pressKey(mounted.row(BOX), "ArrowRight");
+    });
+    expect(document.activeElement).toBe(mounted.row(LID));
+    act(() => {
+      pressKey(mounted.row(LID), "Delete");
+    });
+    // LID is gone; focus lands on the next visible row (Sphere).
+    expect(document.activeElement).toBe(mounted.row(SPHERE));
+    expect(document.activeElement?.getAttribute("tabindex")).toBe("0");
+    mounted.unmount();
+  });
+
   it("rejects deleting the root with a notice, not a crash", () => {
     const mounted = mountPanel();
     act(() => {

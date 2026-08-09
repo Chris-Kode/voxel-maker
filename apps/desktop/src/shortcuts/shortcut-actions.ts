@@ -94,7 +94,9 @@ export function createShortcutDispatcher(
         return;
       }
       case "toggle-playback":
-        // Mirrors the timeline's Play/Pause button; no-op without a clip.
+        // Mirrors the timeline's Play/Pause button, which is disabled
+        // without a selected clip (needsDocument semantics).
+        if (composition.timeline.state.selectedClip === undefined) return;
         if (composition.timeline.state.playing) {
           composition.timeline.pause();
         } else {

@@ -21,6 +21,9 @@ describe("app.css accessibility baseline", () => {
     // White text on --accent reads 4.7:1; --border is 3.2:1 on --panel
     // (the 3:1 non-text baseline); --focus is the keyboard ring.
     expect(css).toContain("--accent: #3d6fd8;");
+    // Accent used as text color keeps >= 4.5:1 via --accent-text.
+    expect(css).toContain("--accent-text: #8ab4ff;");
+    expect(css).toContain("color: var(--accent-text);");
     expect(css).toContain("--border: #5f6b7d;");
     expect(css).toContain("--focus: #8ab4ff;");
     expect(css).toContain("--bg: #12151a;");

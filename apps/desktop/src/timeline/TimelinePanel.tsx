@@ -7,6 +7,7 @@ import type {
   TimelineController,
   TrackChannel,
 } from "./timeline-controller.js";
+import { PANEL_FOCUS_IDS, useRovingFocus } from "../panels/panel-utils.js";
 
 /**
  * Timeline panel (plan S10.9-S10.11, ticket #29; keyboard workflows
@@ -109,10 +110,7 @@ export function TimelinePanel({
   // Roving focus over the track rows (plan S7.17): arrow keys move focus
   // between rows; Enter/Space select. The rows are ordinary tab stops so
   // their interpolation select and remove button stay reachable.
-  useEffect(() => {
-    if (focusedTrackId === undefined) return;
-    trackRowRefs.current.get(focusedTrackId)?.focus();
-  }, [focusedTrackId, state.tracks]);
+  useRovingFocus(trackRowRefs, focusedTrackId, [state.tracks]);
 
   const report = (error: Error | undefined): void => {
     if (error !== undefined) editor.pushNotice("error", error.message);
@@ -371,7 +369,7 @@ export function TimelinePanel({
       <section
         className="timeline-panel"
         aria-label="Timeline"
-        id="panel-timeline"
+        id={PANEL_FOCUS_IDS.timeline}
         tabIndex={-1}
       >
         <p className="timeline-empty">Open a document to edit animations.</p>
@@ -383,7 +381,7 @@ export function TimelinePanel({
     <section
       className="timeline-panel"
       aria-label="Timeline"
-      id="panel-timeline"
+      id={PANEL_FOCUS_IDS.timeline}
       tabIndex={-1}
     >
       <div className="timeline-toolbar">
@@ -555,7 +553,13 @@ export function TimelinePanel({
                     (trackSelected(entry.track.trackId) ? " selected" : "")
                   }
                   onClick={(event) => {
+                    setFocusedTrackId(entry.track.trackId);
                     onTrackClick(event, entry.track.trackId);
+                  }}
+                  onFocus={() => {
+                    // Tabbing into a row seeds the roving focus so arrow
+                    // keys move from where the user actually is.
+                    setFocusedTrackId(entry.track.trackId);
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {

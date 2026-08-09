@@ -252,6 +252,29 @@ describe("app accessibility shell", () => {
     mounted.unmount();
   });
 
+  it("does not steal Space from a focused toolbar button", () => {
+    const mounted = mountApp();
+    // Space on a focused button is the platform's activation key
+    // (WAI-ARIA); the global toggle-playback shortcut must not consume
+    // it. The observable contract: the keydown is not preventDefaulted
+    // by the shortcut service and focus stays on the button.
+    const newButton = buttonByText(mounted.container, "New");
+    act(() => {
+      newButton.focus();
+    });
+    const event = new KeyboardEvent("keydown", {
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      newButton.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(newButton);
+    mounted.unmount();
+  });
+
   it("undoes a keyboard rename with Ctrl+Z", async () => {
     const mounted = mountApp();
     act(() => {

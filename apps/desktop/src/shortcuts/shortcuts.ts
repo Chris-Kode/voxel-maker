@@ -113,6 +113,11 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommand[] = [
   { id: "focus-ai", label: "Focus AI panel", needsDocument: false },
 ] as const satisfies readonly ShortcutCommand[];
 
+/** Every valid shortcut command id (shared by validation and matching). */
+const SHORTCUT_IDS: ReadonlySet<ShortcutId> = new Set(
+  SHORTCUT_COMMANDS.map((command) => command.id),
+);
+
 /** Detects the runtime platform from the user agent. */
 export function detectPlatform(): Platform {
   if (typeof navigator === "undefined") return "linux";
@@ -206,11 +211,10 @@ function displayKey(key: string): string {
   return key;
 }
 
-/** Platform-aware default bindings (plan S7.15 "platform conventions"). */
-export function defaultBindings(
-  platform: Platform,
-): Readonly<Record<ShortcutId, KeyBinding>> {
-  void platform; // primary modifier resolution happens at match time.
+/** Default bindings (plan S7.15 "platform conventions"). The defaults
+ * themselves are platform-independent (primary modifier resolution
+ * happens at match time); only `alternateBindings` varies by platform. */
+export function defaultBindings(): Readonly<Record<ShortcutId, KeyBinding>> {
   const mod = { mod: true } as const;
   return {
     "new-project": { ...mod, key: "n" },
@@ -258,6 +262,8 @@ export function alternateBindings(
 /** A key event with the suppression fields the store needs. */
 export type ShortcutEvent = ShortcutKeyEvent & {
   readonly isComposing?: boolean;
+  /** True when an earlier handler already consumed the event. */
+  readonly defaultPrevented?: boolean;
   readonly target?: unknown;
 };
 
@@ -274,6 +280,28 @@ export function isEditableTarget(target: unknown): boolean {
     tag === "TEXTAREA" ||
     tag === "SELECT" ||
     element.isContentEditable === true
+  );
+}
+
+/**
+ * True when the target is an activatable control whose Space key the
+ * platform reserves (WAI-ARIA: Space activates buttons): a button, a
+ * role=button element, a link, or a summary. Bare-Space shortcuts must
+ * not swallow that activation.
+ */
+export function isActivatableTarget(target: unknown): boolean {
+  if (typeof target !== "object" || target === null) return false;
+  const element = target as {
+    readonly tagName?: string;
+    readonly role?: string | null;
+    readonly href?: string | null;
+  };
+  const tag = (element.tagName ?? "").toUpperCase();
+  return (
+    tag === "BUTTON" ||
+    tag === "SUMMARY" ||
+    tag === "A" ||
+    element.role === "button"
   );
 }
 
@@ -383,9 +411,8 @@ function sanitizeOverrides(
 ): Readonly<Record<string, KeyBinding>> {
   const result: Record<string, KeyBinding> = {};
   if (raw === undefined) return result;
-  const ids = new Set(SHORTCUT_COMMANDS.map((command) => command.id));
   for (const [id, value] of Object.entries(raw)) {
-    if (!ids.has(id as ShortcutId)) continue;
+    if (!SHORTCUT_IDS.has(id as ShortcutId)) continue;
     if (!isValidBinding(value)) continue;
     result[id] = value;
   }
@@ -405,15 +432,11 @@ function isValidBinding(value: unknown): value is KeyBinding {
   return true;
 }
 
-const DEFAULT_IDS = new Set<ShortcutId>(
-  SHORTCUT_COMMANDS.map((command) => command.id),
-);
-
 export function createShortcutStore(
   options: ShortcutStoreOptions,
 ): ShortcutStore {
   const { platform, storage } = options;
-  const defaults = defaultBindings(platform);
+  const defaults = defaultBindings();
   let overrides: Readonly<Record<string, KeyBinding>> = sanitizeOverrides(
     storage.load(),
   );
@@ -444,7 +467,7 @@ export function createShortcutStore(
       }));
     },
     setBinding(id, binding) {
-      if (!DEFAULT_IDS.has(id)) {
+      if (!SHORTCUT_IDS.has(id)) {
         return { ok: false, message: "Unknown shortcut command" };
       }
       if (!isValidBinding(binding)) {
@@ -488,7 +511,17 @@ export function createShortcutStore(
     },
     match(event) {
       if (event.isComposing === true) return undefined;
+      // An earlier handler (a focused button's own Space/Enter behavior,
+      // a tree row's selection key, the timeline lanes) already consumed
+      // the event: a global shortcut must never stack on top of it.
+      if (event.defaultPrevented === true) return undefined;
       if (isEditableTarget(event.target)) return undefined;
+      // A bare-Space binding must never swallow the Space activation of
+      // the focused control (WAI-ARIA: Space activates buttons, links,
+      // and summaries), so it is excluded entirely for those targets.
+      if (event.key === " " && isActivatableTarget(event.target)) {
+        return undefined;
+      }
       if (isKeyboardOwnerOpen()) return undefined;
       for (const command of SHORTCUT_COMMANDS) {
         const primary = effective(command.id);

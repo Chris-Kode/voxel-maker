@@ -12,7 +12,7 @@ import { isTauriRuntime } from "./platform/detect.js";
 import { Viewport } from "./viewport/Viewport.js";
 import { HierarchyPanel } from "./panels/HierarchyPanel.js";
 import { InspectorPanel } from "./panels/InspectorPanel.js";
-import { createPanelIds } from "./panels/panel-utils.js";
+import { createPanelIds, PANEL_FOCUS_IDS } from "./panels/panel-utils.js";
 import { MaterialPanel, usePanelState } from "./materials/MaterialPanel.js";
 import { TimelinePanel } from "./timeline/TimelinePanel.js";
 import { AnimationInspector } from "./timeline/AnimationInspector.js";
@@ -192,7 +192,7 @@ export function App(): React.JSX.Element {
       createShortcutDispatcher({
         composition,
         focusPanel: (panel) => {
-          document.getElementById(`panel-${panel}`)?.focus();
+          document.getElementById(PANEL_FOCUS_IDS[panel])?.focus();
         },
       }),
     [composition],

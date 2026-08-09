@@ -11,6 +11,10 @@
   --text: #e6e9ef;
   --muted: #8b93a1;
   --accent: #3d6fd8;
+  /* Accent used as *text* color: --accent itself is 3.67:1 on panels,
+     so accent text uses this lighter tone (8.26:1), keeping every text
+     surface at >= 4.5:1 (ADR-0008). */
+  --accent-text: #8ab4ff;
   --focus: #8ab4ff;
   --error: #ff6b6b;
 }
@@ -602,7 +606,7 @@ body {
 
 .component-kind {
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
   min-width: 60px;
 }
 

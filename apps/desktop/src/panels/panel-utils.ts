@@ -93,6 +93,36 @@ export function useEditorStore(editor: EditorStore): EditorStoreSnapshot {
   return snapshot;
 }
 
+/** DOM focus targets for the focus-panel shortcuts (plan S7.15). */
+export const PANEL_FOCUS_IDS = {
+  hierarchy: "panel-hierarchy",
+  materials: "panel-materials",
+  inspector: "panel-inspector",
+  timeline: "panel-timeline",
+  ai: "panel-ai",
+} as const satisfies Record<string, string>;
+
+export type FocusPanelId = keyof typeof PANEL_FOCUS_IDS;
+
+/**
+ * Roving focus over a list of rows (plan S7.17): when `focusedId` changes
+ * (or the rows re-render after an expand/delete), the effect moves focus
+ * to the freshly visible row through the caller's ref map. Shared by the
+ * hierarchy tree and the timeline track list.
+ */
+export function useRovingFocus(
+  refs: { readonly current: Map<string, HTMLElement> },
+  focusedId: string | undefined,
+  deps: readonly unknown[],
+): void {
+  useEffect(() => {
+    if (focusedId === undefined) return;
+    refs.current.get(focusedId)?.focus();
+    // The caller owns the dependency values (expanded state, revision,
+    // track list); the ref map is excluded by construction.
+  }, [focusedId, ...deps]);
+}
+
 /** Fresh deterministic ids for panel commands and transactions. */
 export interface PanelIds {
   nextCommandId(): CommandId;

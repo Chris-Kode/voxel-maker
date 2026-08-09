@@ -40,6 +40,7 @@ import type {
 import {
   createPanelIds,
   executeTransaction,
+  PANEL_FOCUS_IDS,
   useDocument,
   useEditorStore,
   type PanelIds,
@@ -101,7 +102,7 @@ export function InspectorPanel({
       <section
         className="panel"
         aria-label="Inspector"
-        id="panel-inspector"
+        id={PANEL_FOCUS_IDS.inspector}
         tabIndex={-1}
       >
         <h2>Inspector</h2>
@@ -119,7 +120,7 @@ export function InspectorPanel({
       <section
         className="panel"
         aria-label="Inspector"
-        id="panel-inspector"
+        id={PANEL_FOCUS_IDS.inspector}
         tabIndex={-1}
       >
         <h2>Inspector</h2>
@@ -326,7 +327,7 @@ export function InspectorPanel({
     <section
       className="panel"
       aria-label="Inspector"
-      id="panel-inspector"
+      id={PANEL_FOCUS_IDS.inspector}
       tabIndex={-1}
     >
       <h2>Inspector</h2>

@@ -5,6 +5,7 @@ import type {
   MaterialPanelEntry,
   MaterialPanelState,
 } from "./material-panel-controller.js";
+import { PANEL_FOCUS_IDS } from "../panels/panel-utils.js";
 
 /**
  * Materials panel (plan S7.13, ticket #21): the desktop view over
@@ -43,7 +44,7 @@ export function MaterialPanel({
     <section
       className="material-panel"
       aria-label="Materials panel"
-      id="panel-materials"
+      id={PANEL_FOCUS_IDS.materials}
       tabIndex={-1}
     >
       <header className="material-panel-header">

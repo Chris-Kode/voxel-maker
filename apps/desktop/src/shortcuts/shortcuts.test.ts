@@ -182,21 +182,19 @@ describe("eventMatchesBinding", () => {
 });
 
 describe("defaultBindings", () => {
-  it("uses platform primary modifiers and known keys", () => {
-    const mac = defaultBindings("mac");
-    const win = defaultBindings("windows");
-    expect(mac.undo).toEqual({ mod: true, key: "z" });
-    expect(win.undo).toEqual({ mod: true, key: "z" });
-    expect(mac.redo).toEqual({ mod: true, shift: true, key: "z" });
-    expect(win["save-project"]).toEqual({ mod: true, key: "s" });
+  it("uses primary-modifier bindings and known keys", () => {
+    const bindings = defaultBindings();
+    expect(bindings.undo).toEqual({ mod: true, key: "z" });
+    expect(bindings.redo).toEqual({ mod: true, shift: true, key: "z" });
+    expect(bindings["save-project"]).toEqual({ mod: true, key: "s" });
     // Tool bindings are mod+digit so they cannot collide with the
     // viewport's plain-digit standard views (1-6).
-    expect(win["select-tool"]).toEqual({ mod: true, key: "1" });
-    expect(mac["transform-tool"]).toEqual({ mod: true, key: "9" });
+    expect(bindings["select-tool"]).toEqual({ mod: true, key: "1" });
+    expect(bindings["transform-tool"]).toEqual({ mod: true, key: "9" });
   });
 
   it("covers every shortcut command id", () => {
-    const bindings = defaultBindings("linux");
+    const bindings = defaultBindings();
     for (const command of SHORTCUT_COMMANDS) {
       expect(bindings[command.id]).toBeDefined();
     }
@@ -242,6 +240,25 @@ describe("shortcut store", () => {
     ).toBeUndefined();
   });
 
+  it("never stacks a shortcut on an event another handler consumed", () => {
+    const { store } = createStore("windows");
+    // A focused button's Space (or a tree row's selection key) prevents
+    // the default before the event reaches the window: the shortcut must
+    // not fire on top of it.
+    expect(
+      store.match({
+        ...keyEvent(" ", {}),
+        defaultPrevented: true,
+      }),
+    ).toBeUndefined();
+    expect(
+      store.match({
+        ...keyEvent("z", { ctrl: true }),
+        defaultPrevented: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it("matches the platform-specific redo alias on Windows and Linux", () => {
     const win = createStore("windows").store;
     expect(win.match(keyEvent("y", { ctrl: true }))).toBe("redo");
@@ -249,9 +266,32 @@ describe("shortcut store", () => {
     expect(mac.match(keyEvent("y", { ctrl: true }))).toBeUndefined();
   });
 
-  it("does not match plain space (no bare space default)", () => {
+  it("matches the space default for toggle-playback", () => {
     const { store } = createStore("linux");
     expect(store.match(keyEvent(" ", {}))).toBe("toggle-playback");
+  });
+
+  it("never matches space from an activatable control target", () => {
+    const { store } = createStore("linux");
+    expect(
+      store.match({
+        ...keyEvent(" ", {}),
+        target: { tagName: "BUTTON" },
+      }),
+    ).toBeUndefined();
+    expect(
+      store.match({
+        ...keyEvent(" ", {}),
+        target: { role: "button" },
+      }),
+    ).toBeUndefined();
+    // Non-activatable targets (the viewport canvas) keep the binding.
+    expect(
+      store.match({
+        ...keyEvent(" ", {}),
+        target: { tagName: "DIV" },
+      }),
+    ).toBe("toggle-playback");
   });
 
   it("remaps a binding, persists it, and matches the new combination", () => {
