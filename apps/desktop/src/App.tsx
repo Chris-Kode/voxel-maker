@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   snapshotEditorStore,
   type EditorStore,
@@ -185,16 +185,19 @@ export function App(): React.JSX.Element {
   // platform-aware, remappable bindings and never fires from text entry,
   // IME composition, or while the dialog/menu owns the keyboard; the
   // dispatcher routes matches to the same composition seams as the
-  // toolbar buttons.
-  useShortcuts(
-    shortcutStore,
-    createShortcutDispatcher({
-      composition,
-      focusPanel: (panel) => {
-        document.getElementById(`panel-${panel}`)?.focus();
-      },
-    }),
+  // toolbar buttons. The dispatcher is memoized so the window listener
+  // binds once per composition.
+  const dispatchShortcut = useMemo(
+    () =>
+      createShortcutDispatcher({
+        composition,
+        focusPanel: (panel) => {
+          document.getElementById(`panel-${panel}`)?.focus();
+        },
+      }),
+    [composition],
   );
+  useShortcuts(shortcutStore, dispatchShortcut);
 
   useEffect(
     () =>

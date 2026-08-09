@@ -530,7 +530,7 @@ export function TimelinePanel({
                 {state.keyMode === "auto" ? "Auto-key is on." : ""}
               </p>
             ) : (
-              state.tracks.map((entry) => (
+              state.tracks.map((entry, rowIndex) => (
                 <div
                   key={entry.track.trackId}
                   ref={(element) => {
@@ -542,7 +542,14 @@ export function TimelinePanel({
                   }}
                   role="option"
                   aria-selected={trackSelected(entry.track.trackId)}
-                  tabIndex={focusedTrackId === entry.track.trackId ? 0 : -1}
+                  // Roving tabindex with a default stop on the first row,
+                  // so the list is reachable by Tab before any arrow key.
+                  tabIndex={
+                    focusedTrackId === entry.track.trackId ||
+                    (focusedTrackId === undefined && rowIndex === 0)
+                      ? 0
+                      : -1
+                  }
                   className={
                     "timeline-track" +
                     (trackSelected(entry.track.trackId) ? " selected" : "")
