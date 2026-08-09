@@ -411,12 +411,22 @@ class AiControllerImpl implements AiController {
       this.#editor.pushNotice("info", "Open a document before running AI");
       return;
     }
-    if (!this.#configured) {
+    // Authoritative configuration check at run time: a stored key (e.g.
+    // the OS keychain after a restart) is never stale in the snapshot.
+    const storedKey = await this.#credentials.get(
+      KEYCHAIN_SERVICE,
+      this.#provider.providerId,
+    );
+    if (storedKey === undefined || storedKey.reveal().length === 0) {
       this.#editor.pushNotice(
         "info",
         "AI is not configured: add a provider key in the AI panel first",
       );
       return;
+    }
+    if (!this.#configured) {
+      this.#configured = true;
+      this.#emit();
     }
     const record = await this.#consentStore.get(
       this.#provider.providerId,
