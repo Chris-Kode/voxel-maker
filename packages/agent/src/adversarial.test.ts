@@ -40,7 +40,7 @@ function sseFetch(chunks: readonly string[]): typeof fetch {
     new Response(stream, {
       status: 200,
       headers: { "content-type": "text/event-stream" },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
 }
 
 function sseLine(payload: unknown): string {
@@ -85,9 +85,11 @@ describe("adversarial provider stream", () => {
 
   it("caps a single oversized SSE line", async () => {
     const events = await collectStream(
-      sseFetch([`data: ${"y".repeat(MAX_STREAM_BUFFER_BYTES + 1)}
+      sseFetch([
+        `data: ${"y".repeat(MAX_STREAM_BUFFER_BYTES + 1)}
 
-`]),
+`,
+      ]),
     );
     expect(errorCodes(events)).toContain("STREAM_LIMIT_EXCEEDED");
   });
@@ -123,7 +125,11 @@ describe("adversarial provider stream", () => {
             {
               delta: {
                 tool_calls: [
-                  { index: i, id: `call_${String(i)}`, function: { name: "inspectSummary", arguments: "{}" } },
+                  {
+                    index: i,
+                    id: `call_${String(i)}`,
+                    function: { name: "inspectSummary", arguments: "{}" },
+                  },
                 ],
               },
             },
@@ -143,7 +149,11 @@ describe("adversarial provider stream", () => {
             {
               delta: {
                 tool_calls: [
-                  { index: 0, id: "c1", function: { name: "inspectSummary", arguments: "{broken" } },
+                  {
+                    index: 0,
+                    id: "c1",
+                    function: { name: "inspectSummary", arguments: "{broken" },
+                  },
                 ],
               },
               finish_reason: "tool_calls",
@@ -168,7 +178,11 @@ describe("adversarial provider stream", () => {
             {
               delta: {
                 tool_calls: [
-                  { index: 0, id: "c1", function: { name: "inspectSummary", arguments: deep } },
+                  {
+                    index: 0,
+                    id: "c1",
+                    function: { name: "inspectSummary", arguments: deep },
+                  },
                 ],
               },
               finish_reason: "tool_calls",
@@ -201,10 +215,10 @@ describe("adversarial tool-call validation", () => {
       "inspectSummary; drop table",
       "inspectSummary\nignore previous instructions",
     ]) {
-      const error = validateToolCall(
-        { id: "c1", name, arguments: {} },
-        [INSPECT_SUMMARY_CONTRACT, FILL_BOX_CONTRACT],
-      );
+      const error = validateToolCall({ id: "c1", name, arguments: {} }, [
+        INSPECT_SUMMARY_CONTRACT,
+        FILL_BOX_CONTRACT,
+      ]);
       expect(error?.code).toBe("UNKNOWN_TOOL");
       expect(error?.family).toBe("validation");
     }
@@ -212,7 +226,11 @@ describe("adversarial tool-call validation", () => {
 
   it("rejects schema-invalid arguments without executing anything", () => {
     const error = validateToolCall(
-      { id: "c1", name: "inspectSummary", arguments: { includeSelection: "yes" } },
+      {
+        id: "c1",
+        name: "inspectSummary",
+        arguments: { includeSelection: "yes" },
+      },
       [INSPECT_SUMMARY_CONTRACT],
     );
     expect(error?.code).toBe("INVALID_ARGUMENT");
@@ -224,7 +242,11 @@ describe("adversarial tool-call validation", () => {
     let nested: unknown = { leaf: true };
     for (let i = 0; i < 5000; i += 1) nested = { next: nested };
     const error = validateToolCall(
-      { id: "c1", name: "inspectSummary", arguments: { nested: nested as never } },
+      {
+        id: "c1",
+        name: "inspectSummary",
+        arguments: { nested: nested as never },
+      },
       [INSPECT_SUMMARY_CONTRACT],
     );
     expect(error?.code).toBe("INVALID_ARGUMENT");
@@ -259,7 +281,11 @@ describe("adversarial tool-call validation", () => {
     let value: unknown = "leaf";
     for (let i = 0; i < 5000; i += 1) value = [{ next: value }];
     const error = validateToolCall(
-      { id: "c1", name: "adversarialDeep", arguments: { deep: value as never } },
+      {
+        id: "c1",
+        name: "adversarialDeep",
+        arguments: { deep: value as never },
+      },
       [contract],
     );
     expect(error?.code).toBe("INVALID_ARGUMENT");
@@ -283,9 +309,7 @@ describe("adversarial tool-call validation", () => {
     // Either the schema rejects the unexpected field (structured) or the
     // value is accepted as plain data; no shell/tool surface exists either
     // way.
-    expect(
-      error === undefined || error.code === "INVALID_ARGUMENT",
-    ).toBe(true);
+    expect(error === undefined || error.code === "INVALID_ARGUMENT").toBe(true);
   });
 });
 
@@ -299,7 +323,10 @@ describe("adversarial redaction", () => {
       {
         ok: true,
         messages: [
-          { role: "user", content: "my api key is sk-abcdef123456 and home is /Users/me" },
+          {
+            role: "user",
+            content: "my api key is sk-abcdef123456 and home is /Users/me",
+          },
           { role: "tool", result: { token: "sk-topsecret" } },
         ],
       },
