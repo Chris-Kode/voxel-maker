@@ -140,6 +140,14 @@ export interface ChunkScheduler {
   cancelChunk(spec: ChunkScheduleSpec): void;
   /** Cancels every pending and in-flight job of one volume. */
   cancelVolume(volumeId: VolumeId): void;
+  /**
+   * Cancels every pending and in-flight job of one volume within one
+   * namespace only (plan S12.15): preview projections share this
+   * scheduler, so volume-scoped cancellation must never cross namespaces.
+   */
+  cancelNamespaceVolume(namespace: ChunkNamespace, volumeId: VolumeId): void;
+  /** Cancels every pending and in-flight job of one namespace. */
+  cancelNamespaceAll(namespace: ChunkNamespace): void;
   /** Cancels every pending and in-flight job (lifecycle replacement). */
   cancelAll(): void;
   /**
@@ -282,6 +290,53 @@ class ChunkSchedulerImpl implements ChunkScheduler {
           this.#pool.cancel(entry.handle);
         }
         this.#submitted.delete(key);
+      }
+    }
+  }
+
+  cancelNamespaceVolume(namespace: ChunkNamespace, volumeId: VolumeId): void {
+    if (this.#disposed) return;
+    for (const [key, entry] of [...this.#pending]) {
+      if (
+        entry.spec.namespace === namespace &&
+        entry.spec.volumeId === volumeId
+      ) {
+        this.#pending.delete(key);
+      }
+    }
+    for (const [key, entry] of [...this.#submitted]) {
+      if (
+        entry.spec.namespace === namespace &&
+        entry.spec.volumeId === volumeId
+      ) {
+        if (entry.handle !== undefined) {
+          this.#pool.cancel(entry.handle);
+        }
+        this.#submitted.delete(key);
+      }
+    }
+  }
+
+  cancelNamespaceAll(namespace: ChunkNamespace): void {
+    if (this.#disposed) return;
+    for (const [key, entry] of [...this.#pending]) {
+      if (entry.spec.namespace === namespace) this.#pending.delete(key);
+    }
+    for (const [key, entry] of [...this.#submitted]) {
+      if (entry.spec.namespace === namespace) {
+        if (entry.handle !== undefined) {
+          this.#pool.cancel(entry.handle);
+        }
+        this.#submitted.delete(key);
+      }
+    }
+    // Completed results of this namespace still waiting for the upload
+    // budget belong to a disposed overlay; drop them so no stale mesh
+    // installs later.
+    for (let index = this.#completed.length - 1; index >= 0; index -= 1) {
+      const result = this.#completed[index];
+      if (result !== undefined && result.namespace === namespace) {
+        this.#completed.splice(index, 1);
       }
     }
   }

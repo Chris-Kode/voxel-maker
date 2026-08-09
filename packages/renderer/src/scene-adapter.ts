@@ -29,7 +29,12 @@ import {
   type MeshingWorkerLike,
 } from "./meshing-executors.js";
 import { nodeWorldMatrices } from "./pick.js";
-import type { ChunkMeshInput, ChunkMeshOutput } from "./types.js";
+import { isValidChunkNamespace } from "./worker-protocol.js";
+import type {
+  ChunkMeshInput,
+  ChunkMeshOutput,
+  ChunkNamespace,
+} from "./types.js";
 
 /**
  * Renderer scene adapter (plan S6.3/S6.7, ticket #23): a disposable
@@ -44,7 +49,7 @@ import type { ChunkMeshInput, ChunkMeshOutput } from "./types.js";
  *   a meshing pool (S6.6): every job carries copied immutable
  *   chunk-and-halo data tagged `{namespace, volume, coordinate,
  *   revision}`, results are validated twice (pool latest-wins, then the
- *   adapter's own latest-revision map), visible chunks dispatch first,
+ *   projection's own latest-revision map), visible chunks dispatch first,
  *   and per-frame dispatch/upload budgets bound main-thread work. The
  *   old geometry stays visible until its replacement lands, so edits
  *   never flash or blank the viewport.
@@ -52,6 +57,12 @@ import type { ChunkMeshInput, ChunkMeshOutput } from "./types.js";
  *   `changedMaterialIds`, `changedVolumes`); lifecycle replacement
  *   (`document-opened` / `document-replaced` / `document-closed`) fully
  *   disposes and rebinds through `rebind`/`clear`.
+ * - Preview overlays (plan S12.15, ticket #34): `projectPreview` binds an
+ *   isolated `DocumentStoreRead` (an agent preview session) under its
+ *   `preview:<session>` namespace. Preview chunks mesh through the same
+ *   pool with the preview namespace tag, install into a dedicated root
+ *   group, and never touch the live projection, live revision, history,
+ *   autosave, or journal. `dispose()` removes exactly that overlay.
  *
  * The adapter never issues commands, never mutates semantic state, and
  * never lets renderer state become authoritative (ADR-0002/0005). All
@@ -93,7 +104,7 @@ export interface RendererDiagnostics {
   readonly pendingChunks: number;
   /** Mesh jobs currently computing. */
   readonly inFlightMeshes: number;
-  /** Chunk meshes currently installed in the scene. */
+  /** Chunk meshes currently installed in the scene (live projection). */
   readonly installedChunks: number;
   /** Total triangles across installed chunk meshes. */
   readonly triangles: number;
@@ -136,20 +147,58 @@ export interface SceneAdapterOptions {
   readonly maxRetries?: number;
 }
 
-export interface SceneAdapter {
-  readonly scene: THREE.Scene;
-  /** Number of projected node groups (diagnostics/tests). */
+/**
+ * One projected preview overlay (plan S12.15): the isolated read surface
+ * of one preview session projected under its `preview:<session>`
+ * namespace. Disposal removes only this overlay's geometry and cancels
+ * only its meshing jobs; the live projection and every other preview
+ * stay untouched.
+ */
+export interface ScenePreviewProjection {
+  readonly namespace: ChunkNamespace;
+  /** Projected node groups (diagnostics/tests). */
   readonly nodeCount: number;
-  /** Number of projected chunk meshes (diagnostics/tests). */
+  /** Projected chunk meshes (diagnostics/tests). */
   readonly chunkMeshCount: number;
   /**
+   * Removes the overlay: node groups, chunk meshes, and pending/in-flight
+   * meshing jobs of this namespace are disposed; nothing else changes.
+   * Idempotent.
+   */
+  dispose(): void;
+}
+
+export interface SceneAdapter {
+  readonly scene: THREE.Scene;
+  /** Number of projected node groups of the live projection. */
+  readonly nodeCount: number;
+  /** Number of projected chunk meshes of the live projection. */
+  readonly chunkMeshCount: number;
+  /** Number of live preview overlays (diagnostics/tests). */
+  readonly previewProjectionCount: number;
+  /**
    * Full dispose and rebind for lifecycle replacement: clears every
-   * projection, subscribes to the fresh store's commits, and schedules
-   * the document's chunks for meshing.
+   * projection (live and previews), subscribes to the fresh store's
+   * commits, and schedules the document's chunks for meshing.
    */
   rebind(store: DocumentStoreRead): void;
-  /** Incremental projection of one committed transaction. */
+  /** Incremental projection of one committed transaction (live path). */
   handleCommit(event: DocumentCommitted, store: DocumentStoreRead): void;
+  /**
+   * Projects an isolated overlay under a `preview:<session>` namespace
+   * (plan S12.15, ticket #34). The overlay reads the preview store's
+   * commits, meshes through the shared pool tagged with the preview
+   * namespace, and installs into a dedicated root group. The returned
+   * handle's `dispose()` removes exactly this overlay; live revision,
+   * history, autosave, and journal are never touched. The namespace is
+   * validated against the worker-protocol pattern (a non-`preview:`
+   * namespace throws), and a namespace can be projected at most once
+   * (projecting the same namespace twice throws).
+   */
+  projectPreview(
+    store: DocumentStoreRead,
+    namespace: string,
+  ): ScenePreviewProjection;
   /**
    * Per-frame step: dispatch and install meshes within the frame budgets,
    * visible chunks first. The camera (when provided) drives visibility
@@ -161,16 +210,31 @@ export interface SceneAdapter {
   diagnostics(): RendererDiagnostics;
   /** Disposes every projection and unsubscribes; the adapter stays usable. */
   clear(): void;
-  /** The projected group for a node id, or undefined when not projected. */
+  /** The projected group for a node id (live projection), or undefined. */
   objectForNode(nodeId: NodeId): THREE.Object3D | undefined;
   /** Disposes every projection and releases the material cache. */
   dispose(): void;
 }
 
-class SceneAdapterImpl implements SceneAdapter {
-  readonly scene: THREE.Scene;
+/**
+ * One namespace-scoped projection of a document store (plan S6.3/S12.15):
+ * node groups, chunk meshes, and per-chunk latest-revision bookkeeping
+ * for exactly one `ChunkNamespace`. The live projection's root is the
+ * scene itself; preview projections own a dedicated root group so they
+ * can be removed as one unit. All meshing work flows through the shared
+ * scheduler, which separates jobs by namespace, and installs are
+ * re-verified against THIS projection's latest-revision map before any
+ * GPU resource is touched.
+ */
+class ChunkProjection {
+  readonly namespace: ChunkNamespace;
+  /** Scene attachment: the scene for live, a named group for previews. */
+  readonly root: THREE.Object3D;
   readonly #materials: MaterialAdapter;
   readonly #scheduler: ChunkScheduler;
+  readonly #onDispose: () => void;
+  #store: DocumentStoreRead | undefined;
+  #unsubscribe: (() => void) | undefined;
   readonly #nodeProjections = new Map<NodeId, NodeProjection>();
   readonly #chunkMeshes = new Map<VolumeId, Map<string, ChunkMeshEntry>>();
   readonly #volumeOwners = new Map<VolumeId, NodeId>();
@@ -178,47 +242,23 @@ class SceneAdapterImpl implements SceneAdapter {
   readonly #latestRevision = new Map<VolumeId, Map<string, number>>();
   /** Cached node world matrix per volume (frustum priority). */
   readonly #volumeWorldMatrices = new Map<VolumeId, THREE.Matrix4>();
-  #store: DocumentStoreRead | undefined;
-  #unsubscribe: (() => void) | undefined;
-  #camera: THREE.Camera | undefined;
   #installedBytes = 0;
   #installedDrawCalls = 0;
   #installedTriangles = 0;
 
-  constructor(options: SceneAdapterOptions) {
-    this.scene = options.scene;
-    this.#materials = createMaterialAdapter();
-    const executor =
-      options.createWorker === undefined
-        ? createInProcessMeshingExecutor()
-        : createWorkerMeshingExecutor(options.createWorker());
-    this.#scheduler = createChunkScheduler({
-      executor,
-      resolve: (spec) => this.#resolveChunkData(spec),
-      install: (result) => {
-        this.#installChunkMesh(result);
-      },
-      onFailure: () => {
-        // The chunk stays unmeshed; the previous geometry (if any) stays
-        // visible, and the pool diagnostics count the failure.
-      },
-      priorityFor: (spec) => this.#priorityFor(spec),
-      ...(options.maxPending === undefined
-        ? {}
-        : { maxPending: options.maxPending }),
-      ...(options.maxDispatchesPerFrame === undefined
-        ? {}
-        : { maxDispatchesPerFrame: options.maxDispatchesPerFrame }),
-      ...(options.maxUploadsPerFrame === undefined
-        ? {}
-        : { maxUploadsPerFrame: options.maxUploadsPerFrame }),
-      ...(options.maxConcurrent === undefined
-        ? {}
-        : { maxConcurrent: options.maxConcurrent }),
-      ...(options.maxRetries === undefined
-        ? {}
-        : { maxRetries: options.maxRetries }),
-    });
+  constructor(options: {
+    readonly namespace: ChunkNamespace;
+    readonly root: THREE.Object3D;
+    readonly materials: MaterialAdapter;
+    readonly scheduler: ChunkScheduler;
+    /** Called once when this projection is disposed (adapter cleanup). */
+    readonly onDispose: () => void;
+  }) {
+    this.namespace = options.namespace;
+    this.root = options.root;
+    this.#materials = options.materials;
+    this.#scheduler = options.scheduler;
+    this.#onDispose = options.onDispose;
   }
 
   get nodeCount(): number {
@@ -229,6 +269,31 @@ class SceneAdapterImpl implements SceneAdapter {
     let count = 0;
     for (const chunks of this.#chunkMeshes.values()) count += chunks.size;
     return count;
+  }
+
+  /** Estimated GPU bytes of installed chunk meshes (diagnostics). */
+  get installedBytes(): number {
+    return this.#installedBytes;
+  }
+
+  /** Estimated draw calls of installed chunk meshes (diagnostics). */
+  get installedDrawCalls(): number {
+    return this.#installedDrawCalls;
+  }
+
+  /** Total triangles of installed chunk meshes (diagnostics). */
+  get installedTriangles(): number {
+    return this.#installedTriangles;
+  }
+
+  /** The projected group of one node id, or undefined. */
+  groupForNode(nodeId: NodeId): THREE.Object3D | undefined {
+    return this.#nodeProjections.get(nodeId)?.group;
+  }
+
+  /** World matrix of one projected volume (frustum priority). */
+  worldMatrixFor(volumeId: VolumeId): THREE.Matrix4 | undefined {
+    return this.#volumeWorldMatrices.get(volumeId);
   }
 
   rebind(store: DocumentStoreRead): void {
@@ -297,7 +362,7 @@ class SceneAdapterImpl implements SceneAdapter {
           // worker round-trip) and cancel any pending job for it.
           this.#disposeChunk(volume.volumeId, chunk.coordinate);
           this.#scheduler.cancelChunk({
-            namespace: "live",
+            namespace: this.namespace,
             volumeId: volume.volumeId,
             coordinate: chunk.coordinate,
             revision: chunk.revision,
@@ -313,66 +378,12 @@ class SceneAdapterImpl implements SceneAdapter {
     }
   }
 
-  flush(camera?: THREE.Camera): void {
-    if (camera !== undefined) this.#camera = camera;
-    this.#scheduler.flush();
-  }
-
-  diagnostics(): RendererDiagnostics {
-    const scheduler = this.#scheduler.diagnostics();
-    return {
-      pendingChunks: scheduler.pending,
-      inFlightMeshes: scheduler.inFlight,
-      installedChunks: this.chunkMeshCount,
-      triangles: this.#installedTriangles,
-      drawCallEstimate: this.#installedDrawCalls,
-      meshBytes: this.#installedBytes,
-      lastMeshMs: scheduler.pool.lastMeshMs,
-      averageMeshMs: scheduler.pool.averageMeshMs,
-      staleDropped: scheduler.pool.staleDropped,
-      cancelled: scheduler.pool.cancelled,
-      failed: scheduler.pool.failed,
-      uploadsThisFrame: scheduler.uploadsThisFrame,
-    };
-  }
-
-  clear(): void {
-    this.#unsubscribe?.();
-    this.#unsubscribe = undefined;
-    this.#store = undefined;
-    this.#camera = undefined;
-    this.#scheduler.cancelAll();
-    for (const volumeId of [...this.#volumeOwners.keys()]) {
-      this.#disposeChunk(volumeId, undefined);
-    }
-    for (const projection of this.#nodeProjections.values()) {
-      projection.group.removeFromParent();
-    }
-    this.#nodeProjections.clear();
-    this.#chunkMeshes.clear();
-    this.#volumeOwners.clear();
-    this.#latestRevision.clear();
-    this.#volumeWorldMatrices.clear();
-    this.#installedBytes = 0;
-    this.#installedDrawCalls = 0;
-    this.#installedTriangles = 0;
-    // Lifecycle replacement fully releases material resources too (S6.7):
-    // the cache is recreated lazily by the next rebind.
-    this.#materials.dispose();
-  }
-
-  objectForNode(nodeId: NodeId): THREE.Object3D | undefined {
-    return this.#nodeProjections.get(nodeId)?.group;
-  }
-
-  dispose(): void {
-    this.clear();
-    this.#scheduler.dispose();
-    this.#materials.dispose();
-  }
-
-  /** Copies the current chunk data for one scheduled chunk (dispatch time). */
-  #resolveChunkData(spec: ChunkScheduleSpec): ChunkMeshInput | undefined {
+  /**
+   * Copies the current chunk data for one scheduled chunk (dispatch
+   * time), always from THIS projection's store.
+   */
+  resolveChunkData(spec: ChunkScheduleSpec): ChunkMeshInput | undefined {
+    if (spec.namespace !== this.namespace) return undefined;
     const readView = this.#store?.getVolume(spec.volumeId);
     if (readView === undefined) return undefined;
     const values = readView.getChunk(spec.coordinate);
@@ -387,68 +398,9 @@ class SceneAdapterImpl implements SceneAdapter {
     };
   }
 
-  /**
-   * Visibility priority: 0 when the chunk's world box intersects the
-   * camera frustum, 1 otherwise. The frustum is rebuilt only when the
-   * camera changes; per-chunk work is a single box transform + test.
-   */
-  #priorityFor(spec: ChunkScheduleSpec): number {
-    const camera = this.#camera;
-    const worldMatrix = this.#volumeWorldMatrices.get(spec.volumeId);
-    if (camera === undefined || worldMatrix === undefined) return 1;
-    if (this.#frustumCamera !== camera) {
-      camera.updateMatrixWorld(true);
-      this.#viewProjection.multiplyMatrices(
-        camera.projectionMatrix,
-        camera.matrixWorldInverse,
-      );
-      this.#frustum.setFromProjectionMatrix(this.#viewProjection);
-      this.#frustumCamera = camera;
-    }
-    const minX = spec.coordinate[0] * CHUNK_EDGE;
-    const minY = spec.coordinate[1] * CHUNK_EDGE;
-    const minZ = spec.coordinate[2] * CHUNK_EDGE;
-    this.#chunkBox.min.set(minX, minY, minZ);
-    this.#chunkBox.max.set(
-      minX + CHUNK_EDGE,
-      minY + CHUNK_EDGE,
-      minZ + CHUNK_EDGE,
-    );
-    this.#chunkBox.applyMatrix4(worldMatrix);
-    return this.#frustum.intersectsBox(this.#chunkBox) ? 0 : 1;
-  }
-
-  readonly #frustum = new THREE.Frustum();
-  #frustumCamera: THREE.Camera | undefined;
-  readonly #viewProjection = new THREE.Matrix4();
-  readonly #chunkBox = new THREE.Box3();
-
-  #scheduleChunk(
-    volumeId: VolumeId,
-    coordinate: Vec3i,
-    revision: number,
-  ): void {
-    // Record the authoritative latest revision for install verification
-    // (both the rebind path and the commit path route through here).
-    let revisions = this.#latestRevision.get(volumeId);
-    if (revisions === undefined) {
-      revisions = new Map();
-      this.#latestRevision.set(volumeId, revisions);
-    }
-    revisions.set(chunkKey(coordinate), revision);
-    this.#scheduler.schedule({
-      namespace: "live",
-      volumeId,
-      coordinate,
-      revision,
-    });
-  }
-
   /** Installs one validated fresh mesh; superseded geometry is disposed. */
-  #installChunkMesh(result: ChunkMeshOutput): void {
-    // Preview namespaces never touch the live scene (explicit behavior:
-    // live and preview results are isolated by namespace).
-    if (result.namespace !== "live") return;
+  installChunkMesh(result: ChunkMeshOutput): void {
+    if (result.namespace !== this.namespace) return;
     const revisions = this.#latestRevision.get(result.volumeId);
     const latest = revisions?.get(chunkKey(result.coordinate));
     // Only a result matching the latest namespace, volume, coordinate,
@@ -530,6 +482,36 @@ class SceneAdapterImpl implements SceneAdapter {
     this.#installedTriangles += triangles;
   }
 
+  clear(): void {
+    this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
+    this.#store = undefined;
+    this.#scheduler.cancelNamespaceAll(this.namespace);
+    for (const volumeId of [...this.#volumeOwners.keys()]) {
+      this.#disposeChunk(volumeId, undefined);
+    }
+    for (const projection of this.#nodeProjections.values()) {
+      projection.group.removeFromParent();
+    }
+    this.#nodeProjections.clear();
+    this.#chunkMeshes.clear();
+    this.#volumeOwners.clear();
+    this.#latestRevision.clear();
+    this.#volumeWorldMatrices.clear();
+    this.#installedBytes = 0;
+    this.#installedDrawCalls = 0;
+    this.#installedTriangles = 0;
+  }
+
+  /** Removes the projection: clears state, root, and adapter bookkeeping. */
+  dispose(): void {
+    this.clear();
+    if (this.root instanceof THREE.Group) {
+      this.root.removeFromParent();
+    }
+    this.#onDispose();
+  }
+
   #materialForId(materialId: MaterialId): THREE.Material {
     const record = this.#store?.getDocument().materials[materialId];
     return record === undefined
@@ -584,9 +566,9 @@ class SceneAdapterImpl implements SceneAdapter {
           ? undefined
           : this.#nodeProjections.get(node.parentId)?.group;
       const currentParent = projection.group.parent;
-      if (currentParent !== (desiredParent ?? this.scene)) {
+      if (currentParent !== (desiredParent ?? this.root)) {
         if (currentParent !== null) projection.group.removeFromParent();
-        (desiredParent ?? this.scene).add(projection.group);
+        (desiredParent ?? this.root).add(projection.group);
       }
     }
   }
@@ -601,7 +583,7 @@ class SceneAdapterImpl implements SceneAdapter {
     for (const volumeId of projection.volumes) {
       if (!desired.has(volumeId)) {
         this.#disposeChunk(volumeId, undefined);
-        this.#scheduler.cancelVolume(volumeId);
+        this.#scheduler.cancelNamespaceVolume(this.namespace, volumeId);
         this.#volumeOwners.delete(volumeId);
       }
     }
@@ -641,7 +623,7 @@ class SceneAdapterImpl implements SceneAdapter {
     }
     for (const volumeId of subtreeVolumes) {
       this.#disposeChunk(volumeId, undefined);
-      this.#scheduler.cancelVolume(volumeId);
+      this.#scheduler.cancelNamespaceVolume(this.namespace, volumeId);
       this.#volumeOwners.delete(volumeId);
     }
     projection.group.removeFromParent();
@@ -701,6 +683,244 @@ class SceneAdapterImpl implements SceneAdapter {
       this.#volumeWorldMatrices.set(volumeId, threeMatrix);
     }
   }
+
+  /** Records the latest revision and schedules one chunk's mesh job. */
+  #scheduleChunk(
+    volumeId: VolumeId,
+    coordinate: Vec3i,
+    revision: number,
+  ): void {
+    // Record the authoritative latest revision for install verification
+    // (both the rebind path and the commit path route through here).
+    let revisions = this.#latestRevision.get(volumeId);
+    if (revisions === undefined) {
+      revisions = new Map();
+      this.#latestRevision.set(volumeId, revisions);
+    }
+    revisions.set(chunkKey(coordinate), revision);
+    this.#scheduler.schedule({
+      namespace: this.namespace,
+      volumeId,
+      coordinate,
+      revision,
+    });
+  }
+}
+
+/** True when a namespace is a valid `preview:<session>` namespace. */
+function isPreviewNamespace(namespace: string): namespace is ChunkNamespace {
+  return isValidChunkNamespace(namespace) && namespace !== "live";
+}
+
+class SceneAdapterImpl implements SceneAdapter {
+  readonly scene: THREE.Scene;
+  readonly #materials: MaterialAdapter;
+  readonly #scheduler: ChunkScheduler;
+  /** Every namespace projection, keyed by namespace ("live" always). */
+  readonly #projections = new Map<ChunkNamespace, ChunkProjection>();
+  #camera: THREE.Camera | undefined;
+
+  constructor(options: SceneAdapterOptions) {
+    this.scene = options.scene;
+    this.#materials = createMaterialAdapter();
+    const executor =
+      options.createWorker === undefined
+        ? createInProcessMeshingExecutor()
+        : createWorkerMeshingExecutor(options.createWorker());
+    this.#scheduler = createChunkScheduler({
+      executor,
+      resolve: (spec) => {
+        return this.#projections.get(spec.namespace)?.resolveChunkData(spec);
+      },
+      install: (result) => {
+        this.#projections.get(result.namespace)?.installChunkMesh(result);
+      },
+      onFailure: () => {
+        // The chunk stays unmeshed; the previous geometry (if any) stays
+        // visible, and the pool diagnostics count the failure.
+      },
+      priorityFor: (spec) => this.#priorityFor(spec),
+      ...(options.maxPending === undefined
+        ? {}
+        : { maxPending: options.maxPending }),
+      ...(options.maxDispatchesPerFrame === undefined
+        ? {}
+        : { maxDispatchesPerFrame: options.maxDispatchesPerFrame }),
+      ...(options.maxUploadsPerFrame === undefined
+        ? {}
+        : { maxUploadsPerFrame: options.maxUploadsPerFrame }),
+      ...(options.maxConcurrent === undefined
+        ? {}
+        : { maxConcurrent: options.maxConcurrent }),
+      ...(options.maxRetries === undefined
+        ? {}
+        : { maxRetries: options.maxRetries }),
+    });
+    const live = new ChunkProjection({
+      namespace: "live",
+      root: this.scene,
+      materials: this.#materials,
+      scheduler: this.#scheduler,
+      onDispose: () => {
+        this.#projections.delete("live");
+      },
+    });
+    this.#projections.set("live", live);
+  }
+
+  get nodeCount(): number {
+    return this.#projections.get("live")?.nodeCount ?? 0;
+  }
+
+  get chunkMeshCount(): number {
+    return this.#projections.get("live")?.chunkMeshCount ?? 0;
+  }
+
+  get previewProjectionCount(): number {
+    let count = 0;
+    for (const namespace of this.#projections.keys()) {
+      if (namespace !== "live") count += 1;
+    }
+    return count;
+  }
+
+  rebind(store: DocumentStoreRead): void {
+    this.clear();
+    this.#projections.get("live")?.rebind(store);
+  }
+
+  handleCommit(event: DocumentCommitted, store: DocumentStoreRead): void {
+    this.#projections.get("live")?.handleCommit(event, store);
+  }
+
+  projectPreview(
+    store: DocumentStoreRead,
+    namespace: string,
+  ): ScenePreviewProjection {
+    if (!isPreviewNamespace(namespace)) {
+      throw new Error(
+        `A preview projection namespace must be a bounded preview:<session> namespace (received ${namespace})`,
+      );
+    }
+    if (this.#projections.has(namespace)) {
+      throw new Error(
+        `The preview namespace ${namespace} is already projected`,
+      );
+    }
+    const root = new THREE.Group();
+    root.name = namespace;
+    this.scene.add(root);
+    const projection = new ChunkProjection({
+      namespace,
+      root,
+      materials: this.#materials,
+      scheduler: this.#scheduler,
+      onDispose: () => {
+        this.#projections.delete(namespace);
+      },
+    });
+    this.#projections.set(namespace, projection);
+    projection.rebind(store);
+    return {
+      get namespace() {
+        return projection.namespace;
+      },
+      get nodeCount() {
+        return projection.nodeCount;
+      },
+      get chunkMeshCount() {
+        return projection.chunkMeshCount;
+      },
+      dispose() {
+        projection.dispose();
+      },
+    };
+  }
+
+  flush(camera?: THREE.Camera): void {
+    if (camera !== undefined) this.#camera = camera;
+    this.#scheduler.flush();
+  }
+
+  diagnostics(): RendererDiagnostics {
+    const scheduler = this.#scheduler.diagnostics();
+    return {
+      pendingChunks: scheduler.pending,
+      inFlightMeshes: scheduler.inFlight,
+      installedChunks: this.chunkMeshCount,
+      triangles: this.#projections.get("live")?.installedTriangles ?? 0,
+      drawCallEstimate: this.#projections.get("live")?.installedDrawCalls ?? 0,
+      meshBytes: this.#projections.get("live")?.installedBytes ?? 0,
+      lastMeshMs: scheduler.pool.lastMeshMs,
+      averageMeshMs: scheduler.pool.averageMeshMs,
+      staleDropped: scheduler.pool.staleDropped,
+      cancelled: scheduler.pool.cancelled,
+      failed: scheduler.pool.failed,
+      uploadsThisFrame: scheduler.uploadsThisFrame,
+    };
+  }
+
+  clear(): void {
+    // Lifecycle replacement fully releases preview overlays too: a stale
+    // staged geometry must never survive into the next document.
+    for (const namespace of [...this.#projections.keys()]) {
+      if (namespace !== "live") {
+        this.#projections.get(namespace)?.dispose();
+      }
+    }
+    this.#projections.get("live")?.clear();
+    this.#camera = undefined;
+    // Lifecycle replacement fully releases material resources too (S6.7):
+    // the cache is recreated lazily by the next rebind.
+    this.#materials.dispose();
+  }
+
+  objectForNode(nodeId: NodeId): THREE.Object3D | undefined {
+    return this.#projections.get("live")?.groupForNode(nodeId);
+  }
+
+  dispose(): void {
+    this.clear();
+    this.#scheduler.dispose();
+    this.#materials.dispose();
+  }
+
+  /**
+   * Visibility priority: 0 when the chunk's world box intersects the
+   * camera frustum, 1 otherwise. The frustum is rebuilt only when the
+   * camera changes; per-chunk work is a single box transform + test.
+   */
+  #priorityFor(spec: ChunkScheduleSpec): number {
+    const projection = this.#projections.get(spec.namespace);
+    const camera = this.#camera;
+    const worldMatrix = projection?.worldMatrixFor(spec.volumeId);
+    if (camera === undefined || worldMatrix === undefined) return 1;
+    if (this.#frustumCamera !== camera) {
+      camera.updateMatrixWorld(true);
+      this.#viewProjection.multiplyMatrices(
+        camera.projectionMatrix,
+        camera.matrixWorldInverse,
+      );
+      this.#frustum.setFromProjectionMatrix(this.#viewProjection);
+      this.#frustumCamera = camera;
+    }
+    const minX = spec.coordinate[0] * CHUNK_EDGE;
+    const minY = spec.coordinate[1] * CHUNK_EDGE;
+    const minZ = spec.coordinate[2] * CHUNK_EDGE;
+    this.#chunkBox.min.set(minX, minY, minZ);
+    this.#chunkBox.max.set(
+      minX + CHUNK_EDGE,
+      minY + CHUNK_EDGE,
+      minZ + CHUNK_EDGE,
+    );
+    this.#chunkBox.applyMatrix4(worldMatrix);
+    return this.#frustum.intersectsBox(this.#chunkBox) ? 0 : 1;
+  }
+
+  readonly #frustum = new THREE.Frustum();
+  #frustumCamera: THREE.Camera | undefined;
+  readonly #viewProjection = new THREE.Matrix4();
+  readonly #chunkBox = new THREE.Box3();
 }
 
 /** Creates a scene adapter projecting into `options.scene`. */

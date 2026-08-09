@@ -16,6 +16,7 @@ import { createPanelIds } from "./panels/panel-utils.js";
 import { MaterialPanel, usePanelState } from "./materials/MaterialPanel.js";
 import { TimelinePanel } from "./timeline/TimelinePanel.js";
 import { AnimationInspector } from "./timeline/AnimationInspector.js";
+import { AiPanel } from "./ai/AiPanel.js";
 import { DEFAULT_PREVIEW_SIZE } from "@voxel-maker/renderer";
 import { handleCloseRequest } from "./close-request.js";
 import type { FileServiceResult, FileServiceStatus } from "./file-service.js";
@@ -723,6 +724,7 @@ export function App(): React.JSX.Element {
             controller={composition.timeline}
             editor={composition.editor}
           />
+          <AiPanel controller={composition.ai} />
         </aside>
       </main>
       <TimelinePanel

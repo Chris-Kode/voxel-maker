@@ -9,6 +9,7 @@ import {
 } from "./browser.js";
 import { isTauriRuntime } from "./detect.js";
 import {
+  TauriCredentialStore,
   TauriFilePicker,
   TauriImageStorage,
   TauriProjectStorage,
@@ -20,6 +21,8 @@ import type {
   ProjectStoragePort,
   RecoveryJournalPort,
 } from "@voxel-maker/storage";
+import type { CredentialStore } from "@voxel-maker/agent";
+import { MemoryCredentialStore } from "@voxel-maker/agent";
 import { createBrowserRecentProjects } from "../recent-projects.js";
 import type { RecentProjectsPort } from "../recent-projects.js";
 
@@ -31,6 +34,12 @@ export interface PlatformServices {
   readonly picker: FilePicker;
   /** Bounded recent-project list (scoped native storage). */
   readonly recent: RecentProjectsPort;
+  /**
+   * Provider credential store (plan S12.4, ADR-0010, ticket #34): the OS
+   * keychain in the Tauri shell; a per-window memory store in the plain
+   * browser dev shell (keys are never persisted there).
+   */
+  readonly credentials: CredentialStore;
 }
 
 export function createDefaultPlatform(): PlatformServices {
@@ -40,6 +49,7 @@ export function createDefaultPlatform(): PlatformServices {
       imageStorage: new TauriImageStorage(),
       picker: new TauriFilePicker(),
       recent: new TauriRecentProjects(),
+      credentials: new TauriCredentialStore(),
     };
   }
   const storage = new BrowserProjectStorage();
@@ -48,5 +58,9 @@ export function createDefaultPlatform(): PlatformServices {
     imageStorage: new BrowserImageStorage(),
     picker: new BrowserFilePicker(storage),
     recent: createBrowserRecentProjects(),
+    // The browser dev shell never persists keys: re-entering the key
+    // after a reload is the safe default (ADR-0010 keeps keys out of
+    // localStorage and other web storage).
+    credentials: new MemoryCredentialStore(),
   };
 }

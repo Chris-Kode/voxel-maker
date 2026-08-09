@@ -42,6 +42,7 @@ export {
   type ChunkSchedulerOptions,
 } from "./chunk-scheduler.js";
 export {
+  isValidChunkNamespace,
   meshingKey,
   meshingRequestTransfer,
   meshingResultTransfer,
@@ -67,6 +68,7 @@ export {
   type RendererDiagnostics,
   type SceneAdapter,
   type SceneAdapterOptions,
+  type ScenePreviewProjection,
 } from "./scene-adapter.js";
 export {
   isChunkMeshStale,

@@ -54,6 +54,18 @@ import {
   createTimelineController,
   type TimelineController,
 } from "./timeline/timeline-controller.js";
+import { createAiController, type AiController } from "./ai/ai-controller.js";
+import {
+  KEYCHAIN_SERVICE,
+  MemoryConsentStore,
+  MemoryCredentialStore,
+  OpenAIProvider,
+  Secret,
+  type AgentBudgets,
+  type ConsentStore,
+  type CredentialStore,
+  type ProviderAdapter,
+} from "@voxel-maker/agent";
 
 /**
  * Desktop application composition root (plan S6.2, ticket #15): the single
@@ -110,6 +122,13 @@ export interface DesktopComposition {
    * headless seam between the timeline UI and the session command bus.
    */
   readonly timeline: TimelineController;
+  /**
+   * AI assistant controller (plan S12.10/S12.14/S12.15, ticket #34): the
+   * headless seam between the AI panel, the bounded agent loop, and the
+   * staged viewport projection. Unconfigured or offline, the controller
+   * degrades to a clear status while every manual workflow keeps working.
+   */
+  readonly ai: AiController;
   dispose(): void;
 }
 
@@ -134,6 +153,12 @@ export interface CompositionOptions {
    */
   readonly recent?: RecentProjectsPort;
   /**
+   * Provider credential store (plan S12.4, ADR-0010, ticket #34). The
+   * platform services supply the OS keychain in the Tauri shell; tests
+   * and plain compositions default to a per-window memory store.
+   */
+  readonly credentials?: CredentialStore;
+  /**
    * Autosave debounce; defaults to 2000 ms. Tests may lower it.
    */
   readonly autosaveDelayMs?: number;
@@ -151,6 +176,28 @@ export interface CompositionOptions {
    * in-process executor so no browser worker is required.
    */
   readonly useMeshingWorker?: boolean;
+  /**
+   * AI service overrides (plan S12.10, ticket #34). The composition root
+   * defaults to the OpenAI adapter over the platform credential store
+   * with a per-window consent store; tests inject the deterministic
+   * provider and scripted stores through this seam.
+   */
+  readonly ai?: {
+    /** Provider-neutral chat adapter; defaults to the OpenAI adapter. */
+    readonly provider?: ProviderAdapter;
+    /** Default model; defaults to the provider's default model. */
+    readonly model?: string;
+    /** Credential store; defaults to the platform/OS-keychain store. */
+    readonly credentials?: CredentialStore;
+    /** Consent store; defaults to a per-window memory store. */
+    readonly consent?: ConsentStore;
+    /** Session budget overrides; every value is clamped to [0, default]. */
+    readonly budgets?: Partial<AgentBudgets>;
+    /** Virtual clock for the agent loop (tests). */
+    readonly clock?: { now(): number };
+    /** Simulated sleep for retry backoff (tests). */
+    readonly sleep?: (ms: number) => Promise<void>;
+  };
 }
 
 /**
@@ -303,6 +350,34 @@ export function createDesktopComposition(
     }
   });
 
+  const credentials =
+    options.ai?.credentials ??
+    options.credentials ??
+    new MemoryCredentialStore();
+  const consent = options.ai?.consent ?? new MemoryConsentStore();
+  const provider: ProviderAdapter =
+    options.ai?.provider ??
+    new OpenAIProvider({
+      getApiKey: async () => {
+        const stored = await credentials.get(KEYCHAIN_SERVICE, "openai");
+        return stored ?? new Secret("");
+      },
+    });
+  const ai = createAiController({
+    session,
+    editor,
+    adapter,
+    provider,
+    credentials,
+    consent,
+    ...(options.ai?.model === undefined ? {} : { model: options.ai.model }),
+    ...(options.ai?.budgets === undefined
+      ? {}
+      : { budgets: options.ai.budgets }),
+    ...(options.ai?.clock === undefined ? {} : { clock: options.ai.clock }),
+    ...(options.ai?.sleep === undefined ? {} : { sleep: options.ai.sleep }),
+  });
+
   return {
     session,
     editor,
@@ -322,7 +397,9 @@ export function createDesktopComposition(
     fileService,
     previewExport,
     timeline,
+    ai,
     dispose() {
+      ai.dispose();
       timeline.dispose();
       materialPanel.dispose();
       viewport.dispose();

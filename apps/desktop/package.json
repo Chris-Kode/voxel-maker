@@ -13,6 +13,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@tauri-apps/api": "catalog:",
+    "@tauri-apps/plugin-dialog": "catalog:",
+    "@voxel-maker/agent": "workspace:*",
     "@voxel-maker/animation": "workspace:*",
     "@voxel-maker/commands": "workspace:*",
     "@voxel-maker/document": "workspace:*",
@@ -25,8 +28,6 @@
     "@voxel-maker/shared": "workspace:*",
     "@voxel-maker/storage": "workspace:*",
     "@voxel-maker/voxel": "workspace:*",
-    "@tauri-apps/api": "catalog:",
-    "@tauri-apps/plugin-dialog": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "three": "catalog:"
