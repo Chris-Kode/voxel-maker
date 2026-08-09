@@ -102,6 +102,25 @@ describe("preview session creation (AC: mandatory base revision)", () => {
     ).toThrow();
   });
 
+  it("stages and applies with a maximum-length session id", () => {
+    const { store, bus } = liveFixture();
+    const longId = previewSessionId(`preview:${"x".repeat(120)}`);
+    const session = createPreviewSession({
+      live: store,
+      applyBus: bus,
+      sessionId: longId,
+    });
+    expect(
+      session.stage(
+        fillCommand("command:test:longid:0001", [0, 0, 0], [2, 2, 2]),
+      ).ok,
+    ).toBe(true);
+    const result = session.apply();
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(store.revision).toBe(2);
+    session.discard();
+  });
+
   it("exposes a distinct worker namespace per session", () => {
     const { store } = liveFixture();
     const a = createPreviewSession({

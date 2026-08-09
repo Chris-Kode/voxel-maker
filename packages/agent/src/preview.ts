@@ -220,6 +220,12 @@ class PreviewSessionImpl implements PreviewSession {
   readonly #store: PreviewStore;
   readonly #bus: CommandBus;
   readonly #applyBus: CommandBus | undefined;
+  /**
+   * Bounded session tag used inside derived transaction ids so a
+   * maximum-length session id can never push an id past the 128-char
+   * limit (transactionId validation).
+   */
+  readonly #idTag: string;
   #staged: Command[] = [];
   #ids = new Set<CommandId>();
   #voxelEstimate = 0;
@@ -235,6 +241,10 @@ class PreviewSessionImpl implements PreviewSession {
     this.#applyBus = state.applyBus;
     this.sessionId = state.sessionId;
     this.namespace = state.sessionId;
+    this.#idTag =
+      state.sessionId.length <= 96
+        ? state.sessionId
+        : state.sessionId.slice(0, 96);
     this.baseRevision = state.baseRevision;
     this.liveRevision = state.live.revision;
     this.documentId = state.store.getDocument().documentId;
@@ -333,7 +343,7 @@ class PreviewSessionImpl implements PreviewSession {
     }
     const result = this.#bus.executeTransaction([command], {
       transactionId: transactionId(
-        `transaction:staging:${String(this.#staged.length + 1)}:${this.sessionId}`,
+        `transaction:staging:${String(this.#staged.length + 1)}:${this.#idTag}`,
       ),
       expectedRevision: this.#store.revision,
       source: "ai",
@@ -425,7 +435,7 @@ class PreviewSessionImpl implements PreviewSession {
     const result = this.#applyBus.executeTransaction([...this.#staged], {
       transactionId:
         options.transactionId ??
-        transactionId(`transaction:ai:apply:${this.sessionId}`),
+        transactionId(`transaction:ai:apply:${this.#idTag}`),
       expectedRevision: this.baseRevision,
       source: "ai",
       ...(options.correlationId === undefined
