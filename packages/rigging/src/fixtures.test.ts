@@ -5,7 +5,11 @@ import {
   type SceneNode,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import { applyMatrix, quaternionToEulerXYZ, type Transform } from "@voxel-maker/math";
+import {
+  applyMatrix,
+  quaternionToEulerXYZ,
+  type Transform,
+} from "@voxel-maker/math";
 import {
   evaluateLocalTransform,
   evaluateNodeWorldTransforms,

@@ -37,6 +37,24 @@ interface PersistenceOutput {
     voxelSamples: { coordinate: number[]; before: number; after: number }[];
   };
   transactions: { label: string; accepted: boolean; revision: number }[];
+  animationReload: {
+    clipCountAfterReload: number;
+    createBounceAccepted: boolean;
+    addBounceTrackAccepted: boolean;
+    setBounceKeysAccepted: boolean;
+    moveAccepted: boolean;
+    timesAfterMove: number[];
+    timesAfterUndo: number[];
+    timesAfterRedo: number[];
+    undoMoveAccepted: boolean;
+    redoMoveAccepted: boolean;
+    editValueAccepted: boolean;
+    valueAfterEdit: number[] | null;
+    valueAfterUndo: number[] | null;
+    valueEditUndone: boolean;
+    undoValueAccepted: boolean;
+    reloadedRevision: number;
+  };
   durable: {
     firstSave: {
       status: string;
@@ -128,6 +146,34 @@ describe("headless persistence tracer", () => {
     expect(output.durable.secondSave.savedHashMatches).toBe(true);
     expect(output.durable.secondSave.backupMatchesFirstSave).toBe(true);
     expect(output.durable.secondSave.leftoverTempFiles).toEqual([]);
+
+    // Editing and undoing clips and keyframes after save and reload
+    // (ticket #30 acceptance): a fresh bus over the reloaded store authors
+    // a new clip, moves a keyframe with exact undo/redo, and edits a
+    // keyframe value with exact undo.
+    expect(output.animationReload.clipCountAfterReload).toBe(1);
+    expect(output.animationReload.createBounceAccepted).toBe(true);
+    expect(output.animationReload.addBounceTrackAccepted).toBe(true);
+    expect(output.animationReload.setBounceKeysAccepted).toBe(true);
+    expect(output.animationReload.moveAccepted).toBe(true);
+    expect(output.animationReload.timesAfterMove).toEqual([0, 1.5]);
+    expect(output.animationReload.timesAfterUndo).toEqual([0, 2]);
+    expect(output.animationReload.timesAfterRedo).toEqual([0, 1.5]);
+    expect(output.animationReload.undoMoveAccepted).toBe(true);
+    expect(output.animationReload.redoMoveAccepted).toBe(true);
+    expect(output.animationReload.editValueAccepted).toBe(true);
+    // The edited keyframe value is a 90-degree X rotation; after undo the
+    // original 45-degree value returns (x component sin(angle/2)).
+    expect(output.animationReload.valueAfterEdit?.[0]).toBeCloseTo(
+      Math.sin(Math.PI / 4),
+      9,
+    );
+    expect(output.animationReload.valueAfterUndo?.[0]).toBeCloseTo(
+      Math.sin(Math.PI / 8),
+      9,
+    );
+    expect(output.animationReload.valueEditUndone).toBe(true);
+    expect(output.animationReload.undoValueAccepted).toBe(true);
   });
 
   it("serializes byte-identically across fresh processes", () => {

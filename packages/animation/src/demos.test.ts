@@ -87,9 +87,7 @@ function projectedVolumeCorners(
     for (const x of [bounds.min[0], bounds.max[0]]) {
       for (const y of [bounds.min[1], bounds.max[1]]) {
         for (const z of [bounds.min[2], bounds.max[2]]) {
-          corners.push([
-            ...projected(state, node.nodeId, [x, y, z]),
-          ]);
+          corners.push([...projected(state, node.nodeId, [x, y, z])]);
         }
       }
     }
@@ -121,9 +119,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
     ];
     expect(creators.map((create) => create().animations)).toHaveLength(6);
     expect(
-      creators.every(
-        (create) => Object.keys(create().animations).length === 1,
-      ),
+      creators.every((create) => Object.keys(create().animations).length === 1),
     ).toBe(true);
   });
 
@@ -162,7 +158,12 @@ describe("definition-of-done animation demos (ticket #30)", () => {
 
       it("evaluates deterministically and never mutates base state", () => {
         const hashBefore = canonicalDocumentHash(document);
-        const times = [0, clip.duration / 3, clip.duration / 2, clip.duration - 1e-9];
+        const times = [
+          0,
+          clip.duration / 3,
+          clip.duration / 2,
+          clip.duration - 1e-9,
+        ];
         const first = times.map((time) =>
           evaluateAnimationRuntime(document, clip, time),
         );
@@ -264,7 +265,8 @@ describe("definition-of-done animation demos (ticket #30)", () => {
       const animatedX =
         localRotation === undefined
           ? NaN
-          : 2 * Math.atan2(localRotation.rotation[0], localRotation.rotation[3]);
+          : 2 *
+            Math.atan2(localRotation.rotation[0], localRotation.rotation[3]);
       expect(animatedX).toBeCloseTo(Math.PI / 3, 6);
     });
   });
@@ -301,9 +303,10 @@ describe("definition-of-done animation demos (ticket #30)", () => {
       const peak = evaluateAnimationRuntime(document, clip, 1);
       // Shoulder driven to 90 deg clamps at 60; elbow driven to 60 deg
       // clamps at 45; the wrist stays inside its 45-deg limit.
-      expect(
-        worldAngle(worldOf(peak, "node:rig:arm:link1"), "x"),
-      ).toBeCloseTo(Math.PI / 3, 6);
+      expect(worldAngle(worldOf(peak, "node:rig:arm:link1"), "x")).toBeCloseTo(
+        Math.PI / 3,
+        6,
+      );
       // Independent golden value: the wrist joint under the clamped chain
       // (Rx 60 -> T(4,0,0) -> Rz 45 -> T(4,0,0)) lands at
       // (4 + 2*sqrt(2), sqrt(2), sqrt(6)); the un-clamped chain would
@@ -324,9 +327,10 @@ describe("definition-of-done animation demos (ticket #30)", () => {
       const up = evaluateAnimationRuntime(document, clip, 0.5);
       const down = evaluateAnimationRuntime(document, clip, 1.5);
       // Driven to +60 deg, the flap clamps at the +30-deg limit.
-      expect(
-        worldAngle(worldOf(up, "node:rig:wings:right"), "z"),
-      ).toBeCloseTo(Math.PI / 6, 6);
+      expect(worldAngle(worldOf(up, "node:rig:wings:right"), "z")).toBeCloseTo(
+        Math.PI / 6,
+        6,
+      );
       // Driven to -90 deg, the flap clamps at the -45-deg limit.
       expect(
         worldAngle(worldOf(down, "node:rig:wings:right"), "z"),
@@ -350,7 +354,9 @@ describe("definition-of-done animation demos (ticket #30)", () => {
   });
 
   describe("simple character demo", () => {
-    const demo = ANIMATED_DEMOS.find((entry) => entry.kind === "simple-character");
+    const demo = ANIMATED_DEMOS.find(
+      (entry) => entry.kind === "simple-character",
+    );
     if (demo === undefined) throw new Error("simple-character demo missing");
     const { document, clip } = demo.create();
 
@@ -375,9 +381,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
         ),
       ).toBeLessThanOrEqual(Math.PI / 3 + 1e-9);
       expect(
-        Math.abs(
-          worldAngle(worldOf(peak, "node:rig:character:left-leg"), "x"),
-        ),
+        Math.abs(worldAngle(worldOf(peak, "node:rig:character:left-leg"), "x")),
       ).toBeLessThanOrEqual(Math.PI / 3 + 1e-9);
     });
   });
@@ -402,13 +406,9 @@ describe("definition-of-done animation demos (ticket #30)", () => {
         Math.abs(worldAngle(worldOf(half, "node:rig:sculpture:arm"), "z")),
       ).toBeCloseTo(Math.PI / 2, 6);
       // The support point of the column never drifts.
-      expect(
-        projected(
-          half,
-          "node:rig:sculpture:column",
-          [0, 0, 0],
-        ),
-      ).toEqual([0, 1, 0]);
+      expect(projected(half, "node:rig:sculpture:column", [0, 0, 0])).toEqual([
+        0, 1, 0,
+      ]);
     });
   });
 });

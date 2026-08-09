@@ -216,21 +216,36 @@ export function createContinuousWheelClip(): AnimationDescriptor {
         targetNodeId: nodeId("node:rig:wheel:wheel"),
         interpolation: "linear",
         keyframes: [
-          rotationKeyframe("keyframe:anim:wheel-continuous:0001", 0, [
-            0, 1, 0,
-          ], 0),
-          rotationKeyframe("keyframe:anim:wheel-continuous:0002", 0.5, [
-            0, 1, 0,
-          ], Math.PI / 2),
-          rotationKeyframe("keyframe:anim:wheel-continuous:0003", 1, [
-            0, 1, 0,
-          ], Math.PI),
-          rotationKeyframe("keyframe:anim:wheel-continuous:0004", 1.5, [
-            0, 1, 0,
-          ], (3 * Math.PI) / 2),
-          rotationKeyframe("keyframe:anim:wheel-continuous:0005", 2, [
-            0, 1, 0,
-          ], 2 * Math.PI),
+          rotationKeyframe(
+            "keyframe:anim:wheel-continuous:0001",
+            0,
+            [0, 1, 0],
+            0,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:wheel-continuous:0002",
+            0.5,
+            [0, 1, 0],
+            Math.PI / 2,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:wheel-continuous:0003",
+            1,
+            [0, 1, 0],
+            Math.PI,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:wheel-continuous:0004",
+            1.5,
+            [0, 1, 0],
+            (3 * Math.PI) / 2,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:wheel-continuous:0005",
+            2,
+            [0, 1, 0],
+            2 * Math.PI,
+          ),
         ],
       },
     ],
@@ -246,9 +261,12 @@ export function createContinuousWheelClip(): AnimationDescriptor {
  */
 export function createLinkedArmReachClip(): AnimationDescriptor {
   const shoulder = (time: number, angle: number) =>
-    rotationKeyframe(`keyframe:anim:arm-reach:shoulder:${String(time)}`, time, [
-      1, 0, 0,
-    ], angle);
+    rotationKeyframe(
+      `keyframe:anim:arm-reach:shoulder:${String(time)}`,
+      time,
+      [1, 0, 0],
+      angle,
+    );
   const elbow = (time: number, angle: number) =>
     rotationKeyframe(
       `keyframe:anim:arm-reach:elbow:${String(time)}`,
@@ -361,31 +379,51 @@ export function createCharacterWaveClip(): AnimationDescriptor {
         trackId: trackId("track:anim:character-wave:head"),
         targetNodeId: nodeId("node:rig:character:head"),
         interpolation: "linear",
-        keyframes: [key("head", 0, head, 0), key("head", 1, head, Math.PI / 2), key("head", 2, head, 0)],
+        keyframes: [
+          key("head", 0, head, 0),
+          key("head", 1, head, Math.PI / 2),
+          key("head", 2, head, 0),
+        ],
       },
       {
         trackId: trackId("track:anim:character-wave:right-arm"),
         targetNodeId: nodeId("node:rig:character:right-arm"),
         interpolation: "linear",
-        keyframes: [key("right-arm", 0, limb, 0), key("right-arm", 1, limb, Math.PI / 2), key("right-arm", 2, limb, 0)],
+        keyframes: [
+          key("right-arm", 0, limb, 0),
+          key("right-arm", 1, limb, Math.PI / 2),
+          key("right-arm", 2, limb, 0),
+        ],
       },
       {
         trackId: trackId("track:anim:character-wave:left-arm"),
         targetNodeId: nodeId("node:rig:character:left-arm"),
         interpolation: "linear",
-        keyframes: [key("left-arm", 0, limb, 0), key("left-arm", 1, limb, -Math.PI / 4), key("left-arm", 2, limb, 0)],
+        keyframes: [
+          key("left-arm", 0, limb, 0),
+          key("left-arm", 1, limb, -Math.PI / 4),
+          key("left-arm", 2, limb, 0),
+        ],
       },
       {
         trackId: trackId("track:anim:character-wave:right-leg"),
         targetNodeId: nodeId("node:rig:character:right-leg"),
         interpolation: "linear",
-        keyframes: [key("right-leg", 0, limb, 0), key("right-leg", 1, limb, Math.PI / 4), key("right-leg", 2, limb, 0)],
+        keyframes: [
+          key("right-leg", 0, limb, 0),
+          key("right-leg", 1, limb, Math.PI / 4),
+          key("right-leg", 2, limb, 0),
+        ],
       },
       {
         trackId: trackId("track:anim:character-wave:left-leg"),
         targetNodeId: nodeId("node:rig:character:left-leg"),
         interpolation: "linear",
-        keyframes: [key("left-leg", 0, limb, 0), key("left-leg", 1, limb, -Math.PI / 4), key("left-leg", 2, limb, 0)],
+        keyframes: [
+          key("left-leg", 0, limb, 0),
+          key("left-leg", 1, limb, -Math.PI / 4),
+          key("left-leg", 2, limb, 0),
+        ],
       },
     ],
   };
@@ -409,21 +447,36 @@ export function createAbstractSculptureClip(): AnimationDescriptor {
         targetNodeId: nodeId("node:rig:sculpture:column"),
         interpolation: "linear",
         keyframes: [
-          rotationKeyframe("keyframe:anim:abstract-turn:column:0001", 0, [
-            0, 1, 0,
-          ], 0),
-          rotationKeyframe("keyframe:anim:abstract-turn:column:0002", 1, [
-            0, 1, 0,
-          ], Math.PI / 2),
-          rotationKeyframe("keyframe:anim:abstract-turn:column:0003", 2, [
-            0, 1, 0,
-          ], Math.PI),
-          rotationKeyframe("keyframe:anim:abstract-turn:column:0004", 3, [
-            0, 1, 0,
-          ], (3 * Math.PI) / 2),
-          rotationKeyframe("keyframe:anim:abstract-turn:column:0005", 4, [
-            0, 1, 0,
-          ], 2 * Math.PI),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:column:0001",
+            0,
+            [0, 1, 0],
+            0,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:column:0002",
+            1,
+            [0, 1, 0],
+            Math.PI / 2,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:column:0003",
+            2,
+            [0, 1, 0],
+            Math.PI,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:column:0004",
+            3,
+            [0, 1, 0],
+            (3 * Math.PI) / 2,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:column:0005",
+            4,
+            [0, 1, 0],
+            2 * Math.PI,
+          ),
         ],
       },
       {
@@ -431,9 +484,24 @@ export function createAbstractSculptureClip(): AnimationDescriptor {
         targetNodeId: nodeId("node:rig:sculpture:arm"),
         interpolation: "linear",
         keyframes: [
-          rotationKeyframe("keyframe:anim:abstract-turn:arm:0", 0, [0, 0, 1], 0),
-          rotationKeyframe("keyframe:anim:abstract-turn:arm:1", 2, [0, 0, 1], Math.PI / 2),
-          rotationKeyframe("keyframe:anim:abstract-turn:arm:2", 4, [0, 0, 1], 0),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:arm:0",
+            0,
+            [0, 0, 1],
+            0,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:arm:1",
+            2,
+            [0, 0, 1],
+            Math.PI / 2,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:arm:2",
+            4,
+            [0, 0, 1],
+            0,
+          ),
         ],
       },
       {
@@ -441,8 +509,18 @@ export function createAbstractSculptureClip(): AnimationDescriptor {
         targetNodeId: nodeId("node:rig:sculpture:finial"),
         interpolation: "linear",
         keyframes: [
-          rotationKeyframe("keyframe:anim:abstract-turn:finial:0", 0, [0, 1, 0], 0),
-          rotationKeyframe("keyframe:anim:abstract-turn:finial:1", 4, [0, 1, 0], Math.PI),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:finial:0",
+            0,
+            [0, 1, 0],
+            0,
+          ),
+          rotationKeyframe(
+            "keyframe:anim:abstract-turn:finial:1",
+            4,
+            [0, 1, 0],
+            Math.PI,
+          ),
         ],
       },
     ],
@@ -476,7 +554,10 @@ export function createCharacterWaveDocument(): VoxelDocument {
 
 /** Abstract demo: the abstract sculpture rig with the turn clip. */
 export function createAbstractAnimationDocument(): VoxelDocument {
-  return withClip(createAbstractSculptureFixture(), createAbstractSculptureClip());
+  return withClip(
+    createAbstractSculptureFixture(),
+    createAbstractSculptureClip(),
+  );
 }
 
 /** One definition-of-done demo category (plan S10.15, ticket #30). */
