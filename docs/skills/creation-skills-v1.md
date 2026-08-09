@@ -11,6 +11,8 @@ lives in the `@voxel-maker/skills` package (plan S14) and contains:
   skills: furniture, architecture, vegetation, vehicle, humanoid,
   quadruped, and flying creature;
 - the **generic structural-check registry** (`src/checks.ts`);
+- the **capability check** (`src/capabilities.ts`) that decides whether a
+  skill is usable under an authorized tool-capability set;
 - the **visual-baseline** and **efficiency-limit** evaluators
   (`src/baselines.ts`, `src/efficiency.ts`);
 - the **provenance** helpers that record the active skill in transaction
@@ -76,10 +78,21 @@ by an explicit region in the options (extent per axis ≤ 2048, volume ≤
 | `region-nonempty` | `region` | the region contains at least one occupied voxel |
 | `material-present` | — | the document contains the skill target material |
 | `node-count-in-range` | `min`, `max` | document node count stays within `[min, max]` |
-| `symmetric-along-axis` | `axis`, `plane`, `region` | occupancy in the region is mirror-symmetric across the plane |
+| `symmetric-along-axis` | `axis`, `plane`, `region` | occupancy in the region is mirror-symmetric across the plane; a mirror twin outside the region is always a mismatch, so the verdict never reads occupancy outside the scan region |
 
 `runStructuralChecks(checks, store, context)` executes a skill's checks
-against a store and returns frozen pass/fail evidence.
+against a store and returns frozen pass/fail evidence. Check options are
+deep-frozen at registration, so a validated manifest's checks are fixed.
+
+## Capability check (plan S14.2)
+
+`requiredCapabilities(skill)` returns the capability classes
+(`inspect`/`mutate`) its allowed tools need; `skillUsableWith(skill,
+capabilities)` is true exactly when every allowed tool's capability class
+is authorized; `unauthorizedTools` names the rest. The registry validates
+tool *names*; the capability check validates that a skill is usable
+under the capability set of an agent run, so a skill can never silently
+depend on tools the run cannot call.
 
 ## Visual baselines and efficiency (plan S14.10)
 
