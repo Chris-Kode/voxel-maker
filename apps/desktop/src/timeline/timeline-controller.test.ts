@@ -15,6 +15,7 @@ import {
   setNodeTransformCommand,
 } from "@voxel-maker/commands";
 import { createDocumentSession, type DocumentSession } from "@voxel-maker/session";
+import { writeVxlProject, readVxlProject } from "@voxel-maker/formats";
 import { createEditorStore } from "@voxel-maker/editor";
 import {
   createTimelineController,
@@ -404,6 +405,60 @@ describe("timeline controller", () => {
       channel: "rotation",
       value: [0, 0, 0, 1],
     });
+    timeline.dispose();
+  });
+
+  it("persists authored clips through save and reload", () => {
+    const session = makeSession();
+    const timeline = controller(session);
+    openFixture(timeline, session);
+    timeline.createClip("wheel-spin", 2.5, "loop");
+    timeline.addTracks([WHEEL], "rotation");
+    const trackIdValue = state(timeline).tracks[0]?.track.trackId;
+    if (trackIdValue === undefined) throw new Error("missing track");
+    timeline.setKeyframe(trackIdValue, 0.5, {
+      channel: "rotation",
+      value: [0, 0.7071067811865476, 0, 0.7071067811865476],
+    });
+    timeline.setInterpolation(trackIdValue, "smoothstep");
+
+    // Save: the container round-trips the whole document, animations
+    // included (plan S5.x persistence; every authored change is a
+    // conforming command, so nothing extra needs special casing).
+    const current = session.current;
+    if (current === undefined) throw new Error("no open session");
+    const bytes = writeVxlProject({ document: current.store.getDocument() });
+    const reloaded = readVxlProject(bytes).document;
+
+    // Reload into a fresh session: the controller sees the clip again
+    // and can select it, key it, and undo within the reloaded history.
+    const reloadSession = makeSession();
+    reloadSession.open({ document: reloaded, source: "system" });
+    const reloadedController = createTimelineController({
+      session: reloadSession,
+      editor: createEditorStore(),
+    });
+    const clip = reloadedController.state.clips[0];
+    expect(clip?.name).toBe("wheel-spin");
+    expect(clip?.duration).toBe(2.5);
+    expect(clip?.loop).toBe("loop");
+    expect(clip?.tracks[0]?.interpolation).toBe("smoothstep");
+    expect(clip?.tracks[0]?.keyframes[0]?.time).toBe(0.5);
+    expect(clip?.tracks[0]?.keyframes[0]?.property.channel).toBe("rotation");
+    reloadedController.selectClip(clip?.animationId);
+    expect(reloadedController.state.selectedClipId).toBe(clip?.animationId);
+    // Keying the reloaded clip still works.
+    const keyError = reloadedController.setKeyframe(
+      clip?.tracks[0]?.trackId ?? trackId("missing"),
+      1,
+      {
+        channel: "rotation",
+        value: [0, 1, 0, 0],
+      },
+    );
+    expect(keyError).toBeUndefined();
+    expect(reloadedController.state.selectedClip?.tracks[0]?.keyframes).toHaveLength(2);
+    reloadedController.dispose();
     timeline.dispose();
   });
 

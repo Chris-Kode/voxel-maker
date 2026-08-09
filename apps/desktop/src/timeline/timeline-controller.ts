@@ -238,6 +238,40 @@ export function createTimelineController(
   let unsubscribeStore: (() => void) | undefined;
   let currentDocument: VoxelDocument | null = null;
 
+  /**
+   * Ids allocated by this controller must never collide with ids already
+   * reachable in the document (undo/redo and reload can restore them):
+   * `keyframe.set` silently updates an existing keyframe id, and the bus
+   * rejects duplicate track/animation ids. The seen set is seeded from
+   * the installed document on every lifecycle event and grows with every
+   * allocation, so generated ids are unique for the controller's
+   * lifetime even after save/reload or undo.
+   */
+  const seenIds = new Set<string>();
+
+  const seedSeenIds = (document: VoxelDocument): void => {
+    seenIds.clear();
+    for (const clip of Object.values(document.animations)) {
+      seenIds.add(clip.animationId);
+      for (const track of clip.tracks) {
+        seenIds.add(track.trackId);
+        for (const keyframe of track.keyframes) {
+          seenIds.add(keyframe.keyframeId);
+        }
+      }
+    }
+  };
+
+  const freshId = (prefix: string): string => {
+    let candidate: string;
+    do {
+      keyframeSequence += 1;
+      candidate = `${prefix}:${String(keyframeSequence)}`;
+    } while (seenIds.has(candidate));
+    seenIds.add(candidate);
+    return candidate;
+  };
+
   const nextCommandId = (): CommandId => {
     commandSequence += 1;
     return commandId(`command:timeline:${String(commandSequence)}`);
@@ -246,18 +280,11 @@ export function createTimelineController(
     transactionSequence += 1;
     return transactionId(`transaction:timeline:${String(transactionSequence)}`);
   };
-  const nextAnimationId = (): AnimationId => {
-    animationSequence += 1;
-    return animationId(`animation:timeline:${String(animationSequence)}`);
-  };
-  const nextTrackId = (): TrackId => {
-    trackSequence += 1;
-    return trackId(`track:timeline:${String(trackSequence)}`);
-  };
-  const nextKeyframeId = (): KeyframeId => {
-    keyframeSequence += 1;
-    return keyframeId(`keyframe:timeline:${String(keyframeSequence)}`);
-  };
+  const nextAnimationId = (): AnimationId =>
+    animationId(freshId("animation:timeline"));
+  const nextTrackId = (): TrackId => trackId(freshId("track:timeline"));
+  const nextKeyframeId = (): KeyframeId =>
+    keyframeId(freshId("keyframe:timeline"));
 
   const notOpen = (): WorkspaceError =>
     new WorkspaceError({
@@ -805,6 +832,7 @@ function channelProperty(
 
   const unsubscribeSession = session.subscribe((event) => {
     if (event.kind === "document-opened" || event.kind === "document-replaced") {
+      seedSeenIds(event.store.getDocument());
       unsubscribeStore?.();
       unsubscribeStore = event.store.subscribe(() => {
         // Refresh the playback projection and prune selection after
