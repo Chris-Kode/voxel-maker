@@ -223,6 +223,9 @@ importers:
 
   packages/agent:
     dependencies:
+      '@voxel-maker/commands':
+        specifier: workspace:*
+        version: link:../commands
       '@voxel-maker/document':
         specifier: workspace:*
         version: link:../document
@@ -235,6 +238,9 @@ importers:
       '@voxel-maker/shared':
         specifier: workspace:*
         version: link:../shared
+      '@voxel-maker/voxel':
+        specifier: workspace:*
+        version: link:../voxel
     devDependencies:
       typescript:
         specifier: 'catalog:'

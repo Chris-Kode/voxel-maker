@@ -25,6 +25,7 @@ import type { InspectionLimits } from "../limits.js";
 /** Stable error codes for missing references. */
 export const UNKNOWN_NODE_CODE = "UNKNOWN_NODE";
 export const UNKNOWN_VOLUME_CODE = "UNKNOWN_VOLUME";
+export const UNKNOWN_MATERIAL_CODE = "UNKNOWN_MATERIAL";
 export const UNKNOWN_ANIMATION_CODE = "UNKNOWN_ANIMATION";
 export const UNKNOWN_TRACK_CODE = "UNKNOWN_TRACK";
 
@@ -108,7 +109,7 @@ export function clampName(name: string, limits: InspectionLimits): string {
 
 /** True when `value` is an integer array of exactly three numbers. */
 export function isVec3i(
-  value: JsonValue,
+  value: JsonValue | undefined,
 ): value is readonly [number, number, number] {
   return (
     Array.isArray(value) &&
