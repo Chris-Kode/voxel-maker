@@ -4,6 +4,7 @@ import {
   DEFAULT_AI_APPLY_LABEL,
   MAX_AI_PROMPT_LENGTH,
 } from "./ai-controller.js";
+import { PANEL_FOCUS_IDS } from "../panels/panel-utils.js";
 
 /**
  * Integrated AI panel (plan S12.10/S12.14, ticket #34): prompt entry,
@@ -83,7 +84,12 @@ export function AiPanel({
   };
 
   return (
-    <section className="panel ai-panel" aria-label="AI assistant">
+    <section
+      className="panel ai-panel"
+      aria-label="AI assistant"
+      id={PANEL_FOCUS_IDS.ai}
+      tabIndex={-1}
+    >
       <h2>AI Assistant</h2>
       {!state.documentOpen ? (
         <p className="panel-empty">Open a document to use the AI assistant.</p>

@@ -5,6 +5,7 @@ import type {
   MaterialPanelEntry,
   MaterialPanelState,
 } from "./material-panel-controller.js";
+import { PANEL_FOCUS_IDS } from "../panels/panel-utils.js";
 
 /**
  * Materials panel (plan S7.13, ticket #21): the desktop view over
@@ -40,7 +41,12 @@ export function MaterialPanel({
 }): React.JSX.Element {
   const state = usePanelState(controller);
   return (
-    <section className="material-panel" aria-label="Materials panel">
+    <section
+      className="material-panel"
+      aria-label="Materials panel"
+      id={PANEL_FOCUS_IDS.materials}
+      tabIndex={-1}
+    >
       <header className="material-panel-header">
         <h2>Materials</h2>
         <button

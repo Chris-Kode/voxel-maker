@@ -458,6 +458,31 @@ describe("viewport DOM binding", () => {
     composition.dispose();
   });
 
+  it("leaves modified keys to the global shortcut service", async () => {
+    // The viewport's bare keys (1-6 views, F/P, overlay toggles) must not
+    // consume Ctrl/Cmd/Alt combinations: Ctrl+2 belongs to the shortcut
+    // service (pencil tool), never to the back view (ticket #43).
+    const { composition, host, unmount } = await mountSelectViewport("node");
+    await openFixture(composition);
+    frameFront(composition);
+    const before = composition.viewport.cameraState.direction;
+    host.ownerDocument.defaultView?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "2",
+        ctrlKey: true,
+        bubbles: true,
+      }),
+    );
+    expect(composition.viewport.cameraState.direction).toEqual(before);
+    // A bare 2 still switches to the back view.
+    host.ownerDocument.defaultView?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "2", bubbles: true }),
+    );
+    expect(composition.viewport.cameraState.direction).toEqual([0, 0, -1]);
+    unmount();
+    composition.dispose();
+  });
+
   it("cancels a region-mode drag on pointercancel without side effects", async () => {
     const { composition, host, unmount } = await mountSelectViewport("region");
     const viewport = composition.viewport;
