@@ -1506,3 +1506,62 @@ body {
     scroll-behavior: auto !important;
   }
 }
+/* Visual refinement evidence (plan S15.1-S15.9, ticket #40). */
+.ai-visual {
+  border: 1px solid #2a2f38;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.ai-image-consent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-image-consent p {
+  margin: 0;
+}
+
+.ai-image-consent select {
+  background: #10141a;
+  color: var(--text);
+  border: 1px solid #2a2f38;
+  border-radius: 5px;
+  padding: 5px 7px;
+  font: inherit;
+}
+
+.ai-refinement-eval {
+  border: 1px solid #2a2f38;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-refinement-eval p {
+  margin: 0;
+}
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent, #6ea8fe);
+  text-decoration: underline;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}

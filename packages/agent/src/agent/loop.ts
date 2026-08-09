@@ -27,6 +27,26 @@ import {
 } from "../provider/types.js";
 import { toToolError } from "../contract.js";
 import type { PreviewDiff, PreviewSession } from "../preview.js";
+import { critiqueFromText, type VisualCritique } from "../vision/critique.js";
+import {
+  imageConsentCovers,
+  imageConsentRequiredError,
+  type ImageTransmissionConsent,
+  type VisualRefinementPlan,
+} from "../vision/image-consent.js";
+import {
+  validateEvidenceRequest,
+  validateEvidenceSet,
+  type EvidenceCapture,
+  type VisualEvidenceSet,
+} from "../vision/evidence.js";
+import {
+  evaluateRefinement,
+  resolveRefinementPolicy,
+  type RefinementEvaluation,
+  type RefinementPolicy,
+} from "../vision/evaluation.js";
+import { measureStructure } from "../vision/structural.js";
 import {
   budgetLimitError,
   BudgetLedger,
@@ -69,6 +89,24 @@ export const AGENT_SYSTEM_PROMPT = [
   "- Your proposal is never applied automatically; a human approves or discards it.",
 ].join("\n");
 
+/**
+ * Fixed critique instruction for the visual refinement phase (plan
+ * S15.3/S15.4, ticket #40): the model receives the four standard views
+ * of its staged proposal and must (1) emit one bounded critique object
+ * and (2) stage corrections with mutation tools. The template carries
+ * the same safety/limit rules as the system prompt and never contains
+ * project data.
+ */
+export const DEFAULT_CRITIQUE_PROMPT = [
+  "Here are the fixed standard views (perspective, front, side, top) of your staged proposal, rendered with the standard preview protocol.",
+  "Review the images for defects and respond as follows:",
+  "- First, emit ONE critique object as JSON in your text: { view, issueCategory, affectedNodeIds, region?, evidence, suggestedCorrection, confidence }.",
+  "- Then stage corrections with mutation tools only. Corrections are ordinary staged commands and are reviewed by a human.",
+  "- Do not restate or re-apply the whole proposal; change only what the critique warrants.",
+  "- Image count, iteration, token, cost, duration, tool, command, and voxel budgets are hard limits and cannot be raised.",
+  "- If the images look correct, say so in one sentence and make no tool calls.",
+].join("\n");
+
 export interface AgentLoopOptions {
   /** Provider-neutral chat adapter; no vendor type reaches the loop. */
   readonly provider: ProviderAdapter;
@@ -104,6 +142,30 @@ export interface AgentLoopOptions {
    * the default assumes current, so headless runs stay deterministic.
    */
   readonly isLiveCurrent?: () => boolean;
+  /**
+   * Optional visual refinement phase (plan S15.5, ticket #40): after the
+   * model finishes its text/tool walk and before approval, the loop
+   * captures fixed standard-view evidence of the STAGED preview, asks
+   * the provider to critique it, and stages corrections through the same
+   * mutation tools. Corrections remain ordinary staged commands with the
+   * same Apply/Discard/conflict/undo semantics; the phase is bounded by
+   * the session image/iteration budgets and by the regression gate.
+   */
+  readonly refinement?: VisualRefinementConfig;
+}
+
+/** Visual refinement configuration (plan S15.3/S15.5, ticket #40). */
+export interface VisualRefinementConfig {
+  /** Evidence capture seam (renderer-based in the desktop; fake in tests). */
+  readonly capture: EvidenceCapture;
+  /** The approved per-session plan (views, count, resolution, budgets). */
+  readonly plan: VisualRefinementPlan;
+  /** Explicit image-transmission consent covering the plan (ADR-0010). */
+  readonly consent: ImageTransmissionConsent;
+  /** Optional gate policy overrides (clamped to the hard defaults). */
+  readonly policy?: Partial<RefinementPolicy>;
+  /** Optional critique instruction override (fixed template by default). */
+  readonly critiquePrompt?: string;
 }
 
 /** One projected progress event of a run (UI-facing, never persisted). */
@@ -117,7 +179,33 @@ export type AgentEvent =
       readonly result: ToolCallResult;
     }
   | { readonly kind: "usage"; readonly usage: ProviderUsage }
-  | { readonly kind: "error"; readonly error: Error };
+  | { readonly kind: "error"; readonly error: Error }
+  | {
+      readonly kind: "refine";
+      /** 1-based visual iteration that just completed. */
+      readonly iteration: number;
+      /** Transmitted evidence images so far. */
+      readonly imagesSent: number;
+      /** Parsed critique of this round (undefined when none was emitted). */
+      readonly critique: VisualCritique | undefined;
+      /** Corrections staged by this round. */
+      readonly correctionsStaged: number;
+      /** Iteration evaluation vs. the previous staged state. */
+      readonly evaluation: RefinementEvaluation | undefined;
+      /** True on the final round of the phase. */
+      readonly done: boolean;
+      /** Why the phase stopped (on `done`). */
+      readonly stopped:
+        | "no-corrections"
+        | "regression"
+        | "oscillation"
+        | "iteration-cap"
+        | "image-cap"
+        | "provider"
+        | "canceled"
+        | "completed"
+        | undefined;
+    };
 
 export type AgentRunReason =
   | "provider"
@@ -137,6 +225,15 @@ export type AgentRunResult =
       readonly rounds: number;
       readonly toolCalls: number;
       readonly usage: ProviderUsage;
+      /** Visual refinement summary; present when the phase ran. */
+      readonly refinement:
+        | {
+            readonly iterations: number;
+            readonly imagesSent: number;
+            /** Final evaluation vs. the pre-refinement staged baseline. */
+            readonly evaluation: RefinementEvaluation;
+          }
+        | undefined;
     }
   | {
       readonly ok: false;
@@ -274,6 +371,14 @@ class AgentSessionImpl implements AgentSession {
   readonly #clock: { now(): number };
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #budgets: AgentBudgets;
+  readonly #refinement: VisualRefinementConfig | undefined;
+  #lastRefinement:
+    | {
+        readonly iterations: number;
+        readonly imagesSent: number;
+        readonly evaluation: RefinementEvaluation;
+      }
+    | undefined;
   readonly #retry: RetryPolicy;
   readonly #requestTimeoutMs: number | undefined;
   readonly #maxOutputTokens: number;
@@ -309,6 +414,7 @@ class AgentSessionImpl implements AgentSession {
       options.sleep ??
       ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.#budgets = resolveAgentBudgets(options.budgets);
+    this.#refinement = options.refinement;
     this.#retry = options.retry ?? DEFAULT_RETRY_POLICY;
     this.#requestTimeoutMs = options.requestTimeoutMs;
     this.#maxOutputTokens = options.maxOutputTokens ?? 2048;
@@ -414,14 +520,24 @@ class AgentSessionImpl implements AgentSession {
           this.machine.state,
           roundOutcome.roundClass,
         )) {
-          if (next === "approve" && !this.#isLiveCurrent()) {
-            this.#failClosed();
-            return {
-              ok: false,
-              state: this.machine.state,
-              reason: "conflict",
-              error: revisionConflictError(),
-            };
+          if (next === "approve") {
+            // Visual refinement (plan S15.5, ticket #40): critique the
+            // staged proposal against fixed standard-view evidence and
+            // stage corrections BEFORE the human is asked to approve.
+            // Corrections are ordinary staged commands; failure, budget
+            // exhaustion, cancellation, or regression stops the phase and
+            // fails the run closed (the preview is released).
+            const refinement = await this.#runRefinementPhase();
+            if (refinement.kind === "failed") return refinement.result;
+            if (!this.#isLiveCurrent()) {
+              this.#failClosed();
+              return {
+                ok: false,
+                state: this.machine.state,
+                reason: "conflict",
+                error: revisionConflictError(),
+              };
+            }
           }
           this.machine.transition(next);
           this.#emit({ kind: "state", state: next });
@@ -444,6 +560,7 @@ class AgentSessionImpl implements AgentSession {
               rounds: this.#ledger.round,
               toolCalls: this.#ledger.toolCalls,
               usage: this.#usageSummary(),
+              refinement: this.#lastRefinement,
             };
           }
         }
@@ -524,6 +641,380 @@ class AgentSessionImpl implements AgentSession {
       );
     }
     return undefined;
+  }
+
+  /**
+   * Visual refinement phase (plan S15.5, ticket #40): capture the fixed
+   * standard views of the STAGED preview, ask the provider to critique
+   * them, and stage corrections through the same mutation tools, under
+   * the shared session budgets and the regression gate. Every correction
+   * is an ordinary staged command (same diff/Apply/Discard/conflict/undo
+   * semantics); the phase stops on no-corrections, regression,
+   * oscillation, the iteration/image caps, cancellation, or provider
+   * failure, and the final evaluation gates promotion.
+   */
+  async #runRefinementPhase(): Promise<
+    | { readonly kind: "skipped" }
+    | {
+        readonly kind: "ok";
+        readonly iterations: number;
+        readonly imagesSent: number;
+        readonly evaluation: RefinementEvaluation;
+      }
+    | { readonly kind: "failed"; readonly result: AgentRunResult }
+  > {
+    const config = this.#refinement;
+    if (config === undefined) return { kind: "skipped" };
+    const providerId = this.#provider.providerId;
+    const model = this.#provider.defaultModel;
+    if (
+      !imageConsentCovers(
+        config.consent,
+        {
+          providerId,
+          model,
+          views: config.plan.views,
+          imageCount: config.plan.imageCount,
+          resolution: config.plan.resolution,
+        },
+        this.#clock.now(),
+      )
+    ) {
+      return {
+        kind: "failed",
+        result: this.#failedResult("provider", imageConsentRequiredError()),
+      };
+    }
+    const policy = resolveRefinementPolicy(config.policy);
+    // Local baseline of the pre-refinement staged state: used only for
+    // the promotion evaluation, never transmitted.
+    const baseline = this.#captureStagedEvidence(config, false);
+    if (baseline.kind === "limit") {
+      return {
+        kind: "failed",
+        result: this.#failedResult("limit", baseline.error),
+      };
+    }
+    const seenHashes = new Set<string>([baseline.set.semanticHash]);
+    let before = baseline.set;
+    let beforeStructure = measureStructure(this.preview);
+    // Promotion baseline: the state at the START of the phase.
+    const initialStructure = beforeStructure;
+    let iterations = 0;
+    let oscillationDetected = false;
+    let evaluation: RefinementEvaluation | undefined;
+    let stopped:
+      | "no-corrections"
+      | "regression"
+      | "oscillation"
+      | "iteration-cap"
+      | "image-cap"
+      | "provider"
+      | "canceled"
+      | undefined;
+    for (;;) {
+      if (this.#cancelRequested || this.#abort.signal.aborted) {
+        stopped = "canceled";
+        break;
+      }
+      // Iteration cap ends the phase gracefully (the cap is a plan
+      // boundary, not a violation). The approved plan's own caps bind
+      // first (they can only be equal to or stricter than the session
+      // defaults).
+      if (
+        this.#ledger.visualIterations >=
+        Math.min(
+          this.#budgets.maxVisualIterations,
+          config.plan.maxVisualIterations,
+        )
+      ) {
+        stopped = "iteration-cap";
+        break;
+      }
+      // Image cap: a full evidence pass must still fit the remaining
+      // transmitted-image budget.
+      if (
+        this.#ledger.imagesSent + config.plan.imageCount >
+        Math.min(this.#budgets.maxImages, config.plan.maxImages)
+      ) {
+        stopped = "image-cap";
+        break;
+      }
+      const reserve = this.#ledger.reserveVisualIteration();
+      if (!reserve.ok) {
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", reserve.error),
+        };
+      }
+      // Critique requests are model rounds: they count against the
+      // session's hard round budget like any other provider request.
+      const round = this.#ledger.reserveRound();
+      if (!round.ok) {
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", round.error),
+        };
+      }
+      iterations += 1;
+      // The next transmitted pass: reserve + render the current staged
+      // state fresh (deterministic, so the bytes match the eval evidence).
+      const current = this.#captureStagedEvidence(config, true);
+      if (current.kind === "limit") {
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", current.error),
+        };
+      }
+      const request = this.#critiqueRequest(config, current.set);
+      const costError = this.#reserveCost(request);
+      if (costError !== undefined) {
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", costError),
+        };
+      }
+      const outcome = await this.#request(request);
+      if (outcome.kind === "canceled") {
+        stopped = "canceled";
+        break;
+      }
+      if (outcome.kind === "fatal") {
+        return {
+          kind: "failed",
+          result: this.#failedResult("provider", outcome.error),
+        };
+      }
+      if (outcome.kind === "round-error") {
+        const note: ChatMessage = {
+          role: "system",
+          content: `A visual refinement request failed (${outcome.error.family} ${outcome.error.code}). This is not a tool result; recover by changing the approach.`,
+        };
+        this.#messages.push(note);
+        this.transcript?.recordMessage(note);
+        const recorded = this.#ledger.recordError();
+        if (!recorded.ok) {
+          return {
+            kind: "failed",
+            result: this.#failedResult("cutoff", recorded.error),
+          };
+        }
+        if (
+          this.#ledger.consecutiveErrors >= this.#budgets.maxConsecutiveErrors
+        ) {
+          return {
+            kind: "failed",
+            result: this.#failedResult(
+              "cutoff",
+              budgetLimitError(
+                "consecutiveErrors",
+                this.#budgets.maxConsecutiveErrors,
+                this.#ledger.consecutiveErrors,
+              ),
+            ),
+          };
+        }
+        stopped = "provider";
+        break;
+      }
+      this.#ledger.resetErrors();
+      const stagedBefore = this.preview.stagedCount;
+      const processed = this.#processResponse(outcome.response);
+      if (processed.result !== undefined) {
+        return { kind: "failed", result: processed.result };
+      }
+      const correctionsStaged = this.preview.stagedCount - stagedBefore;
+      const critique = critiqueFromText(outcome.response.text);
+      // Local evidence of the corrected state (never transmitted): used
+      // for the regression gate and the promotion evaluation.
+      const after = this.#captureStagedEvidence(config, false);
+      if (after.kind === "limit") {
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", after.error),
+        };
+      }
+      const refinedStructure = measureStructure(this.preview);
+      evaluation = evaluateRefinement({
+        baseline: { structure: beforeStructure, evidence: before },
+        refined: { structure: refinedStructure, evidence: after.set },
+        policy,
+        oscillationDetected: seenHashes.has(after.set.semanticHash),
+      });
+      // A round that leaves the staged state byte-identical to its
+      // predecessor made no progress (no corrections, or no-op
+      // corrections): stop with no-corrections.
+      const noChange = after.set.semanticHash === before.semanticHash;
+      // Oscillation is a RETURN to a state seen before the immediate
+      // predecessor (a no-op round is not oscillation).
+      const earlierHashes = new Set(seenHashes);
+      earlierHashes.delete(before.semanticHash);
+      const oscillation = earlierHashes.has(after.set.semanticHash);
+      const regressed = evaluation.regressions.length > 0;
+      if (oscillation) oscillationDetected = true;
+      this.#emit({
+        kind: "refine",
+        iteration: iterations,
+        imagesSent: this.#ledger.imagesSent,
+        critique,
+        correctionsStaged,
+        evaluation,
+        done: noChange || oscillation || regressed,
+        stopped: noChange
+          ? "no-corrections"
+          : oscillation
+            ? "oscillation"
+            : regressed
+              ? "regression"
+              : undefined,
+      });
+      seenHashes.add(after.set.semanticHash);
+      if (noChange || oscillation || regressed) {
+        stopped = noChange
+          ? "no-corrections"
+          : oscillation
+            ? "oscillation"
+            : "regression";
+        break;
+      }
+      before = after.set;
+      beforeStructure = refinedStructure;
+    }
+    if (stopped === "canceled") {
+      return { kind: "failed", result: this.#canceledResult() };
+    }
+    // Final promotion evaluation vs. the ORIGINAL pre-refinement baseline.
+    const finalAfter = this.#captureStagedEvidence(config, false);
+    if (finalAfter.kind === "limit") {
+      return {
+        kind: "failed",
+        result: this.#failedResult("limit", finalAfter.error),
+      };
+    }
+    const finalStructure = measureStructure(this.preview);
+    const finalEvaluation = evaluateRefinement({
+      baseline: { structure: initialStructure, evidence: baseline.set },
+      refined: { structure: finalStructure, evidence: finalAfter.set },
+      policy,
+      oscillationDetected,
+    });
+    this.#emit({
+      kind: "refine",
+      iteration: iterations,
+      imagesSent: this.#ledger.imagesSent,
+      critique: undefined,
+      correctionsStaged: 0,
+      evaluation: finalEvaluation,
+      done: true,
+      stopped,
+    });
+    this.#lastRefinement = {
+      iterations,
+      imagesSent: this.#ledger.imagesSent,
+      evaluation: finalEvaluation,
+    };
+    return {
+      kind: "ok",
+      iterations,
+      imagesSent: this.#ledger.imagesSent,
+      evaluation: finalEvaluation,
+    };
+  }
+
+  /**
+   * Captures staged evidence. When `transmit` is true the image budget
+   * is reserved BEFORE capture (a limit violation fails before render
+   * work or allocation) because those images leave the device; local
+   * evidence captures never transmit and never consume the image budget.
+   */
+  #captureStagedEvidence(
+    config: VisualRefinementConfig,
+    transmit: boolean,
+  ):
+    | { readonly kind: "ok"; readonly set: VisualEvidenceSet }
+    | {
+        readonly kind: "limit";
+        readonly error: WorkspaceError;
+      } {
+    if (transmit) {
+      for (let i = 0; i < config.plan.imageCount; i += 1) {
+        const reserve = this.#ledger.reserveImage();
+        if (!reserve.ok) return { kind: "limit", error: reserve.error };
+      }
+    }
+    let set: VisualEvidenceSet;
+    try {
+      const request = validateEvidenceRequest({
+        store: this.preview,
+        source: "preview",
+        sessionId: this.preview.sessionId,
+        views: config.plan.views,
+        width: config.plan.resolution,
+        height: config.plan.resolution,
+      });
+      set = validateEvidenceSet(config.capture.captureEvidence(request));
+    } catch (error) {
+      if (error instanceof WorkspaceError) {
+        return { kind: "limit", error };
+      }
+      return {
+        kind: "limit",
+        error: new WorkspaceError({
+          family: "internal",
+          code: "EVIDENCE_CAPTURE_FAILED",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Visual evidence capture failed",
+        }),
+      };
+    }
+    return { kind: "ok", set };
+  }
+
+  /** Builds one critique request carrying the current staged evidence. */
+  #critiqueRequest(
+    config: VisualRefinementConfig,
+    evidence: VisualEvidenceSet,
+  ): ProviderChatRequest {
+    // Compact structural context alongside the images (S15.3): the model
+    // sees bounded occupancy/bounds/materials so its critique is grounded
+    // in structure, not pixels alone.
+    const structure = measureStructure(this.preview);
+    const bounds =
+      structure.bounds === undefined
+        ? "empty"
+        : `[${String(structure.bounds.min)}..${String(structure.bounds.max)}]`;
+    const images = evidence.images.map((image) => ({
+      mimeType: "image/png" as const,
+      bytes: image.pngBytes,
+      view: image.view,
+      width: image.width,
+      height: image.height,
+      revision: image.revision,
+      source: image.source,
+    }));
+    return {
+      model: this.#provider.defaultModel,
+      messages: [
+        ...this.#messages,
+        {
+          role: "user",
+          content:
+            (config.critiquePrompt ?? DEFAULT_CRITIQUE_PROMPT) +
+            `\nEvidence: ${String(evidence.images.length)} standard views ` +
+            `(${String(evidence.images[0]?.width ?? 0)}px), revision ` +
+            `${String(evidence.revision)}, semantic hash ` +
+            `${evidence.semanticHash}. ` +
+            `Structure: ${String(structure.occupiedVoxels)} occupied voxels, ` +
+            `${String(structure.nonEmptyChunks)} chunks, ` +
+            `${String(structure.materialCount)} materials, bounds ${bounds}.`,
+          images,
+        },
+      ],
+      tools: [...this.#inspector.contracts, ...this.#mutator.contracts],
+      maxTokens: this.#maxOutputTokens,
+    };
   }
 
   /**

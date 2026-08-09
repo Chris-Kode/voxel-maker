@@ -18,11 +18,13 @@ import { autoConfirmPrompts } from "../test-prompts.js";
 import { AiPanel } from "./AiPanel.js";
 import {
   createConsent,
+  createImageConsent,
   DeterministicProvider,
   DISCLOSURE_CATEGORIES,
   KEYCHAIN_SERVICE,
   MemoryConsentStore,
   MemoryCredentialStore,
+  MemoryImageConsentStore,
   Secret,
   type DeterministicStep,
   type ToolCall,
@@ -138,6 +140,7 @@ function mountPanel(
     readonly script?: readonly DeterministicStep[];
     readonly withKey?: boolean;
     readonly withConsent?: boolean;
+    readonly withImageConsent?: boolean;
   } = {},
 ): Mounted {
   const clock = new VirtualClock();
@@ -148,6 +151,7 @@ function mountPanel(
   });
   const credentials = new MemoryCredentialStore();
   const consent = new MemoryConsentStore();
+  const imageConsentStore = new MemoryImageConsentStore();
   if (options.withKey !== false) {
     void credentials.save(
       KEYCHAIN_SERVICE,
@@ -167,11 +171,31 @@ function mountPanel(
       }),
     );
   }
+  if (options.withImageConsent === true) {
+    void imageConsentStore.save(
+      createImageConsent({
+        providerId: "deterministic",
+        model: "deterministic-model",
+        views: ["perspective", "front", "side", "top"],
+        maxImages: 12,
+        maxResolution: 512,
+        estimatedCostUsd: 0.01,
+        clock,
+      }),
+    );
+  }
   const composition = createDesktopComposition({
     storage: new MemoryProjectStorage(),
     picker: createFakePicker(),
     prompts: autoConfirmPrompts,
-    ai: { provider, credentials, consent, clock, sleep: clock.sleep },
+    ai: {
+      provider,
+      credentials,
+      consent,
+      imageConsentStore,
+      clock,
+      sleep: clock.sleep,
+    },
   });
   if (options.withDocument !== false) {
     composition.session.open({ document: fixtureDocument(), source: "system" });
@@ -457,6 +481,88 @@ describe("ai panel", () => {
       button(mounted.panel, "Dismiss").click();
     });
     expect(mounted.panel.textContent).toContain("Describe the edit");
+    mounted.unmount();
+  });
+});
+
+describe("ai panel: visual refinement (ticket #40)", () => {
+  it("shows the privacy policy and approves image transmission", async () => {
+    const mounted = mountPanel({ withImageConsent: false });
+    await act(async () => {
+      await mounted.composition.ai.refreshStatus();
+    });
+    expect(mounted.panel.textContent).toContain(
+      "Refine proposals with standard-view images",
+    );
+    // Images are off by default: no consent is stored, and the policy is
+    // only disclosed after the user opts in.
+    const toggle = mounted.panel.querySelector<HTMLInputElement>(
+      'input[aria-label="Enable visual refinement evidence"]',
+    );
+    expect(toggle?.checked).toBe(false);
+    expect(mounted.panel.textContent).not.toContain("privacy policy");
+    act(() => {
+      toggle?.click();
+    });
+    // Enabling discloses the recorded provider privacy policy.
+    expect(mounted.panel.textContent).toContain("privacy policy");
+    expect(mounted.panel.querySelector('a[href*="openai.com"]')).not.toBeNull();
+    await act(async () => {
+      button(mounted.panel, "Approve image transmission").click();
+      await flushAsync();
+    });
+    expect(mounted.panel.textContent).toContain("Image transmission approved");
+    expect(mounted.composition.ai.state.imageConsent?.maxResolution).toBe(512);
+    mounted.unmount();
+  });
+
+  it("runs with visual evidence and renders the evaluation summary", async () => {
+    const REFINE_SCRIPT: readonly DeterministicStep[] = [
+      ...SUCCESS_SCRIPT,
+      {
+        text: 'Critique: {"view":"front","issueCategory":"geometry-gap","affectedNodeIds":["node:ai:child"],"evidence":"A gap is visible.","confidence":0.8}',
+        toolCalls: [
+          {
+            id: "call_correction",
+            name: "fillBox",
+            arguments: {
+              volumeId: "volume:ai:0001",
+              region: { min: [1, 0, 0], max: [2, 1, 1] },
+              material: 1,
+            },
+          },
+        ],
+      },
+      { text: "The images look correct now." },
+    ];
+    const mounted = mountPanel({
+      script: REFINE_SCRIPT,
+      withImageConsent: true,
+    });
+    await act(async () => {
+      await mounted.composition.ai.refreshStatus();
+    });
+    const toggle = mounted.panel.querySelector<HTMLInputElement>(
+      'input[aria-label="Enable visual refinement evidence"]',
+    );
+    expect(toggle?.disabled).toBe(false);
+    act(() => {
+      toggle?.click();
+    });
+    const prompt = textarea(mounted.panel, "AI edit request");
+    act(() => {
+      setValue(prompt, "Add a voxel to the box");
+    });
+    await act(async () => {
+      button(mounted.panel, "Run").click();
+      await flushAsync();
+    });
+    expect(mounted.panel.textContent).toContain("Visual refinement evaluation");
+    expect(mounted.panel.textContent).toContain("visual similarity");
+    expect(mounted.panel.textContent).toContain("2 visual iterations");
+    // The parsed critique is surfaced in the review panel.
+    expect(mounted.panel.textContent).toContain("Last critique:");
+    expect(mounted.panel.textContent).toContain("geometry-gap");
     mounted.unmount();
   });
 });

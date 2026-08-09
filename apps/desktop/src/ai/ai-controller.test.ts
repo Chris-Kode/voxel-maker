@@ -18,13 +18,17 @@ import {
 import { autoConfirmPrompts } from "../test-prompts.js";
 import {
   createConsent,
+  createImageConsent,
   DeterministicProvider,
   DISCLOSURE_CATEGORIES,
   KEYCHAIN_SERVICE,
   MemoryConsentStore,
   MemoryCredentialStore,
+  MemoryImageConsentStore,
   Secret,
+  createFakeEvidenceCapture,
   type DeterministicStep,
+  type EvidenceCapture,
   type ToolCall,
 } from "@voxel-maker/agent";
 
@@ -144,6 +148,8 @@ function createHarness(
     readonly script?: readonly DeterministicStep[];
     readonly withKey?: boolean;
     readonly withConsent?: boolean;
+    readonly withImageConsent?: boolean;
+    readonly capture?: EvidenceCapture;
   } = {},
 ): Harness {
   const clock = new VirtualClock();
@@ -154,6 +160,7 @@ function createHarness(
   });
   const credentials = new MemoryCredentialStore();
   const consent = new MemoryConsentStore();
+  const imageConsentStore = new MemoryImageConsentStore();
   if (options.withKey !== false) {
     void credentials.save(
       KEYCHAIN_SERVICE,
@@ -173,11 +180,32 @@ function createHarness(
       }),
     );
   }
+  if (options.withImageConsent === true) {
+    void imageConsentStore.save(
+      createImageConsent({
+        providerId: "deterministic",
+        model: "deterministic-model",
+        views: ["perspective", "front", "side", "top"],
+        maxImages: 12,
+        maxResolution: 512,
+        estimatedCostUsd: 0.01,
+        clock,
+      }),
+    );
+  }
   const composition = createDesktopComposition({
     storage: new MemoryProjectStorage(),
     picker: createFakePicker(),
     prompts: autoConfirmPrompts,
-    ai: { provider, credentials, consent, clock, sleep: clock.sleep },
+    ai: {
+      provider,
+      credentials,
+      consent,
+      imageConsentStore,
+      clock,
+      sleep: clock.sleep,
+      ...(options.capture === undefined ? {} : { capture: options.capture }),
+    },
   });
   composition.session.open({ document: fixtureDocument(), source: "system" });
   return {
@@ -651,6 +679,148 @@ describe("ai controller", () => {
     await h.composition.ai.refreshStatus();
     await h.composition.ai.run("Add a voxel to the box");
     expect(h.composition.ai.state.activity.length).toBeLessThanOrEqual(48);
+    h.dispose();
+  });
+});
+
+describe("ai controller: visual refinement (ticket #40)", () => {
+  const REFINE_SCRIPT: readonly DeterministicStep[] = [
+    ...SUCCESS_SCRIPT,
+    {
+      text: 'Critique: {"view":"front","issueCategory":"geometry-gap","affectedNodeIds":["node:ai:child"],"evidence":"A gap is visible.","suggestedCorrection":"Extend the box.","confidence":0.8}',
+      toolCalls: [
+        {
+          id: "call_correction",
+          name: "fillBox",
+          arguments: {
+            volumeId: "volume:ai:0001",
+            region: { min: [1, 0, 0], max: [2, 1, 1] },
+            material: 1,
+          },
+        },
+      ],
+    },
+    { text: "The images look correct now." },
+  ];
+
+  function enableVisual(h: Harness): void {
+    h.composition.ai.setVisualEnabled(true);
+    expect(h.composition.ai.state.visualEnabled).toBe(true);
+  }
+
+  it("approves image transmission under a bounded per-session plan", async () => {
+    const h = createHarness();
+    await h.composition.ai.refreshStatus();
+    expect(h.composition.ai.state.imageConsent).toBeUndefined();
+    const approved = await h.composition.ai.consentImages(512);
+    expect(approved).toBe(true);
+    const state = h.composition.ai.state;
+    expect(state.imageConsent?.providerId).toBe("deterministic");
+    expect(state.imageConsent?.maxResolution).toBe(512);
+    expect(state.imageConsent?.views).toHaveLength(4);
+    expect(state.refinementPlan?.imageCount).toBe(4);
+    expect(state.refinementPlan?.maxImages).toBe(12);
+    expect(state.refinementPlan?.maxVisualIterations).toBe(3);
+    h.dispose();
+  });
+
+  it("runs the visual refinement phase and reports iterations and images", async () => {
+    const h = createHarness({
+      script: REFINE_SCRIPT,
+      capture: createFakeEvidenceCapture(),
+    });
+    await h.composition.ai.refreshStatus();
+    await h.composition.ai.consentImages(8);
+    enableVisual(h);
+    await h.composition.ai.run("Add a voxel to the box");
+
+    const state = h.composition.ai.state;
+    expect(state.phase).toBe("approve");
+    expect(state.refinement?.iterations).toBe(2);
+    expect(state.refinement?.imagesSent).toBe(8);
+    expect(state.refinement?.evaluation?.promotable).toBe(true);
+    // Corrections are ordinary staged commands in the same diff.
+    expect(state.diff?.stagedCommandCount).toBe(2);
+    expect(
+      state.activity.some((entry) =>
+        entry.message.includes("Visual refinement iteration"),
+      ),
+    ).toBe(true);
+    h.dispose();
+  });
+
+  it("never transmits evidence when image consent is missing", async () => {
+    const h = createHarness({
+      script: REFINE_SCRIPT,
+      capture: createFakeEvidenceCapture(),
+    });
+    await h.composition.ai.refreshStatus();
+    enableVisual(h);
+    await h.composition.ai.run("Add a voxel to the box");
+    // No stored image consent: the refinement phase is skipped entirely
+    // and the text proposal still reaches approval — no evidence leaves
+    // the device.
+    expect(h.composition.ai.state.phase).toBe("approve");
+    expect(h.composition.ai.state.refinement).toBeUndefined();
+    expect(h.composition.ai.state.diff?.stagedCommandCount).toBe(1);
+    h.dispose();
+  });
+
+  it("gates regression promotion and requires an explicit override", async () => {
+    const regressionScript: readonly DeterministicStep[] = [
+      ...SUCCESS_SCRIPT,
+      {
+        text: 'Critique: {"view":"any","issueCategory":"other","affectedNodeIds":[],"evidence":"Delete it all.","confidence":1}',
+        toolCalls: [
+          {
+            id: "call_delete",
+            name: "deleteRegion",
+            arguments: {
+              volumeId: "volume:ai:0001",
+              region: { min: [0, 0, 0], max: [5, 5, 5] },
+            },
+          },
+        ],
+      },
+    ];
+    const h = createHarness({
+      script: regressionScript,
+      capture: createFakeEvidenceCapture(),
+    });
+    await h.composition.ai.refreshStatus();
+    await h.composition.ai.consentImages(8);
+    enableVisual(h);
+    await h.composition.ai.run("Add a voxel to the box");
+
+    const state = h.composition.ai.state;
+    expect(state.phase).toBe("approve");
+    expect(state.refinement?.evaluation?.promotable).toBe(false);
+    expect(state.refinement?.evaluation?.regressions).toContain(
+      "occupied-voxel-loss",
+    );
+    // The regression gate blocks normal Apply…
+    const before = h.composition.session.current?.revision ?? -1;
+    h.composition.ai.apply("gated");
+    expect(h.composition.ai.state.phase).toBe("approve");
+    expect(h.composition.session.current?.revision).toBe(before);
+    // …and the explicit human override promotes it as one labeled entry.
+    h.composition.ai.applyForced("explicit promote");
+    expect(h.composition.ai.state.phase).toBe("idle");
+    expect(h.composition.ai.state.applied?.label).toBe("explicit promote");
+    const current = h.composition.session.current;
+    if (current === undefined) throw new Error("no session");
+    expect(current.bus.historySnapshot().past).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("revokes image consent and disables evidence", async () => {
+    const h = createHarness();
+    await h.composition.ai.refreshStatus();
+    await h.composition.ai.consentImages();
+    expect(h.composition.ai.state.imageConsent).toBeDefined();
+    await h.composition.ai.clearImageConsent();
+    expect(h.composition.ai.state.imageConsent).toBeUndefined();
+    expect(h.composition.ai.state.refinementPlan).toBeUndefined();
     h.dispose();
   });
 });

@@ -11,8 +11,10 @@ import {
   streamToResponse,
   validateToolCall,
   DEFAULT_RETRY_POLICY,
+  estimateImageTokens,
   estimateRequestTokens,
   estimateTextTokens,
+  type ChatImage,
   type ChatMessage,
   type ProviderEvent,
   type ToolCall,
@@ -361,5 +363,45 @@ describe("ProviderError interop", () => {
         new WorkspaceError({ family: "limit", code: "X", message: "y" }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("estimateImageTokens (plan S15.3, ticket #40)", () => {
+  it("charges the flat low-detail rate the v1 adapter sends", () => {
+    // The adapter transmits every evidence image at detail:"low", which
+    // OpenAI bills as a flat 85 tokens per image regardless of size.
+    expect(estimateImageTokens({ width: 512, height: 512 })).toBe(85);
+    expect(estimateImageTokens({ width: 1024, height: 1024 })).toBe(85);
+    expect(estimateImageTokens({ width: 1, height: 1 })).toBe(85);
+    expect(estimateImageTokens({ width: 2048, height: 2048 })).toBe(85);
+  });
+
+  it("counts image tokens in whole-request estimates and budgets", () => {
+    const image: ChatImage = {
+      mimeType: "image/png",
+      bytes: new Uint8Array([1, 2, 3]),
+      view: "front",
+      width: 1024,
+      height: 1024,
+      revision: 3,
+      source: "preview",
+    };
+    const plain: ChatMessage = { role: "user", content: "hello" };
+    const withImage: ChatMessage = {
+      role: "user",
+      content: "hello",
+      images: [image],
+    };
+    const base = estimateRequestTokens({
+      model: "m",
+      messages: [plain],
+    });
+    const withImages = estimateRequestTokens({
+      model: "m",
+      messages: [withImage],
+    });
+    expect(withImages - base).toBe(
+      estimateImageTokens({ width: 1024, height: 1024 }),
+    );
   });
 });

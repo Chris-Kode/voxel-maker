@@ -440,3 +440,119 @@ describe("OpenAI adapter: cancellation and timeout", () => {
     });
   });
 });
+
+describe("OpenAI adapter: vision evidence (plan S15.3, ticket #40)", () => {
+  it("encodes bounded standard-view PNGs as vision content parts", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+      return Promise.resolve(sseResponse([]));
+    }) as typeof fetch;
+    const provider = new OpenAIProvider({
+      getApiKey: () => secret("sk-test-1234567890"),
+      fetch: fetchImpl,
+    });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    await provider.complete(
+      request({
+        messages: [
+          {
+            role: "user",
+            content: "Critique these views.",
+            images: [
+              {
+                mimeType: "image/png",
+                bytes: png,
+                view: "front",
+                width: 512,
+                height: 512,
+                revision: 7,
+                source: "preview",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const message = bodies[0]?.messages as { content: unknown[] }[] | undefined;
+    const parts = message?.[0]?.content as
+      | { type: string; image_url: { url: string; detail: string } }[]
+      | undefined;
+    expect(parts).toBeDefined();
+    if (parts === undefined) return;
+    expect(parts[0]).toEqual({ type: "text", text: "Critique these views." });
+    expect(parts[1]?.type).toBe("image_url");
+    expect(parts[1]?.image_url.url.startsWith("data:image/png;base64,")).toBe(
+      true,
+    );
+    expect(parts[1]?.image_url.detail).toBe("low");
+    // The base64 payload decodes back to the exact PNG bytes.
+    const payload = parts[1]?.image_url.url.split(",")[1] ?? "";
+    const decoded = new Uint8Array(Buffer.from(payload, "base64"));
+    expect([...decoded]).toEqual([...png]);
+  });
+
+  it("refuses empty or non-PNG images with a stable validation error", async () => {
+    let fetched = false;
+    const provider = new OpenAIProvider({
+      getApiKey: () => secret("sk-test-1234567890"),
+      fetch: (() => {
+        fetched = true;
+        return Promise.resolve(sseResponse([]));
+      }) as typeof fetch,
+    });
+    await expect(
+      provider.complete(
+        request({
+          messages: [
+            {
+              role: "user",
+              content: "x",
+              images: [
+                {
+                  mimeType: "image/png",
+                  bytes: new Uint8Array(0),
+                  view: "front",
+                  width: 8,
+                  height: 8,
+                  revision: 1,
+                  source: "live",
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).rejects.toMatchObject({
+      family: "validation",
+      code: "EMPTY_IMAGE",
+    });
+    await expect(
+      provider.complete(
+        request({
+          messages: [
+            {
+              role: "user",
+              content: "x",
+              images: [
+                {
+                  mimeType: "image/jpeg" as never,
+                  bytes: new Uint8Array([1]),
+                  view: "front",
+                  width: 8,
+                  height: 8,
+                  revision: 1,
+                  source: "live",
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).rejects.toMatchObject({
+      family: "validation",
+      code: "UNSUPPORTED_IMAGE_MIME",
+    });
+    expect(fetched).toBe(false);
+  });
+});

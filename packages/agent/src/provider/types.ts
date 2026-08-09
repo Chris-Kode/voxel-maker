@@ -2,6 +2,7 @@ import type { JsonValue } from "@voxel-maker/shared";
 import type { ToolContract, ToolError } from "../contract.js";
 import { schemaErrorDetails } from "../schema.js";
 import { UNKNOWN_TOOL_CODE } from "../registry.js";
+import type { StandardViewId } from "../vision/evidence.js";
 
 /**
  * Provider-neutral chat contract (plan S12.2, ticket #33): normalized
@@ -90,10 +91,37 @@ export type ToolCallResult =
   | { readonly ok: true; readonly value: JsonValue }
   | { readonly ok: false; readonly error: ToolError };
 
+/**
+ * One bounded image attached to a user message (plan S15.3, ticket #40):
+ * a standard-view PNG plus the deterministic camera/source metadata that
+ * ties it to the exact live or preview revision it was rendered from.
+ * Images are evidence for proposed commands, never authoritative state;
+ * transmission is gated by explicit image consent (ADR-0010).
+ */
+export interface ChatImage {
+  /** Only PNG is supported by the v1 adapters. */
+  readonly mimeType: "image/png";
+  /** Bounded PNG bytes (validated at capture). */
+  readonly bytes: Uint8Array;
+  /** The standard view this image shows. */
+  readonly view: StandardViewId;
+  readonly width: number;
+  readonly height: number;
+  /** Store revision the image was rendered from. */
+  readonly revision: number;
+  /** Which store the image came from: live or staged preview. */
+  readonly source: "live" | "preview";
+}
+
 /** Provider-neutral chat message (system/user/assistant/tool). */
 export type ChatMessage =
   | { readonly role: "system"; readonly content: string }
-  | { readonly role: "user"; readonly content: string }
+  | {
+      readonly role: "user";
+      readonly content: string;
+      /** Optional bounded standard-view evidence (image consent required). */
+      readonly images?: readonly ChatImage[];
+    }
   | {
       readonly role: "assistant";
       readonly content?: string;
@@ -289,11 +317,34 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Deterministic vision token estimate (plan S15.3, ticket #40): the v1
+ * adapter sends every evidence image at OpenAI `detail: "low"`, which is
+ * billed as a flat per-image token count regardless of dimensions. The
+ * estimate is a product-policy constant shared by the token budget and
+ * the cost reservation, so the approved estimate matches the charged
+ * amount and image-bearing requests stay bounded before transmission.
+ */
+export function estimateImageTokens(image: {
+  readonly width: number;
+  readonly height: number;
+}): number {
+  void image;
+  return 85;
+}
+
 function messageTokens(message: ChatMessage): number {
   switch (message.role) {
     case "system":
-    case "user":
       return estimateTextTokens(message.content);
+    case "user":
+      return (
+        estimateTextTokens(message.content) +
+        (message.images ?? []).reduce(
+          (sum, image) => sum + estimateImageTokens(image),
+          0,
+        )
+      );
     case "assistant": {
       let tokens = estimateTextTokens(message.content ?? "");
       for (const call of message.toolCalls ?? []) {
