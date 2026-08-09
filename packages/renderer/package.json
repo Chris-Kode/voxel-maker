@@ -27,7 +27,8 @@
     "@voxel-maker/model": "workspace:*",
     "@voxel-maker/document": "workspace:*",
     "@voxel-maker/voxel": "workspace:*",
-    "three": "catalog:"
+    "three": "catalog:",
+    "@voxel-maker/rigging": "workspace:*"
   },
   "devDependencies": {
     "@types/three": "catalog:",

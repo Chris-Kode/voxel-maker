@@ -22,6 +22,7 @@ import {
   createMaterialCommand,
   fillBoxCommand,
   journalTransactionToJson,
+  registerArticulationCommands,
   registerBatchCommands,
   registerMaterialCommands,
   registerNodeCommands,
@@ -78,6 +79,7 @@ const REGISTRARS: readonly CommandRegistryRegistrar[] = [
   registerBatchCommands,
   registerRegionCommands,
   registerNodeCommands,
+  registerArticulationCommands,
   registerMaterialCommands,
 ];
 

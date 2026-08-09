@@ -24,6 +24,7 @@ import {
   createNodeCommand,
   deleteMaterialCommand,
   registerMaterialCommands,
+  registerArticulationCommands,
   registerNodeCommands,
   registerVoxelCommands,
   renameNodeCommand,
@@ -106,6 +107,7 @@ export function runHeadlessTrace(): string {
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerNodeCommands(registry);
+  registerArticulationCommands(registry);
   registerMaterialCommands(registry);
   const bus = new CommandBus(store, registry, writeCapability);
 

@@ -30,7 +30,7 @@ import type { DesktopComposition } from "../composition.js";
  * labeled transaction; rotate/mirror/delete are button-driven
  * preview-and-apply flows. The eyedropper samples the material under a
  * click. Keys: 1-6 standard views, F focus, P perspective/orthographic
- * toggle, G/X/B/K overlay toggles, Escape cancels a gesture or a pending
+ * toggle, G/X/B/K/J overlay toggles, Escape cancels a gesture or a pending
  * transform preview before clearing the selection. See
  * docs/viewport/overlays-v1.md, docs/editor/stroke-tools-v1.md,
  * docs/editor/selection-and-shape-tools-v1.md, and
@@ -297,6 +297,10 @@ export function Viewport({
         case "K":
           controller.toggleOverlay("pivots");
           break;
+        case "j":
+        case "J":
+          controller.toggleOverlay("joints");
+          break;
         case "Escape":
           // Cancel any in-progress gesture (gizmo drag, region drag,
           // stroke, shape, transform drag) first, so a late pointer-up
@@ -391,7 +395,7 @@ export function Viewport({
         (Shift add · Ctrl toggle · Esc clear) · Pencil/Erase/Paint: drag to
         stroke · Box/Sphere/Cylinder: drag a shape · Transform: drag to move/
         copy, preview rotate/mirror/delete · Eyedropper: sample · 1-6 views · F
-        focus · P mode · G/X/B/K overlays
+        focus · P mode · G/X/B/K/J overlays
       </div>
     </div>
   );

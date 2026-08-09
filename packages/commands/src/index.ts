@@ -116,6 +116,22 @@ export {
   type SetNodeTransformPayload,
 } from "./node-commands.js";
 export {
+  ARTICULATION_COMMAND_SCHEMA_VERSION,
+  NODE_ADD_JOINT_COMMAND,
+  NODE_REMOVE_JOINT_COMMAND,
+  NODE_REMOVE_PIVOT_COMMAND,
+  NODE_SET_PIVOT_COMMAND,
+  addJointCommand,
+  registerArticulationCommands,
+  removeJointCommand,
+  removePivotCommand,
+  setPivotCommand,
+  type AddJointPayload,
+  type RemoveJointPayload,
+  type RemovePivotPayload,
+  type SetPivotPayload,
+} from "./articulation-commands.js";
+export {
   MATERIAL_COMMAND_SCHEMA_VERSION,
   MATERIAL_CREATE_COMMAND,
   MATERIAL_DELETE_COMMAND,
