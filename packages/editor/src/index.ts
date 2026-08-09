@@ -36,6 +36,22 @@ export {
   type ShapeToolOptions,
 } from "./shape-tool.js";
 export {
+  DEFAULT_ROTATE_SNAP,
+  DEFAULT_SCALE_SNAP,
+  DEFAULT_TRANSLATE_SNAP,
+  createTransformTool,
+  transformTargets,
+  type CameraRay,
+  type GestureHost,
+  type GizmoAxis,
+  type GizmoHandle,
+  type TransformTargets,
+  type TransformTool,
+  type TransformToolHost,
+  type TransformToolMode,
+  type TransformSpace,
+} from "./transform-tool.js";
+export {
   addSelectionEntry,
   applySelectionIntent,
   pruneSelection,
