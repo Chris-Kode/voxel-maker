@@ -20,7 +20,7 @@ import {
   compareCodeUnit,
   NameAllocator,
   sanitizeGltfName,
-} from "./gltf-mapping.js";
+} from "./gltf-common.js";
 
 /**
  * Clip -> glTF animation mapping (plan S16.4, ADR-0006/ADR-0011, ticket
@@ -143,7 +143,12 @@ export function buildTrackSamples(
       const time = lower.time + u * span;
       push(
         time,
-        blendValue(channel, lower.property.value, upper.property.value, smoothstepCurve(u)),
+        blendValue(
+          channel,
+          lower.property.value,
+          upper.property.value,
+          smoothstepCurve(u),
+        ),
       );
     }
   }

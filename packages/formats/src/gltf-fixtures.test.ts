@@ -164,9 +164,7 @@ function readGlbCounts(bytes: Uint8Array): {
 }
 
 /** Independent animation reader: resolves sampler accessors from raw bytes. */
-function readAnimationSamples(
-  bytes: Uint8Array,
-): readonly CorpusAnimation[] {
+function readAnimationSamples(bytes: Uint8Array): readonly CorpusAnimation[] {
   const { json, bin } = readGlbFull(bytes);
   const animations = json.animations ?? [];
   return animations.map((animation) => ({
@@ -220,7 +218,10 @@ interface GltfJsonFull {
 }
 
 /** Independent GLB parse returning the JSON chunk and the raw BIN chunk. */
-function readGlbFull(bytes: Uint8Array): { json: GltfJsonFull; bin: Uint8Array } {
+function readGlbFull(bytes: Uint8Array): {
+  json: GltfJsonFull;
+  bin: Uint8Array;
+} {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const magic = String.fromCharCode(
     bytes[0] as number,
@@ -247,10 +248,11 @@ function resolveAccessor(
 ): { readonly values: readonly number[] } {
   const accessor = json.accessors[accessorIndex];
   if (accessor === undefined) throw new Error("missing accessor");
-  const bufferView = json.bufferViews[accessor.bufferView as number];
+  const bufferView = json.bufferViews[accessor.bufferView];
   if (bufferView === undefined) throw new Error("missing bufferView");
   const byteOffset = (bufferView.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
-  const components = accessor.type === "VEC3" ? 3 : accessor.type === "VEC4" ? 4 : 1;
+  const components =
+    accessor.type === "VEC3" ? 3 : accessor.type === "VEC4" ? 4 : 1;
   const dataView = new DataView(
     bin.buffer,
     bin.byteOffset + byteOffset,
@@ -339,9 +341,7 @@ describe("glTF fixture corpus", () => {
         for (const channel of animation.channels) {
           // Channel targets exist and use a supported TRS path.
           expect(channel.node).toBeLessThan(entry.nodes);
-          expect(["translation", "rotation", "scale"]).toContain(
-            channel.path,
-          );
+          expect(["translation", "rotation", "scale"]).toContain(channel.path);
           // The sampler reference stays in range.
           expect(channel.sampler).toBeLessThan(animation.samplers.length);
         }
@@ -355,9 +355,7 @@ describe("glTF fixture corpus", () => {
           }
           // Output values match the input count times the component width.
           const components = sampler.outputType === "VEC4" ? 4 : 3;
-          expect(sampler.output.length).toBe(
-            sampler.input.length * components,
-          );
+          expect(sampler.output.length).toBe(sampler.input.length * components);
           if (sampler.outputType === "VEC4") {
             // Rotation samples are unit quaternions (canonical values).
             for (let i = 0; i < sampler.output.length; i += 4) {

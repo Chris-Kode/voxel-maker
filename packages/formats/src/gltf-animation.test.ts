@@ -89,7 +89,9 @@ function animatedDocument(): VoxelDocument {
         parentId: ROOT,
         children: [],
         transform: identity,
-        components: [{ kind: "voxel", schemaVersion: 1, volumeId: VOLUME_BODY }],
+        components: [
+          { kind: "voxel", schemaVersion: 1, volumeId: VOLUME_BODY },
+        ],
       },
       {
         nodeId: ARM,
@@ -234,7 +236,9 @@ describe("preflightGltfAnimations", () => {
       (loss) => loss.code === GLTF_EXPORT_LOSSES.smoothstep,
     );
     expect(smooth).toHaveLength(1);
-    expect(smooth[0]?.context).toMatchObject({ trackId: "track:anim:a:smooth" });
+    expect(smooth[0]?.context).toMatchObject({
+      trackId: "track:anim:a:smooth",
+    });
   });
 
   it("reports nothing for a clip with once/linear content only", () => {
@@ -289,9 +293,8 @@ describe("preflightGltfAnimations", () => {
 
 describe("buildTrackSamples", () => {
   it("maps step and linear tracks directly with authored values", () => {
-    const linear = animatedDocument().animations[
-      animationId("animation:anim:z")
-    ];
+    const linear =
+      animatedDocument().animations[animationId("animation:anim:z")];
     const track = linear?.tracks[0];
     expect(track).toBeDefined();
     const samples = buildTrackSamples(
@@ -301,11 +304,20 @@ describe("buildTrackSamples", () => {
     );
     expect(samples?.interpolation).toBe("LINEAR");
     expect(samples?.outputType).toBe("VEC4");
-    expect([...samples?.input ?? []]).toEqual([0, 1, 2]);
-    expect([...samples?.output ?? []]).toEqual([
-      0, 0, 0, 1, //
-      0, 0, Math.fround(Math.SQRT1_2), Math.fround(Math.SQRT1_2), //
-      0, 0, 1, 0,
+    expect([...(samples?.input ?? [])]).toEqual([0, 1, 2]);
+    expect([...(samples?.output ?? [])]).toEqual([
+      0,
+      0,
+      0,
+      1, //
+      0,
+      0,
+      Math.fround(Math.SQRT1_2),
+      Math.fround(Math.SQRT1_2), //
+      0,
+      0,
+      1,
+      0,
     ]);
   });
 
@@ -328,7 +340,9 @@ describe("buildTrackSamples", () => {
           parentId: ROOT,
           children: [],
           transform: identity,
-          components: [{ kind: "voxel", schemaVersion: 1, volumeId: VOLUME_BODY }],
+          components: [
+            { kind: "voxel", schemaVersion: 1, volumeId: VOLUME_BODY },
+          ],
         },
       ],
       materials: [],
@@ -355,7 +369,10 @@ describe("buildTrackSamples", () => {
       ],
     });
     const animations = document.animations as Readonly<
-      Record<string, (typeof document.animations)[keyof typeof document.animations]>
+      Record<
+        string,
+        (typeof document.animations)[keyof typeof document.animations]
+      >
     >;
     const clip = animations["animation:anim:step"];
     const track = clip?.tracks[0];
@@ -366,13 +383,11 @@ describe("buildTrackSamples", () => {
     );
     expect(samples?.interpolation).toBe("STEP");
     expect(samples?.outputType).toBe("VEC4");
-    expect([...samples?.input ?? []]).toEqual([0, 1]);
+    expect([...(samples?.input ?? [])]).toEqual([0, 1]);
   });
 
   it("bakes smoothstep to linear samples with the frozen ease curve", () => {
-    const clip = animatedDocument().animations[
-      animationId("animation:anim:a")
-    ];
+    const clip = animatedDocument().animations[animationId("animation:anim:a")];
     const track = clip?.tracks.find(
       (candidate) => candidate.trackId === "track:anim:a:smooth",
     );
@@ -386,27 +401,17 @@ describe("buildTrackSamples", () => {
     // Segment [0,1] with 2 interior samples: 0, 1/3, 2/3, 1 (float32).
     const oneThird = Math.fround(1 / 3);
     const twoThirds = Math.fround(2 / 3);
-    expect([...samples?.input ?? []]).toEqual([0, oneThird, twoThirds, 1]);
+    expect([...(samples?.input ?? [])]).toEqual([0, oneThird, twoThirds, 1]);
     const scale = (u: number) => 1 + (2 - 1) * (u * u * (3 - 2 * u));
-    const outputs = [...samples?.output ?? []];
+    const outputs = [...(samples?.output ?? [])];
     expect(outputs.slice(0, 3)).toEqual([1, 1, 1]);
-    expect(outputs.slice(3, 6)).toEqual([
-      Math.fround(scale(1 / 3)),
-      1,
-      1,
-    ]);
-    expect(outputs.slice(6, 9)).toEqual([
-      Math.fround(scale(2 / 3)),
-      1,
-      1,
-    ]);
+    expect(outputs.slice(3, 6)).toEqual([Math.fround(scale(1 / 3)), 1, 1]);
+    expect(outputs.slice(6, 9)).toEqual([Math.fround(scale(2 / 3)), 1, 1]);
     expect(outputs.slice(9, 12)).toEqual([2, 1, 1]);
   });
 
   it("emits a constant two-sample sampler for a single-keyframe track", () => {
-    const clip = animatedDocument().animations[
-      animationId("animation:anim:a")
-    ];
+    const clip = animatedDocument().animations[animationId("animation:anim:a")];
     const track = clip?.tracks.find(
       (candidate) => candidate.trackId === "track:anim:a:single",
     );
@@ -415,15 +420,13 @@ describe("buildTrackSamples", () => {
       clip?.duration ?? 1,
       LOW_LIMITS,
     );
-    expect([...samples?.input ?? []]).toEqual([0, 1]);
-    expect([...samples?.output ?? []]).toEqual([9, 9, 9, 9, 9, 9]);
+    expect([...(samples?.input ?? [])]).toEqual([0, 1]);
+    expect([...(samples?.output ?? [])]).toEqual([9, 9, 9, 9, 9, 9]);
     expect(samples?.interpolation).toBe("LINEAR");
   });
 
   it("returns undefined for a track without keyframes", () => {
-    const clip = animatedDocument().animations[
-      animationId("animation:anim:a")
-    ];
+    const clip = animatedDocument().animations[animationId("animation:anim:a")];
     const track = clip?.tracks.find(
       (candidate) => candidate.trackId === "track:anim:a:empty",
     );
@@ -467,9 +470,7 @@ describe("planGltfAnimations", () => {
     expect(a?.channels[1]?.sampler).toBe(1);
     expect(a?.channels[2]?.sampler).toBe(2);
     const z = animations[1];
-    expect(z?.channels).toEqual([
-      { sampler: 0, node: 3, path: "rotation" },
-    ]);
+    expect(z?.channels).toEqual([{ sampler: 0, node: 3, path: "rotation" }]);
   });
 
   it("skips clips whose tracks all carry no keyframes", () => {

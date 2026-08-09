@@ -247,7 +247,13 @@ function buildBuffer(sceneGraph: GltfSceneGraph): BuiltBuffer {
     bytes.set(part, target);
     target += part.byteLength;
   }
-  return { bytes, accessors, bufferViews, meshes: meshPlans, animations: animationPlans };
+  return {
+    bytes,
+    accessors,
+    bufferViews,
+    meshes: meshPlans,
+    animations: animationPlans,
+  };
 }
 
 const nodeToJson = (

@@ -309,9 +309,18 @@ function animatedSceneGraph(): GltfSceneGraph {
           {
             input: Float32Array.from([0, 1, 2]),
             output: Float32Array.from([
-              0, 0, 0, 1, //
-              0, 0, Math.fround(Math.SQRT1_2), Math.fround(Math.SQRT1_2), //
-              0, 0, 1, 0,
+              0,
+              0,
+              0,
+              1, //
+              0,
+              0,
+              Math.fround(Math.SQRT1_2),
+              Math.fround(Math.SQRT1_2), //
+              0,
+              0,
+              1,
+              0,
             ]),
             interpolation: "LINEAR",
             outputType: "VEC4",
@@ -378,11 +387,24 @@ describe("encodeGlb with animations", () => {
     expect(times.max).toEqual([2]);
     const rotations = resolveAccessor(json, bin, samplers?.[0]?.output ?? -1);
     expect(rotations.values).toEqual([
-      0, 0, 0, 1, //
-      0, 0, Math.fround(Math.SQRT1_2), Math.fround(Math.SQRT1_2), //
-      0, 0, 1, 0,
+      0,
+      0,
+      0,
+      1, //
+      0,
+      0,
+      Math.fround(Math.SQRT1_2),
+      Math.fround(Math.SQRT1_2), //
+      0,
+      0,
+      1,
+      0,
     ]);
-    const translations = resolveAccessor(json, bin, samplers?.[1]?.output ?? -1);
+    const translations = resolveAccessor(
+      json,
+      bin,
+      samplers?.[1]?.output ?? -1,
+    );
     expect(translations.values).toEqual([1, 2, 3, 4, 5, 6]);
     const accessor = json.accessors[samplers?.[0]?.input ?? -1];
     expect(accessor?.type).toBe("SCALAR");

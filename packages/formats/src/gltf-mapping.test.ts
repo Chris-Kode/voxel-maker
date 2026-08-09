@@ -244,11 +244,9 @@ describe("preflightGltfExport", () => {
       },
     };
     const store = fullStore(buildDocument());
-    const result = preflightGltfExport(
-      document,
-      (id) => store.getVolume(id),
-      { includeAnimations: false },
-    );
+    const result = preflightGltfExport(document, (id) => store.getVolume(id), {
+      includeAnimations: false,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const codes = new Set(result.losses.map((loss) => loss.code));

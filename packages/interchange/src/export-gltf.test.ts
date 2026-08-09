@@ -314,7 +314,9 @@ describe("exportGltf", () => {
     expect(
       outcome.losses.some((loss) => loss.code === "GLTF_LOSS_CLIP_LOOP"),
     ).toBe(true);
-    const json = parseGlbJson(storage.files().get("animated.glb") as Uint8Array) as {
+    const json = parseGlbJson(
+      storage.files().get("animated.glb") as Uint8Array,
+    ) as {
       readonly animations: readonly {
         readonly name: string;
         readonly channels: readonly {
@@ -376,10 +378,12 @@ describe("exportGltf", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.metadata.clips).toBe(0);
-    expect(
-      outcome.losses.some((loss) => loss.code === "GLTF_LOSS_CLIPS"),
-    ).toBe(true);
-    const json = parseGlbJson(storage.files().get("static.glb") as Uint8Array) as {
+    expect(outcome.losses.some((loss) => loss.code === "GLTF_LOSS_CLIPS")).toBe(
+      true,
+    );
+    const json = parseGlbJson(
+      storage.files().get("static.glb") as Uint8Array,
+    ) as {
       readonly animations?: readonly unknown[];
     };
     expect(json.animations).toBeUndefined();

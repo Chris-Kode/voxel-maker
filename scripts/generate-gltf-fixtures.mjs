@@ -478,7 +478,9 @@ const fixtures = [];
           rotation: [0, 0, 0, 1],
           scale: [1, 1, 1],
         },
-        components: [{ kind: "voxel", schemaVersion: 1, volumeId: HAND_VOLUME }],
+        components: [
+          { kind: "voxel", schemaVersion: 1, volumeId: HAND_VOLUME },
+        ],
       },
     ],
     materials: [
