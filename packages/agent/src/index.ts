@@ -137,12 +137,14 @@ export {
 
 export {
   AGENT_SYSTEM_PROMPT,
+  DEFAULT_CRITIQUE_PROMPT,
   createAgentSession,
   type AgentEvent,
   type AgentLoopOptions,
   type AgentRunReason,
   type AgentRunResult,
   type AgentSession,
+  type VisualRefinementConfig,
 } from "./agent/loop.js";
 export {
   AGENT_STATES,
@@ -170,8 +172,10 @@ export {
   DEFAULT_RETRY_POLICY,
   ProviderError,
   chatResponse,
+  estimateImageTokens,
   estimateRequestTokens,
   estimateTextTokens,
+  type ChatImage,
   isProviderError,
   isRetryable,
   shouldRetry,
@@ -238,3 +242,66 @@ export {
   priceForModel,
   type ModelPrice,
 } from "./provider/cost.js";
+
+export {
+  DEFAULT_EVIDENCE_SIZE,
+  MAX_EVIDENCE_DIMENSION,
+  MAX_EVIDENCE_IMAGES,
+  MAX_EVIDENCE_PIXELS,
+  STANDARD_VIEWS,
+  buildEvidenceSet,
+  maxPngBytes,
+  validateEvidenceRequest,
+  validateEvidenceSet,
+  type EvidenceCapture,
+  type EvidenceCaptureRequest,
+  type StandardViewId,
+  type VisualEvidenceImage,
+  type VisualEvidenceSet,
+} from "./vision/evidence.js";
+export {
+  measureStructure,
+  structuralDelta,
+  type StructuralBounds,
+  type StructuralDelta,
+  type StructuralMetrics,
+} from "./vision/structural.js";
+export {
+  CRITIQUE_CATEGORIES,
+  critiqueFromText,
+  parseVisualCritique,
+  type CritiqueCategory,
+  type VisualCritique,
+} from "./vision/critique.js";
+export {
+  DEFAULT_IMAGE_CONSENT_DURATION_MS,
+  IMAGE_CONSENT_VERSION,
+  MAX_IMAGES_PER_SESSION,
+  MAX_VISUAL_ITERATIONS_PER_SESSION,
+  MemoryImageConsentStore,
+  PROVIDER_PRIVACY_POLICY,
+  createImageConsent,
+  createVisualRefinementPlan,
+  estimateImagePassCostUsd,
+  imageConsentCovers,
+  imageConsentExpired,
+  imageConsentRequiredError,
+  planCoveredByConsent,
+  type ImageConsentInput,
+  type ImageConsentStore,
+  type ImageTransmissionConsent,
+  type ImageTransmissionRequest,
+  type VisualRefinementPlan,
+  type VisualRefinementPlanInput,
+} from "./vision/image-consent.js";
+export {
+  DEFAULT_REFINEMENT_POLICY,
+  evaluateRefinement,
+  imageSimilarity,
+  resolveRefinementPolicy,
+  type EvaluationInput,
+  type ImageSimilarity,
+  type RefinementEvaluation,
+  type RefinementPolicy,
+  type ViewVisualComparison,
+} from "./vision/evaluation.js";

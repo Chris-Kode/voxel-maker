@@ -39,8 +39,11 @@ describe("agent budget defaults (ADR-0009)", () => {
       maxEstimatedCostUsd: 5,
       maxConsecutiveErrors: 3,
       maxToolResultBytes: 65_536,
+      maxVisualIterations: 3,
+      maxImages: 12,
     });
   });
+
 
   it("clamps overrides into [0, default] so callers can only lower", () => {
     const budgets = resolveAgentBudgets({
@@ -203,6 +206,24 @@ describe("BudgetLedger: per-resource enforcement", () => {
       100,
       102,
     );
+  });
+
+  it("enforces the visual-iteration and image budgets atomically", () => {
+    const { ledger } = makeLedger({
+      maxVisualIterations: 2,
+      maxImages: 5,
+    });
+    expect(ledger.reserveVisualIteration()).toEqual({ ok: true });
+    expect(ledger.reserveVisualIteration()).toEqual({ ok: true });
+    const third = ledger.reserveVisualIteration();
+    expect(third.ok).toBe(false);
+    expect(ledger.visualIterations).toBe(2);
+    for (let i = 0; i < 5; i += 1) {
+      expect(ledger.reserveImage()).toEqual({ ok: true });
+    }
+    const sixth = ledger.reserveImage();
+    expect(sixth.ok).toBe(false);
+    expect(ledger.imagesSent).toBe(5);
   });
 
   it("enforces the estimated-cost budget via usage records", () => {

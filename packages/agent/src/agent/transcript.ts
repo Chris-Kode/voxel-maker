@@ -47,8 +47,23 @@ export interface TranscriptSnapshot {
 function messageToJson(message: ChatMessage): JsonValue {
   switch (message.role) {
     case "system":
-    case "user":
       return { role: message.role, content: message.content };
+    case "user": {
+      // Images are never retained: the transcript keeps only the bounded
+      // metadata that identifies the evidence (ADR-0010, ticket #40).
+      const images: JsonValue[] = (message.images ?? []).map((image) => ({
+        view: image.view,
+        width: image.width,
+        height: image.height,
+        revision: image.revision,
+        source: image.source,
+      }));
+      return {
+        role: message.role,
+        content: message.content,
+        images,
+      };
+    }
     case "assistant":
       return {
         role: "assistant",

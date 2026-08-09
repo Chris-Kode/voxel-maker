@@ -90,10 +90,37 @@ export type ToolCallResult =
   | { readonly ok: true; readonly value: JsonValue }
   | { readonly ok: false; readonly error: ToolError };
 
+/**
+ * One bounded image attached to a user message (plan S15.3, ticket #40):
+ * a standard-view PNG plus the deterministic camera/source metadata that
+ * ties it to the exact live or preview revision it was rendered from.
+ * Images are evidence for proposed commands, never authoritative state;
+ * transmission is gated by explicit image consent (ADR-0010).
+ */
+export interface ChatImage {
+  /** Only PNG is supported by the v1 adapters. */
+  readonly mimeType: "image/png";
+  /** Bounded PNG bytes (validated at capture). */
+  readonly bytes: Uint8Array;
+  /** The standard view this image shows. */
+  readonly view: string;
+  readonly width: number;
+  readonly height: number;
+  /** Store revision the image was rendered from. */
+  readonly revision: number;
+  /** Which store the image came from: live or staged preview. */
+  readonly source: "live" | "preview";
+}
+
 /** Provider-neutral chat message (system/user/assistant/tool). */
 export type ChatMessage =
   | { readonly role: "system"; readonly content: string }
-  | { readonly role: "user"; readonly content: string }
+  | {
+      readonly role: "user";
+      readonly content: string;
+      /** Optional bounded standard-view evidence (image consent required). */
+      readonly images?: readonly ChatImage[];
+    }
   | {
       readonly role: "assistant";
       readonly content?: string;
@@ -289,11 +316,36 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Deterministic vision token estimate (plan S15.3, ticket #40): counts
+ * one 512px tile per full 512x512 block plus a fixed per-image overhead,
+ * mirroring the conservative high-detail OpenAI billing shape. The
+ * estimate is a product-policy constant shared by the token budget and
+ * the cost reservation, so image-bearing requests are bounded before
+ * transmission.
+ */
+export function estimateImageTokens(image: {
+  readonly width: number;
+  readonly height: number;
+}): number {
+  const tiles =
+    Math.max(1, Math.ceil(image.width / 512)) *
+    Math.max(1, Math.ceil(image.height / 512));
+  return 85 + tiles * 170;
+}
+
 function messageTokens(message: ChatMessage): number {
   switch (message.role) {
     case "system":
-    case "user":
       return estimateTextTokens(message.content);
+    case "user":
+      return (
+        estimateTextTokens(message.content) +
+        (message.images ?? []).reduce(
+          (sum, image) => sum + estimateImageTokens(image),
+          0,
+        )
+      );
     case "assistant": {
       let tokens = estimateTextTokens(message.content ?? "");
       for (const call of message.toolCalls ?? []) {

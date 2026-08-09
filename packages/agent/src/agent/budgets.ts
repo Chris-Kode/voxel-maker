@@ -39,6 +39,10 @@ export interface AgentBudgets {
   readonly maxConsecutiveErrors: number;
   /** Maximum serialized bytes of one tool result fed back to the model. */
   readonly maxToolResultBytes: number;
+  /** Maximum visual-refinement iterations (ADR-0009: three). */
+  readonly maxVisualIterations: number;
+  /** Maximum transmitted evidence images per session (ADR-0009: 12). */
+  readonly maxImages: number;
 }
 
 /** ADR-0009-aligned hard defaults for one AI session. */
@@ -56,6 +60,8 @@ export const DEFAULT_AGENT_BUDGETS: AgentBudgets = Object.freeze({
   maxEstimatedCostUsd: 5,
   maxConsecutiveErrors: 3,
   maxToolResultBytes: 65_536,
+  maxVisualIterations: 3,
+  maxImages: 12,
 });
 
 /** Merges and clamps caller overrides into [0, default]. */
@@ -130,6 +136,8 @@ export class BudgetLedger {
   #outputTokens = 0;
   #costUsd = 0;
   #consecutiveErrors = 0;
+  #visualIterations = 0;
+  #imagesSent = 0;
 
   constructor(budgets: AgentBudgets, clock: { now(): number }) {
     this.budgets = budgets;
@@ -172,6 +180,12 @@ export class BudgetLedger {
   }
   get consecutiveErrors(): number {
     return this.#consecutiveErrors;
+  }
+  get visualIterations(): number {
+    return this.#visualIterations;
+  }
+  get imagesSent(): number {
+    return this.#imagesSent;
   }
   get elapsedMs(): number {
     return this.#clock.now() - this.#startedAt;
@@ -259,6 +273,29 @@ export class BudgetLedger {
     this.#tracks = nextTracks;
     this.#keyframes = nextKeyframes;
     this.#clipDurationSeconds = nextSeconds;
+    return { ok: true };
+  }
+
+  reserveVisualIteration(): BudgetResult {
+    const duration = this.#checkDuration(0);
+    if (!duration.ok) return duration;
+    const next = this.#visualIterations + 1;
+    if (next > this.budgets.maxVisualIterations) {
+      return limit("visualIterations", this.budgets.maxVisualIterations, next);
+    }
+    this.#visualIterations = next;
+    return { ok: true };
+  }
+
+  /** Reserves one transmitted evidence image before it leaves the device. */
+  reserveImage(): BudgetResult {
+    const duration = this.#checkDuration(0);
+    if (!duration.ok) return duration;
+    const next = this.#imagesSent + 1;
+    if (next > this.budgets.maxImages) {
+      return limit("images", this.budgets.maxImages, next);
+    }
+    this.#imagesSent = next;
     return { ok: true };
   }
 

@@ -125,9 +125,48 @@ function toVendorMessages(request: ProviderChatRequest): unknown[] {
       case "system":
         messages.push({ role: "system", content: message.content });
         break;
-      case "user":
-        messages.push({ role: "user", content: message.content });
+      case "user": {
+        const images = message.images ?? [];
+        if (images.length === 0) {
+          messages.push({ role: "user", content: message.content });
+        } else {
+          // Vision content parts (plan S15.3, ticket #40): the bounded
+          // standard-view PNGs become base64 data URLs. Only PNG is
+          // supported; the adapter refuses anything else.
+          const parts: unknown[] = [
+            { type: "text", text: message.content },
+            ...images.map((image) => {
+              if (image.mimeType !== "image/png") {
+                throw normalizedError(
+                  "validation",
+                  "UNSUPPORTED_IMAGE_MIME",
+                  `Unsupported image mime type: ${image.mimeType}`,
+                  false,
+                );
+              }
+              if (image.bytes.byteLength === 0) {
+                throw normalizedError(
+                  "validation",
+                  "EMPTY_IMAGE",
+                  "Refusing to transmit an empty image",
+                  false,
+                );
+              }
+              return {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/png;base64,${base64Encode(image.bytes)}`,
+                  // Fixed low-detail request: bounded token cost, and the
+                  // standard views are simple voxel silhouettes.
+                  detail: "low",
+                },
+              };
+            }),
+          ];
+          messages.push({ role: "user", content: parts });
+        }
         break;
+      }
       case "assistant":
         messages.push({
           role: "assistant",
@@ -162,6 +201,29 @@ function toVendorMessages(request: ProviderChatRequest): unknown[] {
     }
   }
   return messages;
+}
+
+/** Pure base64 encoder (RFC 4648) over bytes; platform-neutral. */
+const BASE64_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+export function base64Encode(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.byteLength; i += 3) {
+    const a = bytes[i] as number;
+    const b = i + 1 < bytes.byteLength ? (bytes[i + 1] as number) : 0;
+    const c = i + 2 < bytes.byteLength ? (bytes[i + 2] as number) : 0;
+    const triple = (a << 16) | (b << 8) | c;
+    out += BASE64_ALPHABET[(triple >> 18) & 0x3f];
+    out += BASE64_ALPHABET[(triple >> 12) & 0x3f];
+    out +=
+      i + 1 < bytes.byteLength
+        ? BASE64_ALPHABET[(triple >> 6) & 0x3f]
+        : "=";
+    out +=
+      i + 2 < bytes.byteLength ? BASE64_ALPHABET[triple & 0x3f] : "=";
+  }
+  return out;
 }
 
 function toVendorTools(tools: readonly ToolContract[]): unknown[] {
@@ -211,6 +273,37 @@ export class OpenAIProvider implements ProviderAdapter {
         ),
       };
       return;
+    }
+    for (const message of request.messages) {
+      if (message.role !== "user" || (message.images?.length ?? 0) === 0) {
+        continue;
+      }
+      for (const image of message.images ?? []) {
+        if (image.mimeType !== "image/png") {
+          yield {
+            kind: "error",
+            error: normalizedError(
+              "validation",
+              "UNSUPPORTED_IMAGE_MIME",
+              `Unsupported image mime type: ${image.mimeType}`,
+              false,
+            ),
+          };
+          return;
+        }
+        if (image.bytes.byteLength === 0) {
+          yield {
+            kind: "error",
+            error: normalizedError(
+              "validation",
+              "EMPTY_IMAGE",
+              "Refusing to transmit an empty image",
+              false,
+            ),
+          };
+          return;
+        }
+      }
     }
     const apiKey = await this.#getApiKey();
     if (apiKey.reveal().length === 0) {
