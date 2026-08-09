@@ -357,6 +357,110 @@ describe("timeline panel", () => {
     mounted.unmount();
   });
 
+  it("inserts a keyframe at the playhead with Key and scrubs with arrows", () => {
+    const mounted = mountPanel(true);
+    const { composition } = mounted;
+    act(() => {
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL], "rotation"),
+      ).toBeUndefined();
+    });
+    const lanes = mounted.panel.querySelector<HTMLElement>(".timeline-lanes");
+    if (lanes === null) throw new Error("no lanes");
+    const trackId = composition.timeline.state.tracks[0]?.track.trackId;
+    if (trackId === undefined) throw new Error("missing track");
+    act(() => {
+      composition.timeline.selectTracks([trackId]);
+      lanes.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Key", bubbles: true }),
+      );
+    });
+    expect(keyframesOf(composition)).toHaveLength(1);
+    expect(keyframesOf(composition)[0]?.time).toBe(0);
+    act(() => {
+      lanes.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      );
+    });
+    expect(composition.timeline.state.playhead).toBeCloseTo(0.1);
+    act(() => {
+      lanes.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
+      );
+    });
+    expect(composition.timeline.state.playhead).toBeCloseTo(0);
+    mounted.unmount();
+  });
+
+  it("jumps the playhead with Home and End", () => {
+    const mounted = mountPanel(true);
+    const { composition } = mounted;
+    act(() => {
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      composition.timeline.scrub(1.2);
+    });
+    const lanes = mounted.panel.querySelector<HTMLElement>(".timeline-lanes");
+    if (lanes === null) throw new Error("no lanes");
+    act(() => {
+      lanes.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+      );
+    });
+    expect(composition.timeline.state.playhead).toBeCloseTo(2);
+    act(() => {
+      lanes.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
+      );
+    });
+    expect(composition.timeline.state.playhead).toBeCloseTo(0);
+    mounted.unmount();
+  });
+
+  it("selects tracks from the keyboard and moves focus with arrows", () => {
+    const mounted = mountPanel(true);
+    const { composition } = mounted;
+    act(() => {
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL, ARM], "rotation"),
+      ).toBeUndefined();
+    });
+    const rows = mounted.panel.querySelectorAll<HTMLElement>(
+      '[role="option"].timeline-track',
+    );
+    expect(rows).toHaveLength(2);
+    // Adding tracks selects them; clear first so Enter demonstrates the
+    // keyboard selection path.
+    act(() => {
+      composition.timeline.selectTracks([]);
+    });
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("false");
+    act(() => {
+      rows[0]?.focus();
+      rows[0]?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+    expect(composition.timeline.state.selectedTrackIds).toEqual([
+      composition.timeline.state.tracks[0]?.track.trackId,
+    ]);
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
+    act(() => {
+      rows[0]?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      );
+    });
+    expect(document.activeElement).toBe(rows[1]);
+    mounted.unmount();
+  });
+
   it("removes a track through its row button", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   snapshotEditorStore,
   type EditorStore,
@@ -12,11 +12,19 @@ import { isTauriRuntime } from "./platform/detect.js";
 import { Viewport } from "./viewport/Viewport.js";
 import { HierarchyPanel } from "./panels/HierarchyPanel.js";
 import { InspectorPanel } from "./panels/InspectorPanel.js";
-import { createPanelIds } from "./panels/panel-utils.js";
+import { createPanelIds, PANEL_FOCUS_IDS } from "./panels/panel-utils.js";
 import { MaterialPanel, usePanelState } from "./materials/MaterialPanel.js";
 import { TimelinePanel } from "./timeline/TimelinePanel.js";
 import { AnimationInspector } from "./timeline/AnimationInspector.js";
 import { AiPanel } from "./ai/AiPanel.js";
+import { ShortcutsDialog } from "./shortcuts/ShortcutsDialog.js";
+import { createShortcutDispatcher } from "./shortcuts/shortcut-actions.js";
+import {
+  createLocalStorageShortcutStorage,
+  createShortcutStore,
+  detectPlatform,
+} from "./shortcuts/shortcuts.js";
+import { useShortcuts } from "./shortcuts/use-shortcuts.js";
 import { DEFAULT_PREVIEW_SIZE } from "@voxel-maker/renderer";
 import { handleCloseRequest } from "./close-request.js";
 import type { FileServiceResult, FileServiceStatus } from "./file-service.js";
@@ -164,6 +172,32 @@ export function App(): React.JSX.Element {
   const [recent, setRecent] = useState<readonly RecentProjectEntry[]>([]);
   const [recentOpen, setRecentOpen] = useState(false);
   const recentRef = useRef<HTMLDivElement | null>(null);
+  const [shortcutStore] = useState(() =>
+    createShortcutStore({
+      platform: detectPlatform(),
+      storage: createLocalStorageShortcutStorage(),
+    }),
+  );
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Global keyboard shortcuts (plan S7.15, ticket #43): the store matches
+  // platform-aware, remappable bindings and never fires from text entry,
+  // IME composition, or while the dialog/menu owns the keyboard; the
+  // dispatcher routes matches to the same composition seams as the
+  // toolbar buttons. The dispatcher is memoized so the window listener
+  // binds once per composition.
+  const dispatchShortcut = useMemo(
+    () =>
+      createShortcutDispatcher({
+        composition,
+        focusPanel: (panel) => {
+          document.getElementById(PANEL_FOCUS_IDS[panel])?.focus();
+        },
+      }),
+    [composition],
+  );
+  useShortcuts(shortcutStore, dispatchShortcut);
 
   useEffect(
     () =>
@@ -252,6 +286,17 @@ export function App(): React.JSX.Element {
       size: exportSize,
     });
     if (result !== undefined) setLastExport(result);
+  };
+
+  const openShortcuts = (): void => {
+    setShortcutsOpen(true);
+  };
+
+  const closeShortcuts = (): void => {
+    setShortcutsOpen(false);
+    // Restore focus to the opener so the keyboard position is
+    // predictable after the modal closes (plan S7.17).
+    shortcutsButtonRef.current?.focus();
   };
 
   const openRecent = async (path: string): Promise<void> => {
@@ -440,6 +485,14 @@ export function App(): React.JSX.Element {
           onClick={() => void run(() => composition.fileService.closeProject())}
         >
           Close
+        </button>
+        <button
+          type="button"
+          ref={shortcutsButtonRef}
+          aria-haspopup="dialog"
+          onClick={openShortcuts}
+        >
+          Shortcuts
         </button>
         <span className="toolbar-separator" aria-hidden="true" />
         <button
@@ -803,6 +856,9 @@ export function App(): React.JSX.Element {
           <span className="error">{lastResult.error.message}</span>
         ) : null}
       </footer>
+      {shortcutsOpen ? (
+        <ShortcutsDialog store={shortcutStore} onClose={closeShortcuts} />
+      ) : null}
       <section className="notices" aria-label="Notices">
         {editorState.notices.map((notice) => (
           <div

@@ -95,6 +95,26 @@ const allowedDependencies = {
     "rigging",
     "animation",
   ],
+  // QA harness (ticket #45): measures every gate metric through the real
+  // seams, so it may depend on every semantic and adapter package. Nothing
+  // may depend on benchmarks (it is a leaf tool, never imported by core).
+  benchmarks: [
+    "shared",
+    "math",
+    "model",
+    "document",
+    "voxel",
+    "commands",
+    "rigging",
+    "animation",
+    "renderer",
+    "formats",
+    "storage",
+    "interchange",
+    "agent",
+    "evaluation",
+    "session",
+  ],
 };
 const packageOnlyAdapterPattern =
   /^(react|@react-three|@tauri-apps|@anthropic-ai|openai|node:(?:child_process|fs|http|https|net|path|worker_threads))(\/|$)/u;

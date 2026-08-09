@@ -23,3 +23,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      # Ticket #45: CI smoke thresholds detect gross scale/performance
+      # regressions on every PR (broad thresholds; the named reference
+      # and low tiers are qualified on their own hardware).
+      - env:
+          NODE_OPTIONS: --expose-gc
+        run: pnpm bench:smoke

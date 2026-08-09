@@ -4,7 +4,11 @@ import {
   type DocumentStoreHandle,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
-import type { AgentBudgets, ProviderUsage } from "@voxel-maker/agent";
+import {
+  estimateCostUsd,
+  type AgentBudgets,
+  type ProviderUsage,
+} from "@voxel-maker/agent";
 import {
   createAgentSession,
   createConsent,
@@ -22,6 +26,7 @@ import {
   type ProviderConsent,
 } from "@voxel-maker/agent";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
+import { canonicalDocumentJson } from "@voxel-maker/model";
 import { WorkspaceError, type VolumeId } from "@voxel-maker/shared";
 import type { IntAabb } from "@voxel-maker/math";
 import {
@@ -103,6 +108,23 @@ export interface RunReport {
   readonly usage: ProviderUsage;
   readonly applyOk: boolean;
   readonly applyLabel: string | undefined;
+  /**
+   * Commands executed by the applied transaction (0 when nothing was
+   * applied). Ticket #45 AC: evaluations track commands.
+   */
+  readonly appliedCommands: number;
+  /**
+   * Effective voxels changed by the applied proposal (ticket #45 AC).
+   * Mirrors the efficiency score's effectiveChangedVoxels evidence; the
+   * run report carries it so every eval tracks modified voxels directly.
+   */
+  readonly modifiedVoxels: number;
+  /** Canonical output document JSON bytes after apply (ticket #45 AC). */
+  readonly outputBytes: number;
+  /** Virtual-clock duration of the run in ms (ticket #45 AC). */
+  readonly durationMs: number;
+  /** Estimated spend in USD when the provider model is priced. */
+  readonly costUsd: number | undefined;
 }
 
 /** The complete recorded result of one scenario evaluation. */
@@ -320,6 +342,7 @@ export async function evaluateScenario(
   const beforePreviews = renderPreviewEvidence(beforeStore);
 
   const result = await sessionHolder.session.run();
+  const durationMs = clock.now();
   // Capture the staged proposal facts BEFORE apply (apply closes the
   // preview and releases its counters).
   const stagedCommands = result.ok ? result.stagedCommands : 0;
@@ -353,15 +376,26 @@ export async function evaluateScenario(
       : undefined;
   let applyOk = false;
   let applyLabel: string | undefined;
+  let appliedCommands = 0;
   if (result.ok) {
     const applied = sessionHolder.session.apply({
       label: `AI eval: ${scenario.name}`,
     });
     applyOk = applied.ok;
     applyLabel = applied.ok ? `AI eval: ${scenario.name}` : undefined;
+    if (applied.ok) {
+      appliedCommands = applied.value.event.commandIds.length;
+    }
   }
   const revisionAfter = handle.store.revision;
   const historyAfter = bus.historySnapshot().past.length;
+  const effectiveChangedVoxels = scans.reduce(
+    (sum, scan) =>
+      sum +
+      changedVoxels(beforeStore, handle.store, scan.volumeId, scan.region)
+        .length,
+    0,
+  );
   const afterMetrics = occupiedMetrics(
     handle.store,
     primaryScan.volumeId,
@@ -379,13 +413,7 @@ export async function evaluateScenario(
     toolCalls: result.ok ? result.toolCalls : toolLog.length,
     commands: result.ok ? result.stagedCommands : 0,
     voxelEstimate,
-    effectiveChangedVoxels: scans.reduce(
-      (sum, scan) =>
-        sum +
-        changedVoxels(beforeStore, handle.store, scan.volumeId, scan.region)
-          .length,
-      0,
-    ),
+    effectiveChangedVoxels,
     before: beforeStore,
     after: handle.store,
     beforeMetrics,
@@ -421,6 +449,13 @@ export async function evaluateScenario(
       usage,
       applyOk,
       applyLabel,
+      appliedCommands,
+      modifiedVoxels: effectiveChangedVoxels,
+      outputBytes: new TextEncoder().encode(
+        canonicalDocumentJson(handle.store.getDocument()),
+      ).byteLength,
+      durationMs,
+      costUsd: estimateCostUsd(provider.defaultModel, usage),
     },
     scores,
     toolLog,

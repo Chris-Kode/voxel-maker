@@ -55,11 +55,15 @@ import {
   type TimelineController,
 } from "./timeline/timeline-controller.js";
 import { createAiController, type AiController } from "./ai/ai-controller.js";
+import { createRendererEvidenceCapture } from "./ai/visual-evidence.js";
 import {
   KEYCHAIN_SERVICE,
   MemoryConsentStore,
   MemoryCredentialStore,
+  MemoryImageConsentStore,
   OpenAIProvider,
+  type EvidenceCapture,
+  type ImageConsentStore,
   Secret,
   type AgentBudgets,
   type ConsentStore,
@@ -191,6 +195,18 @@ export interface CompositionOptions {
     readonly credentials?: CredentialStore;
     /** Consent store; defaults to a per-window memory store. */
     readonly consent?: ConsentStore;
+    /**
+     * Image-transmission consent store (ADR-0010, ticket #40); defaults
+     * to a per-window memory store.
+     */
+    readonly imageConsentStore?: ImageConsentStore;
+    /**
+     * Evidence capture seam (ticket #40); defaults to the renderer-based
+     * standard-view capture so visual refinement works out of the box.
+     */
+    readonly capture?: EvidenceCapture;
+    /** Evidence resolution for the refinement plan; defaults to 512. */
+    readonly evidenceResolution?: number;
     /** Session budget overrides; every value is clamped to [0, default]. */
     readonly budgets?: Partial<AgentBudgets>;
     /** Virtual clock for the agent loop (tests). */
@@ -355,6 +371,10 @@ export function createDesktopComposition(
     options.credentials ??
     new MemoryCredentialStore();
   const consent = options.ai?.consent ?? new MemoryConsentStore();
+  const imageConsentStore =
+    options.ai?.imageConsentStore ?? new MemoryImageConsentStore();
+  const evidenceCapture =
+    options.ai?.capture ?? createRendererEvidenceCapture();
   const provider: ProviderAdapter =
     options.ai?.provider ??
     new OpenAIProvider({
@@ -370,6 +390,11 @@ export function createDesktopComposition(
     provider,
     credentials,
     consent,
+    imageConsentStore,
+    capture: evidenceCapture,
+    ...(options.ai?.evidenceResolution === undefined
+      ? {}
+      : { evidenceResolution: options.ai.evidenceResolution }),
     ...(options.ai?.model === undefined ? {} : { model: options.ai.model }),
     ...(options.ai?.budgets === undefined
       ? {}

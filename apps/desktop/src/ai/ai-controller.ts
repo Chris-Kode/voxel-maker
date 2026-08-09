@@ -5,15 +5,22 @@ import type {
   ScenePreviewProjection,
 } from "@voxel-maker/renderer";
 import {
+  MemoryImageConsentStore,
+  imageConsentExpired,
+} from "@voxel-maker/agent";
+import {
   consentCovers,
   createAgentSession,
   createConsent,
+  createImageConsent,
   createInspector,
   createMutator,
   createPreviewRegistry,
   createPreviewSession,
+  createVisualRefinementPlan,
   DISCLOSURE_CATEGORIES,
   KEYCHAIN_SERVICE,
+  planCoveredByConsent,
   previewSessionId,
   Secret,
   type AgentBudgets,
@@ -22,12 +29,17 @@ import {
   type AgentSession,
   type ConsentStore,
   type CredentialStore,
+  type EvidenceCapture,
+  type ImageConsentStore,
+  type ImageTransmissionConsent,
   type PreviewDiff,
   type PreviewSession,
   type PreviewSessionId,
   type ProviderAdapter,
   type ProviderConsent,
   type ProviderUsage,
+  type RefinementEvaluation,
+  type VisualRefinementPlan,
 } from "@voxel-maker/agent";
 import { evaluateAnimationRuntime } from "@voxel-maker/animation";
 import type { AnimationDescriptor } from "@voxel-maker/model";
@@ -137,7 +149,31 @@ export interface AiControllerState {
     readonly trackCount: number;
     readonly keyframeCount: number;
   }[];
+  /** True when the user enabled visual refinement evidence (opt-in). */
+  readonly visualEnabled: boolean;
+  /** Stored image-transmission consent for the current provider/model. */
+  readonly imageConsent: ImageTransmissionConsent | undefined;
+  /** The approved per-session visual refinement plan. */
+  readonly refinementPlan: VisualRefinementPlan | undefined;
+  /** Visual refinement summary of the last run. */
+  readonly refinement: AiRefinementSummary | undefined;
 }
+
+/** UI-facing summary of one visual refinement run. */
+export type AiRefinementSummary = {
+  readonly iterations: number;
+  readonly imagesSent: number;
+  readonly lastCritique?: {
+    readonly category: string;
+    readonly evidence: string;
+  };
+  readonly evaluation?: {
+    readonly promotable: boolean;
+    readonly regressions: readonly string[];
+    readonly overallSimilarity: number;
+    readonly occupancyDelta: number;
+  };
+};
 
 export interface AiControllerOptions {
   readonly session: DocumentSession;
@@ -159,6 +195,12 @@ export interface AiControllerOptions {
   readonly clock?: { now(): number };
   /** Simulated sleep for retry backoff (tests). */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Image-transmission consent store (ADR-0010, ticket #40). */
+  readonly imageConsentStore?: ImageConsentStore;
+  /** Evidence capture seam; present only when refinement can transmit images. */
+  readonly capture?: EvidenceCapture;
+  /** Default evidence resolution for the refinement plan. */
+  readonly evidenceResolution?: number;
 }
 
 export interface AiController {
@@ -173,12 +215,24 @@ export interface AiController {
   clearApiKey(): Promise<boolean>;
   /** Records explicit consent for the current provider and model. */
   consent(costCapUsd?: number, tokenCap?: number): Promise<boolean>;
+  /**
+   * Records explicit image-transmission consent for the current provider
+   * and model under a validated per-session plan (ADR-0010, ticket #40).
+   * Returns false when the plan could not be approved.
+   */
+  consentImages(resolution?: number): Promise<boolean>;
+  /** Deletes the stored image-transmission consent. */
+  clearImageConsent(): Promise<boolean>;
+  /** Enables or disables the visual refinement phase (off by default). */
+  setVisualEnabled(enabled: boolean): void;
   /** Starts one bounded run; resolves when the run reaches a terminal phase. */
   run(prompt: string): Promise<void>;
   /** Requests cancellation of the in-flight run (next run boundary). */
   cancel(): void;
   /** Applies the staged proposal as one labeled undoable history entry. */
   apply(label?: string): void;
+  /** Explicitly promotes a regression-gated refinement (human override). */
+  applyForced(label?: string): void;
   /** Discards the staged proposal; no history entry is created. */
   discard(): void;
   /**
@@ -221,6 +275,16 @@ export function reinspectPromptFor(original: string): string {
   );
 }
 
+/** Bounded one-line summary of an approved refinement plan. */
+function planForNotice(plan: VisualRefinementPlan | undefined): string {
+  if (plan === undefined) return "the standard views";
+  return `${String(plan.imageCount)} standard views at ${String(
+    plan.resolution,
+  )}px, up to ${String(plan.maxImages)} images across ${String(
+    plan.maxVisualIterations,
+  )} iterations (est. $${plan.estimatedCostUsd.toFixed(4)})`;
+}
+
 /** Bounds and normalizes an Apply history label. */
 function boundLabel(label: string | undefined): string | undefined {
   if (label === undefined) return undefined;
@@ -250,10 +314,17 @@ class AiControllerImpl implements AiController {
   readonly #provider: ProviderAdapter;
   readonly #credentials: CredentialStore;
   readonly #consentStore: ConsentStore;
+  readonly #imageConsentStore: ImageConsentStore;
+  readonly #capture: EvidenceCapture | undefined;
+  readonly #evidenceResolution: number;
   readonly #model: string;
   readonly #budgets: Partial<AgentBudgets> | undefined;
   readonly #clock: { now(): number } | undefined;
   readonly #sleep: ((ms: number) => Promise<void>) | undefined;
+  #visualEnabled = false;
+  #imageConsent: ImageTransmissionConsent | undefined;
+  #refinementPlan: VisualRefinementPlan | undefined;
+  #refinement: AiRefinementSummary | undefined;
   readonly #listeners = new Set<() => void>();
   /** Bounded activity entries of the current run. */
   readonly #activity: AiActivityEntry[] = [];
@@ -274,6 +345,7 @@ class AiControllerImpl implements AiController {
   #error: { code: string; message: string } | undefined;
   #reason: AgentRunReason | undefined;
   #applied: { label: string; stagedCommandCount: number } | undefined;
+  #refinementEvaluation: RefinementEvaluation | undefined;
   #agentSession: AgentSession | undefined;
   #preview: PreviewSession | undefined;
   #projection: ScenePreviewProjection | undefined;
@@ -286,6 +358,10 @@ class AiControllerImpl implements AiController {
     this.#provider = options.provider;
     this.#credentials = options.credentials;
     this.#consentStore = options.consent;
+    this.#imageConsentStore =
+      options.imageConsentStore ?? new MemoryImageConsentStore();
+    this.#capture = options.capture;
+    this.#evidenceResolution = options.evidenceResolution ?? 512;
     this.#model = options.model ?? options.provider.defaultModel;
     this.#budgets = options.budgets;
     this.#clock = options.clock;
@@ -319,11 +395,12 @@ class AiControllerImpl implements AiController {
       diff: this.#diff,
       usage: this.#usage,
       activity: Object.freeze([...this.#activity]),
-      error: this.#error,
       reason: this.#reason,
-      applied: this.#applied,
-      stagedClips: this.#stagedClips(),
-    };
+<<<<<<< HEAD
+=======
+      refinementPlan: this.#refinementPlan,
+      refinement: this.#refinement,
+>>>>>>> origin/main
   }
 
   /** Bounded staged overlay clip summaries (plan S13.5, ticket #36). */
@@ -437,12 +514,113 @@ class AiControllerImpl implements AiController {
         this.#consented = consented;
         this.#emit();
       }
+      const imageRecord = await this.#imageConsentStore.get(
+        this.#provider.providerId,
+        this.#model,
+      );
+      const imageConsent =
+        imageRecord !== undefined &&
+        !imageConsentExpired(imageRecord, this.#clock?.now() ?? Date.now())
+          ? imageRecord
+          : undefined;
+      if (this.#imageConsent !== imageConsent) {
+        this.#imageConsent = imageConsent;
+        this.#refinementPlan =
+          imageConsent === undefined
+            ? undefined
+            : this.#planFromConsent(imageConsent);
+        this.#emit();
+      }
     } catch {
       if (this.#configured) {
         this.#configured = false;
         this.#emit();
       }
     }
+  }
+
+  /** Reads the refinement summary without same-method narrowing. */
+  #refinementSummary(): AiRefinementSummary | undefined {
+    return this.#refinement;
+  }
+
+  /** Derives the per-session plan from a stored consent record. */
+  #planFromConsent(
+    consent: ImageTransmissionConsent,
+  ): VisualRefinementPlan | undefined {
+    try {
+      return createVisualRefinementPlan({
+        providerId: consent.providerId,
+        model: consent.model,
+        views: [...consent.views],
+        resolution: consent.maxResolution,
+        maxImages: consent.maxImages,
+        maxVisualIterations: 3,
+        estimatedCostUsd: consent.estimatedCostUsd,
+      });
+    } catch {
+      // A stored record that cannot form a plan is treated as absent.
+      return undefined;
+    }
+  }
+
+  async consentImages(resolution?: number): Promise<boolean> {
+    try {
+      const plan = createVisualRefinementPlan({
+        providerId: this.#provider.providerId,
+        model: this.#model,
+        resolution: resolution ?? this.#evidenceResolution,
+      });
+      const consent = createImageConsent({
+        providerId: this.#provider.providerId,
+        model: this.#model,
+        views: plan.views,
+        maxImages: plan.maxImages,
+        maxResolution: plan.resolution,
+        estimatedCostUsd: plan.estimatedCostUsd,
+        ...(this.#clock === undefined ? {} : { clock: this.#clock }),
+      });
+      await this.#imageConsentStore.save(consent);
+      this.#imageConsent = consent;
+      this.#refinementPlan = plan;
+      this.#emit();
+    } catch (error) {
+      this.#editor.pushNotice(
+        "error",
+        `Image consent could not be recorded: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+      return false;
+    }
+    this.#editor.pushNotice(
+      "info",
+      `Image transmission approved for ${planForNotice(this.#refinementPlan)}`,
+    );
+    return true;
+  }
+
+  async clearImageConsent(): Promise<boolean> {
+    try {
+      await this.#imageConsentStore.delete(
+        this.#provider.providerId,
+        this.#model,
+      );
+    } catch (error) {
+      this.#editor.pushNotice(
+        "error",
+        `Image consent could not be removed: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+      return false;
+    }
+    this.#imageConsent = undefined;
+    this.#refinementPlan = undefined;
+    this.#emit();
+    this.#editor.pushNotice("info", "Image transmission consent was removed");
+    return true;
+  }
+
+  setVisualEnabled(enabled: boolean): void {
+    this.#visualEnabled = enabled;
+    this.#emit();
   }
 
   async saveApiKey(key: string): Promise<boolean> {
@@ -604,6 +782,36 @@ class AiControllerImpl implements AiController {
       session: preview,
       capabilities: ["mutate"],
     });
+    // Visual refinement phase (plan S15.5, ticket #40): opt-in and
+    // gated by explicit image consent for this provider, model, views,
+    // count, resolution, budget, and cost. Without a stored consent
+    // covering the plan, no evidence is transmitted.
+    let refinement: Parameters<typeof createAgentSession>[0]["refinement"];
+    if (
+      this.#visualEnabled &&
+      this.#capture !== undefined &&
+      this.#imageConsent !== undefined &&
+      this.#refinementPlan !== undefined &&
+      planCoveredByConsent(
+        this.#refinementPlan,
+        this.#imageConsent,
+        this.#clock?.now() ?? Date.now(),
+      )
+    ) {
+      refinement = {
+        capture: this.#capture,
+        plan: this.#refinementPlan,
+        consent: this.#imageConsent,
+      };
+    } else if (this.#visualEnabled && this.#capture !== undefined) {
+      // Defense in depth (the UI disables the toggle without consent):
+      // never transmit evidence without an approved plan, and never fail
+      // the whole run for it — the text proposal remains valid.
+      this.#editor.pushNotice(
+        "info",
+        "Visual refinement is enabled but image transmission is not approved for this provider, model, views, count, resolution, and cost; the run used text-only evidence",
+      );
+    }
     const agent = createAgentSession({
       provider: this.#provider,
       inspector,
@@ -614,6 +822,7 @@ class AiControllerImpl implements AiController {
       ...(this.#budgets === undefined ? {} : { budgets: this.#budgets }),
       ...(this.#clock === undefined ? {} : { clock: this.#clock }),
       ...(this.#sleep === undefined ? {} : { sleep: this.#sleep }),
+      ...(refinement === undefined ? {} : { refinement }),
       onEvent: (event) => {
         this.#onEvent(event);
       },
@@ -639,6 +848,8 @@ class AiControllerImpl implements AiController {
     this.#error = undefined;
     this.#reason = undefined;
     this.#applied = undefined;
+    this.#refinement = undefined;
+    this.#refinementEvaluation = undefined;
     this.#activity.length = 0;
     this.#setPhase("running");
 
@@ -648,6 +859,30 @@ class AiControllerImpl implements AiController {
       this.#stagedCommandCount = result.stagedCommands;
       this.#diff = result.diff;
       this.#voxelEstimate = result.diff.voxelEstimate;
+      if (result.refinement !== undefined) {
+        this.#refinementEvaluation = result.refinement.evaluation;
+        // Method-boundary read: the field was reset earlier in this
+        // method, so control-flow would otherwise narrow it to undefined.
+        const lastCritique = this.#refinementSummary()?.lastCritique;
+        this.#refinement = {
+          iterations: result.refinement.iterations,
+          imagesSent: result.refinement.imagesSent,
+          ...(lastCritique === undefined ? {} : { lastCritique }),
+          evaluation: {
+            promotable: result.refinement.evaluation.promotable,
+            regressions: result.refinement.evaluation.regressions,
+            overallSimilarity: result.refinement.evaluation.overallSimilarity,
+            occupancyDelta:
+              result.refinement.evaluation.structural.occupiedVoxels,
+          },
+        };
+        if (!result.refinement.evaluation.promotable) {
+          this.#editor.pushNotice(
+            "warning",
+            "The visual refinement regressed structural or visual outcomes; review the evaluation before applying",
+          );
+        }
+      }
       this.#setPhase("approve");
       return;
     }
@@ -697,8 +932,31 @@ class AiControllerImpl implements AiController {
   }
 
   apply(label?: string): void {
+    this.#applyProposal(label, false);
+  }
+
+  /** Explicit human override of the regression gate (still one labeled entry). */
+  applyForced(label?: string): void {
+    this.#applyProposal(label, true);
+  }
+
+  #applyProposal(label: string | undefined, force: boolean): void {
     if (this.#agentSession === undefined || this.#phase !== "approve") {
       this.#editor.pushNotice("info", "There is no approved proposal to apply");
+      return;
+    }
+    // Regression promotion gate (plan S15.9, ticket #40): an evaluation
+    // that flagged regressions or oscillation is not promoted without an
+    // explicit human override.
+    if (
+      !force &&
+      this.#refinementEvaluation !== undefined &&
+      !this.#refinementEvaluation.promotable
+    ) {
+      this.#editor.pushNotice(
+        "warning",
+        "This refinement is gated: its evaluation flagged regressions or oscillation. Review the evaluation and use Apply anyway to promote it explicitly",
+      );
       return;
     }
     const bounded = boundLabel(label) ?? DEFAULT_AI_APPLY_LABEL;
@@ -838,6 +1096,37 @@ class AiControllerImpl implements AiController {
           message: boundText(event.error.message),
         });
         break;
+      case "refine": {
+        // The latest parsed critique persists across rounds (later
+        // no-op rounds and the final done event carry none).
+        const previous = this.#refinementSummary();
+        const critique =
+          event.critique === undefined
+            ? previous?.lastCritique
+            : {
+                category: event.critique.issueCategory,
+                evidence: boundText(event.critique.evidence),
+              };
+        this.#refinement = {
+          iterations: event.iteration,
+          imagesSent: event.imagesSent,
+          ...(critique === undefined ? {} : { lastCritique: critique }),
+          ...(previous?.evaluation === undefined
+            ? {}
+            : { evaluation: previous.evaluation }),
+        };
+        this.#pushActivity({
+          kind: "state",
+          message: boundText(
+            `Visual refinement iteration ${String(event.iteration)}: ${String(
+              event.correctionsStaged,
+            )} correction${event.correctionsStaged === 1 ? "" : "s"} staged, ${String(
+              event.imagesSent,
+            )} image${event.imagesSent === 1 ? "" : "s"} transmitted${event.stopped === undefined ? "" : ` (${event.stopped})`}`,
+          ),
+        });
+        break;
+      }
     }
     this.#emit();
   }

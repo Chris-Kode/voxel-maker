@@ -21,7 +21,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "@voxel-maker/animation": "workspace:*",
+    "@voxel-maker/formats": "workspace:*"
   },
   "dependencies": {
     "@voxel-maker/shared": "workspace:*",
