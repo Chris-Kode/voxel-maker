@@ -18,9 +18,16 @@
     "clean": "node ../../scripts/clean.mjs dist",
     "lint": "eslint src",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/math": "workspace:*",
+    "@voxel-maker/model": "workspace:*",
+    "@voxel-maker/document": "workspace:*"
   }
 }
