@@ -404,7 +404,7 @@ export function runAnimationTrace(): string {
     playback: {
       playing: played.playing,
       time: played.time,
-      loop: played.loop,
+      loop: played.loopOverride,
       scrubbedTime,
       rotationSinWhilePlaying: evaluatedWhilePlaying ?? -1,
       rotationSinAfterStop: baseRestored ?? -1,

@@ -34,7 +34,7 @@ describe("createPlaybackController", () => {
       stopped: true,
       time: 0,
       resolvedTime: 0,
-      loop: false,
+      loopOverride: false,
       clipId: null,
     });
   });

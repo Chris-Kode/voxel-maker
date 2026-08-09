@@ -151,6 +151,26 @@ describe("sampleTrack", () => {
     expect(Math.abs(midValue[1] - longWay[1])).toBeGreaterThan(0.5);
   });
 
+  it("returns copies at exact boundaries so samples never alias keyframes", () => {
+    const track = translationTrack("linear", [
+      { time: 1, value: [1.25, -0.5, 3] },
+      { time: 2, value: [2, 0, 0] },
+    ]);
+    const boundary = sampleTrack(track, 1);
+    expect(boundary?.value).toEqual([1.25, -0.5, 3]);
+    if (boundary !== undefined) {
+      // Mutating the returned sample must not corrupt the authored keyframe.
+      (boundary.value as unknown as number[])[0] = 999;
+    }
+    expect(sampleTrack(track, 1)?.value).toEqual([1.25, -0.5, 3]);
+    const held = sampleTrack(track, 0);
+    expect(held?.value).toEqual([1.25, -0.5, 3]);
+    if (held !== undefined) {
+      (held.value as unknown as number[])[1] = 999;
+    }
+    expect(sampleTrack(track, 0)?.value).toEqual([1.25, -0.5, 3]);
+  });
+
   it("samples translation against identity rotation base without drift", () => {
     const track = rotationTrack("linear", [
       { time: 0, angle: 0 },

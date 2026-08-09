@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { keyframeId, nodeId, trackId } from "@voxel-maker/shared";
-import type {
-  AnimationDescriptor,
-  AnimationTrack,
-  VoxelDocument,
+import {
+  DEFAULT_DOCUMENT_LIMITS,
+  type AnimationDescriptor,
+  type AnimationTrack,
+  type VoxelDocument,
 } from "@voxel-maker/model";
 import { cloneDocument } from "@voxel-maker/model";
 import {
@@ -242,6 +243,40 @@ describe("validateAnimationSemantics", () => {
     });
     // Last track wins deterministically; validation stays silent.
     expect(validateAnimationSemantics(duplicateTarget)).toEqual([]);
+  });
+
+  it("enforces clip, track, and keyframe budgets from the injected limits", () => {
+    const document = wheelDocument();
+    const clipIssues = validateAnimationSemantics(document, {
+      ...DEFAULT_DOCUMENT_LIMITS,
+      maxClips: 0,
+    });
+    expect(clipIssues.some((item) => item.code === "CLIP_LIMIT_EXCEEDED")).toBe(
+      true,
+    );
+    const trackIssues = validateAnimationSemantics(document, {
+      ...DEFAULT_DOCUMENT_LIMITS,
+      maxTracks: 0,
+    });
+    expect(
+      trackIssues.some((item) => item.code === "TRACK_LIMIT_EXCEEDED"),
+    ).toBe(true);
+    const keyframeIssues = validateAnimationSemantics(document, {
+      ...DEFAULT_DOCUMENT_LIMITS,
+      maxKeyframes: 0,
+    });
+    expect(
+      keyframeIssues.some(
+        (item) => item.code === "KEYFRAME_TOTAL_LIMIT_EXCEEDED",
+      ),
+    ).toBe(true);
+    const perTrackIssues = validateAnimationSemantics(document, {
+      ...DEFAULT_DOCUMENT_LIMITS,
+      maxKeyframesPerTrack: 1,
+    });
+    expect(
+      perTrackIssues.some((item) => item.code === "KEYFRAME_LIMIT_EXCEEDED"),
+    ).toBe(true);
   });
 
   it("never mutates the input document", () => {

@@ -23,6 +23,17 @@ import type { AnimationTrack, TrackProperty } from "@voxel-maker/model";
 
 const smoothstepCurve = (u: number): number => u * u * (3 - 2 * u);
 
+/** A bit-exact copy of a stored property value (never aliases the array). */
+function copyProperty(property: TrackProperty): TrackProperty {
+  if (property.channel === "rotation") {
+    return { channel: "rotation", value: [...property.value] as Quat };
+  }
+  if (property.channel === "scale") {
+    return { channel: "scale", value: [...property.value] as Vec3 };
+  }
+  return { channel: "translation", value: [...property.value] as Vec3 };
+}
+
 function lerpValue(
   channel: TrackProperty["channel"],
   a: readonly number[],
@@ -56,9 +67,10 @@ export function sampleTrack(
   const last = keyframes[keyframes.length - 1];
   if (last === undefined) return undefined;
   const channel = first.property.channel;
-  // Exact boundary: return the stored value bit for bit.
-  if (time <= first.time) return first.property;
-  if (time >= last.time) return last.property;
+  // Exact boundary: return the stored value bit for bit. The value is
+  // copied so the sample never aliases the authored keyframe array.
+  if (time <= first.time) return copyProperty(first.property);
+  if (time >= last.time) return copyProperty(last.property);
   // Bracketing keyframes: the last keyframe at or before `time` and the
   // first keyframe after it. Times are sorted and unique (validated), so
   // the pair is unique.

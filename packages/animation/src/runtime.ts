@@ -10,7 +10,7 @@ import type {
   VoxelDocument,
 } from "@voxel-maker/model";
 import type { AnimationId, NodeId } from "@voxel-maker/shared";
-import { sampleClip } from "./evaluate.js";
+import { sampleClip, type NodeOverrides } from "./evaluate.js";
 
 /**
  * Layered runtime transform evaluation (plan S10.5, ticket #28). ADR-0006
@@ -125,6 +125,30 @@ function applyOverride(
 }
 
 /**
+ * Builds the local-transform table from an optional override map: base
+ * node transform, then the sampled clip property overrides
+ * (translation/rotation/scale replace the base component; the pivot is
+ * never animated in v1 and always stays base). Pass no overrides to
+ * evaluate pure base state — the exact state `stop()` restores.
+ */
+export function evaluateLocalTransformsFromOverrides(
+  document: VoxelDocument,
+  overrides: ReadonlyMap<NodeId, NodeOverrides> | undefined,
+): ReadonlyMap<NodeId, Transform> {
+  const local = new Map<NodeId, Transform>();
+  for (const node of Object.values(document.nodes)) {
+    const nodeOverrides = overrides?.get(node.nodeId);
+    local.set(
+      node.nodeId,
+      nodeOverrides === undefined
+        ? node.transform
+        : applyOverride(node.transform, nodeOverrides),
+    );
+  }
+  return new ReadOnlyMapView(local);
+}
+
+/**
  * Evaluates the local transforms of every node reachable from the root
  * with the animation override applied: base node transform, then the
  * sampled clip property overrides (translation/rotation/scale replace the
@@ -139,17 +163,7 @@ export function evaluateLocalTransforms(
 ): ReadonlyMap<NodeId, Transform> {
   const overrides =
     clip === null ? undefined : sampleClip(clip, time).overrides;
-  const local = new Map<NodeId, Transform>();
-  for (const node of Object.values(document.nodes)) {
-    const nodeOverrides = overrides?.get(node.nodeId);
-    local.set(
-      node.nodeId,
-      nodeOverrides === undefined
-        ? node.transform
-        : applyOverride(node.transform, nodeOverrides),
-    );
-  }
-  return new ReadOnlyMapView(local);
+  return evaluateLocalTransformsFromOverrides(document, overrides);
 }
 
 /**
@@ -201,9 +215,15 @@ export function evaluateAnimationRuntime(
   clip: AnimationDescriptor | null,
   time: number,
 ): AnimationRuntimeState {
-  const local = evaluateLocalTransforms(document, clip, time);
+  // Sample the clip once; the same overrides feed the local table and the
+  // resolved time, so one evaluation allocates one sample.
+  const sample = clip === null ? undefined : sampleClip(clip, time);
+  const local = evaluateLocalTransformsFromOverrides(
+    document,
+    sample?.overrides,
+  );
   return {
-    time: clip === null ? 0 : sampleClip(clip, time).time,
+    time: sample?.time ?? 0,
     clipId: clip?.animationId ?? null,
     local,
     world: evaluateWorldTransforms(document, local),

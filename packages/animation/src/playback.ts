@@ -50,8 +50,13 @@ export interface PlaybackState {
   readonly time: number;
   /** Clip-loop-resolved sample time (`resolveClipTime`). */
   readonly resolvedTime: number;
-  /** Transport loop override; when true playback wraps for any clip. */
-  readonly loop: boolean;
+  /**
+   * Transport loop override (setLoop). When true, playback wraps at the
+   * clip duration for any clip; when false, the clip's own persisted loop
+   * policy applies (`loop` clips keep wrapping, `once` clips stop at the
+   * end). For the effective wrapping behavior, read `resolvedTime`.
+   */
+  readonly loopOverride: boolean;
   /** The active clip, or null when no clip is loaded. */
   readonly clipId: AnimationId | null;
 }
@@ -71,7 +76,12 @@ export interface PlaybackController {
   stop(): void;
   /** Jumps to a transport time and shows the animated pose there. */
   scrub(time: number): void;
-  /** Toggles the transport loop override. */
+  /**
+   * Toggles the transport loop override. On, playback wraps at the clip
+   * duration for any clip; off, the clip's own persisted loop policy
+   * applies (`loop` clips keep wrapping, `once` clips auto-pause at the
+   * end).
+   */
   setLoop(enabled: boolean): void;
   /**
    * Advances the transport with the clock when playing. `now` is in
@@ -119,7 +129,7 @@ export function createPlaybackController(
       stopped,
       time,
       resolvedTime: resolvedTime(),
-      loop: loopOverride,
+      loopOverride,
       clipId: currentClip?.animationId ?? null,
     });
 

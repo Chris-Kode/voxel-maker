@@ -35,7 +35,11 @@ export interface AnimationIssue {
     | "UNSORTED_KEYFRAME_TIMES"
     | "DUPLICATE_KEYFRAME_TIME"
     | "DUPLICATE_TRACK_ID"
-    | "INVALID_CLIP_DURATION";
+    | "INVALID_CLIP_DURATION"
+    | "CLIP_LIMIT_EXCEEDED"
+    | "TRACK_LIMIT_EXCEEDED"
+    | "KEYFRAME_LIMIT_EXCEEDED"
+    | "KEYFRAME_TOTAL_LIMIT_EXCEEDED";
   readonly animationId: string;
   readonly trackId?: string;
   readonly keyframeId?: string;
@@ -196,6 +200,9 @@ function checkTrack(
  * - `DUPLICATE_TRACK_ID` — two tracks in the same clip share an id.
  * - `INVALID_CLIP_DURATION` — clip-level bounds (loop policy and shape are
  *   structurally guaranteed by the model schema validator).
+ * - `CLIP_LIMIT_EXCEEDED` / `TRACK_LIMIT_EXCEEDED` /
+ *   `KEYFRAME_LIMIT_EXCEEDED` / `KEYFRAME_TOTAL_LIMIT_EXCEEDED` — the
+ *   ADR-0009 clip/track/keyframe budgets.
  *
  * Per-clip duplicate (target node, channel) tracks are legal: evaluation
  * resolves them by the clip's stable persisted track order (last track
@@ -206,7 +213,31 @@ export function validateAnimationSemantics(
   limits: DocumentLimits = DEFAULT_DOCUMENT_LIMITS,
 ): readonly AnimationIssue[] {
   const issues: AnimationIssue[] = [];
-  for (const animation of Object.values(document.animations)) {
+  const animationList = Object.values(document.animations);
+  if (animationList.length > limits.maxClips) {
+    issues.push({
+      code: "CLIP_LIMIT_EXCEEDED",
+      animationId: animationList[0]?.animationId ?? "",
+      message: `Clip count exceeds the ${String(limits.maxClips)}-clip limit`,
+    });
+  }
+  let trackCount = 0;
+  let keyframeCount = 0;
+  for (const animation of animationList) {
+    trackCount += animation.tracks.length;
+    for (const track of animation.tracks) {
+      keyframeCount += track.keyframes.length;
+      if (track.keyframes.length > limits.maxKeyframesPerTrack) {
+        issues.push(
+          issue(
+            "KEYFRAME_LIMIT_EXCEEDED",
+            animation.animationId,
+            `Track ${track.trackId} exceeds the ${String(limits.maxKeyframesPerTrack)}-keyframe limit`,
+            track.trackId,
+          ),
+        );
+      }
+    }
     if (
       !isFiniteValue(animation.duration) ||
       animation.duration <= 0 ||
@@ -216,7 +247,7 @@ export function validateAnimationSemantics(
         issue(
           "INVALID_CLIP_DURATION",
           animation.animationId,
-          "Clip duration must be finite and within (0, 86400] seconds",
+          `Clip duration must be finite and within (0, ${String(limits.maxClipDurationSeconds)}] seconds`,
         ),
       );
     }
@@ -245,6 +276,20 @@ export function validateAnimationSemantics(
       }
       checkTrack(animation, track, issues);
     }
+  }
+  if (trackCount > limits.maxTracks) {
+    issues.push({
+      code: "TRACK_LIMIT_EXCEEDED",
+      animationId: animationList[0]?.animationId ?? "",
+      message: `Track count exceeds the ${String(limits.maxTracks)}-track limit`,
+    });
+  }
+  if (keyframeCount > limits.maxKeyframes) {
+    issues.push({
+      code: "KEYFRAME_TOTAL_LIMIT_EXCEEDED",
+      animationId: animationList[0]?.animationId ?? "",
+      message: `Keyframe count exceeds the ${String(limits.maxKeyframes)}-keyframe limit`,
+    });
   }
   return issues;
 }

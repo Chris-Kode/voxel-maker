@@ -676,11 +676,12 @@ export function quaternionFromAxisAngle(axis: Vec3, angle: number): Quat {
  * the unit 3-sphere: when the dot product of the two quaternions is
  * negative, the second quaternion is negated first (q and -q describe the
  * same rotation, so this picks the short way). `t` is clamped to [0, 1];
- * `t = 0` returns `a` exactly and `t = 1` returns `b` exactly, so sampling
- * at exact keyframe boundaries reproduces the stored values bit for bit.
- * The result is normalized and ADR-0001 sign-canonicalized. The degenerate
- * parallel/antipodal cases fall back to a normalized linear blend (the
- * shortest path is not unique there; the blend is deterministic).
+ * `t = 0` returns `a` exactly and `t = 1` returns `b` exactly (the input
+ * references), so sampling at exact keyframe boundaries reproduces the
+ * stored values bit for bit; for `0 < t < 1` the result is normalized and
+ * ADR-0001 sign-canonicalized. The degenerate parallel/antipodal cases
+ * fall back to a normalized linear blend (the shortest path is not unique
+ * there; the blend is deterministic).
  */
 export function quaternionSlerp(
   a: readonly [number, number, number, number],
