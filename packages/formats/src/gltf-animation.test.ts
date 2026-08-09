@@ -8,7 +8,11 @@ import {
   volumeId,
   type NodeId,
 } from "@voxel-maker/shared";
-import { createDocument, type VoxelDocument } from "@voxel-maker/model";
+import {
+  createDocument,
+  type AnimationTrack,
+  type VoxelDocument,
+} from "@voxel-maker/model";
 import {
   DEFAULT_GLTF_EXPORT_LIMITS,
   GLTF_EXPORT_LOSSES,
@@ -241,6 +245,52 @@ describe("preflightGltfAnimations", () => {
     });
   });
 
+  it("does not report smoothstep for a track without keyframes", () => {
+    const rebuilt = createDocument({
+      documentId: "document:anim:emptysmooth" as never,
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [BODY],
+          transform: identity,
+          components: [],
+        },
+        {
+          nodeId: BODY,
+          name: "Body",
+          parentId: ROOT,
+          children: [],
+          transform: identity,
+          components: [
+            { kind: "voxel", schemaVersion: 1, volumeId: VOLUME_BODY },
+          ],
+        },
+      ],
+      materials: [],
+      volumes: [{ volumeId: VOLUME_BODY }],
+      animations: [
+        {
+          animationId: animationId("animation:anim:emptysmooth"),
+          name: "Empty Smooth",
+          duration: 1,
+          loop: "once",
+          tracks: [
+            {
+              trackId: trackId("track:anim:emptysmooth"),
+              targetNodeId: BODY,
+              interpolation: "smoothstep",
+              keyframes: [],
+            },
+          ],
+        },
+      ],
+    });
+    expect(preflightGltfAnimations(rebuilt)).toEqual([]);
+  });
+
   it("reports nothing for a clip with once/linear content only", () => {
     // Rebuild through createDocument to canonicalize the record.
     const rebuilt = createDocument({
@@ -433,6 +483,33 @@ describe("buildTrackSamples", () => {
     expect(
       buildTrackSamples(track as never, clip?.duration ?? 1, LOW_LIMITS),
     ).toBeUndefined();
+  });
+
+  it("rejects a track whose keyframes mix property channels", () => {
+    const track: AnimationTrack = {
+      trackId: trackId("track:anim:mixed"),
+      targetNodeId: BODY,
+      interpolation: "linear",
+      keyframes: [
+        {
+          keyframeId: keyframeId("key:anim:mixed:0"),
+          time: 0,
+          property: { channel: "rotation", value: [0, 0, 0, 1] },
+        },
+        {
+          keyframeId: keyframeId("key:anim:mixed:1"),
+          time: 1,
+          property: { channel: "scale", value: [1, 1, 1] },
+        },
+      ],
+    };
+    let thrown: unknown;
+    try {
+      buildTrackSamples(track, 1, LOW_LIMITS);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ family: "validation" });
   });
 });
 

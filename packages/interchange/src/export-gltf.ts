@@ -87,22 +87,23 @@ export async function exportGltf(
   options: ExportGltfOptions,
 ): Promise<ExportGltfOutcome> {
   const format = exportFormatForPath(options.path);
-  const preflight = preflightGltfExport(options.document, options.getVolume, {
+  const exportOptions = {
     ...(options.includeAnimations !== undefined
       ? { includeAnimations: options.includeAnimations }
       : {}),
-  });
+  };
+  const preflight = preflightGltfExport(
+    options.document,
+    options.getVolume,
+    exportOptions,
+  );
   if (!preflight.ok) return { ok: false, blocked: preflight.blocked };
   const sceneGraph = planGltfExport(
     options.document,
     options.getVolume,
     preflight,
     options.limits,
-    {
-      ...(options.includeAnimations !== undefined
-        ? { includeAnimations: options.includeAnimations }
-        : {}),
-    },
+    exportOptions,
   );
   const bytes =
     format === "glb"

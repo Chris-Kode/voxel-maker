@@ -1,6 +1,5 @@
-import type { NodeId } from "@voxel-maker/shared";
+import { WorkspaceError, type NodeId } from "@voxel-maker/shared";
 import type {
-  AnimationDescriptor,
   AnimationTrack,
   TrackProperty,
   VoxelDocument,
@@ -54,7 +53,23 @@ const smoothstepCurve = (u: number): number => u * u * (3 - 2 * u);
 
 const channelOf = (track: AnimationTrack): TrackProperty["channel"] => {
   const first = track.keyframes[0];
-  return first === undefined ? "translation" : first.property.channel;
+  if (first === undefined) return "translation";
+  const channel = first.property.channel;
+  // Model validation does not yet enforce a single channel per track, and
+  // a hostile document could otherwise make the exporter emit a sampler
+  // whose output width disagrees with its values. Reject it defensively.
+  for (const keyframe of track.keyframes) {
+    if (keyframe.property.channel !== channel) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "GLTF_TRACK_CHANNEL_MISMATCH",
+        message:
+          "All keyframes of one animation track must target the same property channel",
+        context: { trackId: track.trackId },
+      });
+    }
+  }
+  return channel;
 };
 
 /** Component-wise lerp or shortest-path quaternion SLERP (ADR-0006). */
@@ -124,7 +139,9 @@ export function buildTrackSamples(
   // Smoothstep: bake each segment to linear samples. The first and last
   // authored values are reproduced bit for bit; interior samples follow
   // the frozen ease curve u^2 * (3 - 2u) on the local blend factor,
-  // matching the runtime sampler exactly (ADR-0006).
+  // matching the runtime sampler exactly (ADR-0006; the curve and blend
+  // mirror packages/animation/src/sample.ts on purpose, because formats
+  // must not depend on the animation package).
   const interior = limits.maxSmoothstepSamplesPerSegment;
   const input: number[] = [];
   const output: number[] = [];
@@ -172,7 +189,13 @@ export function preflightGltfAnimations(
   document: VoxelDocument,
 ): readonly GltfExportLoss[] {
   const losses: GltfExportLoss[] = [];
-  for (const animation of Object.values(document.animations)) {
+  // Canonical animation-id order, so the loss report is identical whether
+  // the document was created in memory or parsed from disk (ARCHITECTURE
+  // determinism goal; the plan sorts the same way).
+  const clips = Object.entries(document.animations).sort((a, b) =>
+    compareCodeUnit(a[0], b[0]),
+  );
+  for (const [, animation] of clips) {
     if (animation.loop === "loop") {
       losses.push({
         code: GLTF_EXPORT_LOSSES.clipLoop,
@@ -186,7 +209,7 @@ export function preflightGltfAnimations(
       });
     }
     for (const track of animation.tracks) {
-      if (track.interpolation === "smoothstep") {
+      if (track.interpolation === "smoothstep" && track.keyframes.length > 0) {
         losses.push({
           code: GLTF_EXPORT_LOSSES.smoothstep,
           message:
@@ -216,13 +239,10 @@ export function planGltfAnimations(
 } {
   const animations: GltfAnimationExport[] = [];
   const names = new NameAllocator();
-  const animationsById = document.animations as Readonly<
-    Record<string, AnimationDescriptor>
-  >;
-  const clipIds = Object.keys(animationsById).sort(compareCodeUnit);
-  clipIds.forEach((clipId, clipIndex) => {
-    const clip = animationsById[clipId];
-    if (clip === undefined) return;
+  const clips = Object.entries(document.animations).sort((a, b) =>
+    compareCodeUnit(a[0], b[0]),
+  );
+  clips.forEach(([, clip], clipIndex) => {
     const name = names.allocate(
       sanitizeGltfName(clip.name),
       `Clip ${String(clipIndex + 1)}`,
@@ -237,8 +257,14 @@ export function planGltfAnimations(
       if (samples === undefined) continue;
       const targets = chainTargets.get(track.targetNodeId);
       if (targets === undefined) {
-        // Every document node gets an exported chain; unreachable.
-        continue;
+        // Every document node gets an exported chain; unreachable, and a
+        // silent drop would lose a track without a loss report (ADR-0011).
+        throw new WorkspaceError({
+          family: "internal",
+          code: "GLTF_NODE_MISSING",
+          message: "Animated node missing from the export node table",
+          context: { nodeId: track.targetNodeId, trackId: track.trackId },
+        });
       }
       const channel = channelOf(track);
       const node =

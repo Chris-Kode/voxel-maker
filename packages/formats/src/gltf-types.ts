@@ -218,8 +218,9 @@ export interface GltfExportMetadata {
  * The complete export scene graph: glTF-shaped nodes, meshes, materials,
  * animations, the scene root indices, export metadata, and the applied
  * loss report. The encoder turns this into deterministic glTF JSON and a
- * binary buffer without touching the document again. `animations` is
- * absent for static-only scene graphs (the JSON key is then omitted).
+ * binary buffer without touching the document again. `animations` may be
+ * empty; the JSON key is then omitted so static exports keep their exact
+ * historical bytes.
  */
 export interface GltfSceneGraph {
   readonly sceneNodes: readonly number[];
