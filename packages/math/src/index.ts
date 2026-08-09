@@ -671,6 +671,67 @@ export function quaternionFromAxisAngle(axis: Vec3, angle: number): Quat {
 }
 
 /**
+ * Shortest-path spherical interpolation between two unit quaternions
+ * (plan S10.3, ticket #28). The interpolation travels the shorter arc on
+ * the unit 3-sphere: when the dot product of the two quaternions is
+ * negative, the second quaternion is negated first (q and -q describe the
+ * same rotation, so this picks the short way). `t` is clamped to [0, 1];
+ * `t = 0` returns `a` exactly and `t = 1` returns `b` exactly (the input
+ * references), so sampling at exact keyframe boundaries reproduces the
+ * stored values bit for bit; for `0 < t < 1` the result is normalized and
+ * ADR-0001 sign-canonicalized. The degenerate parallel/antipodal cases
+ * fall back to a normalized linear blend (the shortest path is not unique
+ * there; the blend is deterministic).
+ */
+export function quaternionSlerp(
+  a: readonly [number, number, number, number],
+  b: readonly [number, number, number, number],
+  t: number,
+): Quat {
+  const u = Math.min(1, Math.max(0, t));
+  if (u === 0) return a;
+  if (u === 1) return b;
+  let bx = b[0];
+  let by = b[1];
+  let bz = b[2];
+  let bw = b[3];
+  let dot = a[0] * bx + a[1] * by + a[2] * bz + a[3] * bw;
+  if (dot < 0) {
+    // Shortest path: interpolate toward the negated endpoint.
+    bx = -bx;
+    by = -by;
+    bz = -bz;
+    bw = -bw;
+    dot = -dot;
+  }
+  if (dot > 1 - QUATERNION_NORM_EPSILON) {
+    // Parallel or antipodal endpoints: the great-circle arc degenerates,
+    // so a normalized linear blend is the deterministic shortest path.
+    const x = a[0] + (bx - a[0]) * u;
+    const y = a[1] + (by - a[1]) * u;
+    const z = a[2] + (bz - a[2]) * u;
+    const w = a[3] + (bw - a[3]) * u;
+    const normSquared = x * x + y * y + z * z + w * w;
+    if (normSquared < 1e-24) {
+      // Antipodal blend midpoint (a and -a cancel): the rotation is
+      // constant along the chosen arc, so either endpoint is exact.
+      return a;
+    }
+    return canonicalQuat([x, y, z, w]);
+  }
+  const theta = Math.acos(dot);
+  const sinTheta = Math.sin(theta);
+  const weightA = Math.sin((1 - u) * theta) / sinTheta;
+  const weightB = Math.sin(u * theta) / sinTheta;
+  return canonicalQuat([
+    weightA * a[0] + weightB * bx,
+    weightA * a[1] + weightB * by,
+    weightA * a[2] + weightB * bz,
+    weightA * a[3] + weightB * bw,
+  ]);
+}
+
+/**
  * Applies a unit quaternion rotation to a vector. The result is exact for
  * unit input quaternions; no renormalization is performed.
  */

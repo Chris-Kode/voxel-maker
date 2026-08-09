@@ -28,6 +28,7 @@ import {
   createNodeCommand,
   fillBoxCommand,
   fillSphereCommand,
+  registerAnimationCommands,
   registerBatchCommands,
   registerMaterialCommands,
   registerArticulationCommands,
@@ -79,6 +80,7 @@ export async function runPersistenceTrace(): Promise<string> {
   registerRegionCommands(registry);
   registerNodeCommands(registry);
   registerArticulationCommands(registry);
+  registerAnimationCommands(registry);
   registerMaterialCommands(registry);
   const bus = new CommandBus(store, registry, writeCapability);
 

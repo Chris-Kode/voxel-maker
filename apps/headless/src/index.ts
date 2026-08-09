@@ -1,9 +1,12 @@
 import {
+  animationId,
   canonicalJson,
   commandId,
   documentId,
+  keyframeId,
   materialId,
   nodeId,
+  trackId,
   transactionId,
   volumeId,
 } from "@voxel-maker/shared";
@@ -15,20 +18,30 @@ import {
   parseDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
+import { quaternionFromAxisAngle } from "@voxel-maker/math";
+import {
+  createAnimatedWheelDocument,
+  createPlaybackController,
+  evaluateAnimationRuntime,
+} from "@voxel-maker/animation";
 import { chunkCoordinate, localCoordinate } from "@voxel-maker/voxel";
 import { createDocumentStore } from "@voxel-maker/document";
 import {
   CommandBus,
   CommandRegistry,
+  addTrackCommand,
+  createAnimationCommand,
   createMaterialCommand,
   createNodeCommand,
   deleteMaterialCommand,
-  registerMaterialCommands,
+  registerAnimationCommands,
   registerArticulationCommands,
+  registerMaterialCommands,
   registerNodeCommands,
   registerVoxelCommands,
   renameNodeCommand,
   reparentNodeCommand,
+  setKeyframeCommand,
   setVoxelCommand,
   updateMaterialCommand,
 } from "@voxel-maker/commands";
@@ -109,6 +122,7 @@ export function runHeadlessTrace(): string {
   registerNodeCommands(registry);
   registerArticulationCommands(registry);
   registerMaterialCommands(registry);
+  registerAnimationCommands(registry);
   const bus = new CommandBus(store, registry, writeCapability);
 
   const setResult = bus.execute(
@@ -267,6 +281,137 @@ export function runHeadlessTrace(): string {
       updateAccepted: updateMaterialResult.ok,
       deleteAccepted: deleteMaterialResult.ok,
       materialCount: Object.keys(committed.materials).length,
+    },
+  });
+}
+
+/**
+ * Headless animation trace (ticket #28): author a generic clip through the
+ * command bus (create clip, add track, set keyframes), sample and evaluate
+ * the layered runtime, drive the injectable playback controller with a
+ * fake clock, and verify that stop restores the base state exactly while
+ * playback never bumps the document revision.
+ */
+export function runAnimationTrace(): string {
+  const document = createAnimatedWheelDocument();
+  const { store, writeCapability } = createDocumentStore({ document });
+  const registry = new CommandRegistry();
+  registerNodeCommands(registry);
+  registerAnimationCommands(registry);
+  const bus = new CommandBus(store, registry, writeCapability);
+
+  const wheel = nodeId("node:rig:wheel:wheel");
+  const spin = animationId("animation:demo:spin");
+  const spinTrack = trackId("track:demo:spin");
+  const revision = () => store.revision;
+  const tx = (label: string, expectedRevision: number) => ({
+    transactionId: transactionId(`transaction:demo:${label}`),
+    expectedRevision,
+    source: "ui" as const,
+  });
+
+  const baseRevision = revision();
+  const createClip = bus.execute(
+    createAnimationCommand(commandId("command:demo:animation:create:0001"), {
+      animationId: spin,
+      name: "Spin",
+      duration: 1,
+      loop: "loop",
+    }),
+    tx("animation-create", baseRevision),
+  );
+  const addTrack = bus.execute(
+    addTrackCommand(commandId("command:demo:animation:track:0001"), {
+      animationId: spin,
+      trackId: spinTrack,
+      targetNodeId: wheel,
+      interpolation: "linear",
+    }),
+    tx("animation-track", baseRevision + 1),
+  );
+  const setKey = bus.execute(
+    setKeyframeCommand(commandId("command:demo:animation:key:0001"), {
+      animationId: spin,
+      trackId: spinTrack,
+      keyframeId: keyframeId("keyframe:demo:spin:0"),
+      time: 0,
+      property: {
+        channel: "rotation",
+        value: quaternionFromAxisAngle([0, 1, 0], 0),
+      },
+    }),
+    tx("animation-key-0", baseRevision + 2),
+  );
+  const setKeyEnd = bus.execute(
+    setKeyframeCommand(commandId("command:demo:animation:key:0002"), {
+      animationId: spin,
+      trackId: spinTrack,
+      keyframeId: keyframeId("keyframe:demo:spin:1"),
+      time: 1,
+      property: {
+        channel: "rotation",
+        value: quaternionFromAxisAngle([0, 1, 0], Math.PI / 2),
+      },
+    }),
+    tx("animation-key-1", baseRevision + 3),
+  );
+  const authoringAccepted =
+    createClip.ok && addTrack.ok && setKey.ok && setKeyEnd.ok;
+  if (!authoringAccepted) {
+    throw new Error("headless animation authoring failed");
+  }
+
+  const clip = store.getDocument().animations[spin];
+  if (clip === undefined) throw new Error("headless animation clip missing");
+  const runtime = evaluateAnimationRuntime(store.getDocument(), clip, 0.5);
+  const wheelLocal = runtime.local.get(wheel);
+  const sampledSin = wheelLocal === undefined ? NaN : wheelLocal.rotation[1];
+  const revisionAfterAuthoring = revision();
+
+  // Playback: fake clock, play 0.5s, pause, stop, and check base restore.
+  let clock = 1000;
+  const controller = createPlaybackController(
+    { now: () => clock },
+    store.getDocument(),
+    clip,
+  );
+  controller.play();
+  clock += 0.5;
+  controller.tick(clock);
+  const played = controller.state;
+  const evaluatedWhilePlaying = controller.evaluate().local.get(wheel)
+    ?.rotation[1];
+  controller.pause();
+  controller.scrub(0.25);
+  const scrubbedTime = controller.state.resolvedTime;
+  controller.stop();
+  const baseRestored = controller.evaluate().local.get(wheel)?.rotation[1];
+  const revisionAfterPlayback = revision();
+
+  return canonicalJson({
+    authoring: {
+      accepted: authoringAccepted,
+      clipCount: Object.keys(store.getDocument().animations).length,
+      revisionAfterAuthoring,
+    },
+    sampling: {
+      clipName: clip.name ?? null,
+      duration: clip.duration,
+      loop: clip.loop,
+      resolvedHalfSecondRotationSin: sampledSin,
+      expectedHalfSecondRotationSin: Math.sin(Math.PI / 8),
+    },
+    playback: {
+      playing: played.playing,
+      time: played.time,
+      loop: played.loopOverride,
+      scrubbedTime,
+      rotationSinWhilePlaying: evaluatedWhilePlaying ?? -1,
+      rotationSinAfterStop: baseRestored ?? -1,
+      baseRestoredExactly: baseRestored === 0,
+      revisionAfterPlayback,
+      revisionUnchangedDuringPlayback:
+        revisionAfterPlayback === revisionAfterAuthoring,
     },
   });
 }

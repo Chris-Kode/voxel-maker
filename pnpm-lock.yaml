@@ -186,6 +186,9 @@ importers:
 
   apps/headless:
     dependencies:
+      '@voxel-maker/animation':
+        specifier: workspace:*
+        version: link:../../packages/animation
       '@voxel-maker/commands':
         specifier: workspace:*
         version: link:../../packages/commands
@@ -226,6 +229,9 @@ importers:
       '@voxel-maker/document':
         specifier: workspace:*
         version: link:../document
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../math
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../model
