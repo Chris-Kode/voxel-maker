@@ -1,4 +1,4 @@
-import type { NodeId } from "@voxel-maker/shared";
+import type { NodeId, VolumeId } from "@voxel-maker/shared";
 import {
   multiplyMatrices,
   transformToMatrix,
@@ -34,4 +34,28 @@ export function worldTransformMatrix(
     matrix = multiplyMatrices(matrix, transformToMatrix(node.transform));
   }
   return matrix;
+}
+
+/**
+ * Nodes whose voxel component references the volume (plan 5.3): the
+ * volume->owner lookup shared by command handlers and projections. The
+ * scan follows stable document record order; callers may not rely on the
+ * returned node order.
+ */
+export function nodesReferencingVolume(
+  document: VoxelDocument,
+  volumeId: VolumeId,
+): readonly NodeId[] {
+  const nodeIds: NodeId[] = [];
+  for (const node of Object.values(document.nodes)) {
+    if (
+      node.components.some(
+        (component) =>
+          component.kind === "voxel" && component.volumeId === volumeId,
+      )
+    ) {
+      nodeIds.push(node.nodeId);
+    }
+  }
+  return nodeIds;
 }

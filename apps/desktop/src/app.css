@@ -108,3 +108,25 @@ body {
 .statusbar .error {
   color: var(--error);
 }
+
+.toolbar .toolbar-separator {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.toolbar .tools {
+  display: flex;
+  gap: 4px;
+}
+
+.toolbar .tools button {
+  padding: 6px 10px;
+}
+
+.toolbar .tools button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}

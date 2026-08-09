@@ -40,6 +40,7 @@ const allowedDependencies = {
   ],
   editor: [
     "shared",
+    "math",
     "model",
     "document",
     "voxel",

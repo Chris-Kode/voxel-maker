@@ -135,7 +135,7 @@ The intended workspace has one desktop application and deep semantic or adapter 
 | `animation` | Clip and track semantics plus pure sampling and runtime evaluation | `shared`, `math`, `model`, `document`, `rigging` |
 | `commands` | Registry, staging, transactions, revisions, history, command handlers, command migration | `shared`, `math`, `model`, `voxel`, `document`, `rigging`, `animation` |
 | `renderer` | Three.js projection, meshing workers, picking, overlays, GPU lifecycle | Semantic read modules; never `commands` or editor implementations |
-| `editor` | Tools and non-React editor workflows that construct commands | Semantic read modules and `commands` |
+| `editor` | Tools and non-React editor workflows that construct commands | `shared`, `math`, semantic read modules, and `commands` |
 | `formats` | Native and external codecs, validation, import/export projections | Semantic read modules; platform I/O is injected |
 | `storage` | Storage ports, atomic-save coordination, immutable revision snapshots, dirty state, memory adapter | `shared`, `model`, `voxel`, `document`, `formats` |
 | `session` | `DocumentSession` lifecycle coordinator: validated new/open/replace/recovery/close, a fresh bounded bus per install, lifecycle events | `shared`, `math`, `model`, `document`, `voxel`, `commands` |

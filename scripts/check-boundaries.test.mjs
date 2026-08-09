@@ -57,10 +57,10 @@ test("the package graph rejects unsupported edges and cycles", async () => {
       source: 'import "@voxel-maker/editor";\n',
     },
   });
+  // Editor is allowed to depend on math (its tool API exposes `Vec3i`),
+  // so the findings are the cycle and the unsupported math -> editor edge.
   assert.deepEqual(await inspectBoundaries(root), [
     "dependency cycle: editor -> math -> editor",
-    "editor may not depend on math",
-    "editor may not import math",
     "math may not depend on editor",
     "math may not import editor",
   ]);

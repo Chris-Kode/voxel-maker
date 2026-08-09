@@ -8,10 +8,12 @@ import {
   transactionId,
   volumeId,
 } from "@voxel-maker/shared";
-import { createDocument } from "@voxel-maker/model";
+import { canonicalColor, createDocument } from "@voxel-maker/model";
 import {
   CommandBus,
   CommandRegistry,
+  createMaterialCommand,
+  deleteMaterialCommand,
   deleteNodeCommand,
   fillBoxCommand,
   registerBatchCommands,
@@ -310,6 +312,69 @@ describe("desktop composition root", () => {
     expect(result?.path).toBe("picked.vxl");
     expect(composition.session.current?.documentId).toBe("document:test:0001");
     expect(composition.renderer.adapter.chunkMeshCount).toBe(1);
+    composition.dispose();
+  });
+
+  it("defaults, prunes, and clears the active paint material", () => {
+    const composition = createDesktopComposition({
+      storage: new MemoryProjectStorage(),
+      picker: createFakePicker(() => Promise.resolve(undefined)),
+    });
+    composition.fileService.openLoadedProject(
+      "fixture.vxl",
+      buildFixtureProject(),
+    );
+    // The lowest material id becomes the active material on open.
+    expect(composition.editor.activeMaterial).toBe(materialId(1));
+
+    // Deleting the active material (with a valid replacement) prunes it
+    // from the runtime store and notifies.
+    const state = composition.session.current;
+    if (state === undefined) throw new Error("no open session");
+    const created = state.bus.execute(
+      createMaterialCommand(commandId("command:test:create-material"), {
+        materialId: materialId(2),
+        name: "blue",
+        color: canonicalColor("#0000ff"),
+        opacity: 1,
+        roughness: 0.5,
+        metallic: 0,
+        emissive: 0,
+      }),
+      {
+        transactionId: transactionId("transaction:test:create-material"),
+        expectedRevision: state.revision,
+        source: "ui",
+      },
+    );
+    expect(created.ok).toBe(true);
+    const fresh = composition.session.current;
+    if (fresh === undefined) throw new Error("no open session");
+    const deleted = state.bus.execute(
+      deleteMaterialCommand(commandId("command:test:delete-material"), {
+        materialId: materialId(1),
+        replacement: materialId(2),
+      }),
+      {
+        transactionId: transactionId("transaction:test:delete-material"),
+        // The session state revision is frozen at install; the store's
+        // revision is live after the create commit above.
+        expectedRevision: fresh.store.revision,
+        source: "ui",
+      },
+    );
+    expect(deleted.ok).toBe(true);
+    expect(composition.editor.activeMaterial).toBeUndefined();
+    expect(
+      composition.editor.notices.some((notice) =>
+        notice.message.includes("deleted"),
+      ),
+    ).toBe(true);
+
+    // Closing the document keeps the runtime store empty.
+    const closed = composition.fileService.closeProject();
+    expect(closed.ok).toBe(true);
+    expect(composition.editor.activeMaterial).toBeUndefined();
     composition.dispose();
   });
 });

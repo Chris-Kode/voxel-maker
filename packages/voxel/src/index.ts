@@ -27,6 +27,7 @@ export {
   type ShapeAxis,
   type ShapeIterationOptions,
 } from "./shapes.js";
+export { segmentCoordinates } from "./stroke.js";
 export {
   assertExactRotationRegion,
   canRotateExactly,

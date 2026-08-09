@@ -12,7 +12,7 @@ export {
 } from "./store.js";
 export { VoxelRepository } from "./repository.js";
 
-export { worldTransformMatrix } from "./hierarchy.js";
+export { nodesReferencingVolume, worldTransformMatrix } from "./hierarchy.js";
 
 export {
   canonicalAssetSemanticBytes,

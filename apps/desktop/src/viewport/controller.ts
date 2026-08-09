@@ -1,7 +1,21 @@
 import * as THREE from "three";
+import {
+  commandId,
+  transactionId,
+  WorkspaceError,
+  type CommandId,
+} from "@voxel-maker/shared";
+import type { Command } from "@voxel-maker/commands";
 import type { DocumentStoreRead } from "@voxel-maker/document";
-import type { EditorStore } from "@voxel-maker/editor";
+import {
+  createStrokeTool,
+  type EditorStore,
+  type StrokeTool,
+  type StrokeToolHost,
+  type ToolActionResult,
+} from "@voxel-maker/editor";
 import type { DocumentSession } from "@voxel-maker/session";
+import { MAX_VOXELS_PER_OPERATION } from "@voxel-maker/voxel";
 import {
   pickScene,
   worldBoundsForNodes,
@@ -21,18 +35,26 @@ import {
 } from "./overlays.js";
 
 /**
- * Viewport controller (plan S6.10-S6.13, ticket #16): the desktop seam
- * between the DOM viewport and the pure camera/picking/overlay modules.
- * The controller owns the camera rig and the overlay manager, follows the
- * document lifecycle and editor selection, and converts pointer/NDC input
- * into deterministic picks over the authoritative store. It never mutates
- * semantic state: clicking only updates runtime `EditorStore` selection.
+ * Viewport controller (plan S6.10-S6.13 ticket #16, S7.3/S7.5 ticket #17):
+ * the desktop seam between the DOM viewport and the pure camera/picking/
+ * overlay modules plus the pencil/erase stroke tools. The controller owns
+ * the camera rig, the overlay manager, and the stroke tools; it follows
+ * the document lifecycle and editor selection and converts pointer/NDC
+ * input into deterministic picks over the authoritative store. It never
+ * mutates semantic state: clicks update runtime `EditorStore` selection,
+ * and completed strokes commit exactly one labeled transaction through
+ * the session's command bus.
  */
 
 export interface ViewportControllerOptions {
   readonly session: DocumentSession;
   readonly editor: EditorStore;
   readonly scene: THREE.Scene;
+  /**
+   * Per-stroke voxel budget (ADR-0009, default
+   * `MAX_VOXELS_PER_OPERATION`); callers may lower it.
+   */
+  readonly strokeVoxelLimit?: number;
 }
 
 export interface ViewportController {
@@ -60,6 +82,16 @@ export interface ViewportController {
   pick(clientX: number, clientY: number): VoxelPickHit | undefined;
   /** Picks and updates the runtime node selection (empty on a miss). */
   selectAt(clientX: number, clientY: number): void;
+  /** True while a pencil/erase stroke gesture is in progress. */
+  readonly strokeActive: boolean;
+  /** Routes a primary-button down to the active stroke tool. */
+  strokePointerDown(clientX: number, clientY: number): ToolActionResult;
+  /** Routes a move to the active stroke tool while a stroke is captured. */
+  strokePointerMove(clientX: number, clientY: number): ToolActionResult;
+  /** Commits the active stroke as one labeled transaction. */
+  strokePointerUp(): ToolActionResult;
+  /** Cancels the active stroke; semantic state is untouched. */
+  strokePointerCancel(): void;
   /** Pushes the camera state onto the active camera (idempotent). */
   applyCamera(): void;
   dispose(): void;
@@ -70,15 +102,31 @@ class ViewportControllerImpl implements ViewportController {
   readonly #editor: EditorStore;
   readonly #rig: CameraRig;
   readonly #overlays: OverlayManager;
+  readonly #pencil: StrokeTool;
+  readonly #erase: StrokeTool;
   #unsubscribeSession: () => void;
   #unsubscribeEditor: () => void;
   #unsubscribeStore: (() => void) | undefined;
+  #strokeCommandSequence = 0;
+  #strokeTransactionSequence = 0;
+  /** The tool that started the in-progress gesture (pinned until it ends). */
+  #strokeTool: StrokeTool | undefined;
 
   constructor(options: ViewportControllerOptions) {
     this.#session = options.session;
     this.#editor = options.editor;
     this.#rig = createCameraRig();
     this.#overlays = createOverlayManager(options.scene);
+    this.#pencil = createStrokeTool({
+      kind: "pencil",
+      host: this.#makeStrokeHost(options.strokeVoxelLimit),
+      editor: this.#editor,
+    });
+    this.#erase = createStrokeTool({
+      kind: "erase",
+      host: this.#makeStrokeHost(options.strokeVoxelLimit),
+      editor: this.#editor,
+    });
 
     this.#unsubscribeEditor = this.#editor.subscribe(() => {
       this.#refreshOverlays();
@@ -98,6 +146,11 @@ class ViewportControllerImpl implements ViewportController {
         this.#unsubscribeStore = undefined;
         this.#refreshOverlays();
       }
+      // Lifecycle replacement ends any in-progress gesture; a stroke must
+      // never straddle two documents (cancel = exact pre-gesture state).
+      this.#pencil.reset();
+      this.#erase.reset();
+      this.#strokeTool = undefined;
     });
   }
 
@@ -194,6 +247,42 @@ class ViewportControllerImpl implements ViewportController {
     this.#editor.setSelection(hit === undefined ? [] : [hit.nodeId]);
   }
 
+  get strokeActive(): boolean {
+    return this.#strokeTool?.active ?? false;
+  }
+
+  strokePointerDown(clientX: number, clientY: number): ToolActionResult {
+    const tool = this.#activeStrokeTool();
+    if (tool === undefined) return { ok: true };
+    const result = tool.pointerDown(clientX, clientY);
+    // Pin the starting tool for the whole gesture: a tool switch mid-
+    // stroke must not leak the draft or let a later up commit a stale
+    // stroke through a different tool.
+    if (result.ok && tool.active) this.#strokeTool = tool;
+    return this.#report(result);
+  }
+
+  strokePointerMove(clientX: number, clientY: number): ToolActionResult {
+    // Route the whole gesture to the tool that started it, never to the
+    // current tool (which may have changed since pointer down).
+    const tool = this.#strokeTool ?? this.#activeStrokeTool();
+    if (tool === undefined) return { ok: true };
+    return this.#report(tool.pointerMove(clientX, clientY));
+  }
+
+  strokePointerUp(): ToolActionResult {
+    const tool = this.#strokeTool ?? this.#activeStrokeTool();
+    this.#strokeTool = undefined;
+    if (tool === undefined) return { ok: true };
+    return this.#report(tool.pointerUp());
+  }
+
+  strokePointerCancel(): void {
+    const tool = this.#strokeTool ?? this.#activeStrokeTool();
+    this.#strokeTool = undefined;
+    if (tool !== undefined) tool.pointerCancel();
+  }
+
   applyCamera(): void {
     this.#rig.apply();
   }
@@ -203,8 +292,71 @@ class ViewportControllerImpl implements ViewportController {
     this.#unsubscribeEditor();
     this.#unsubscribeStore?.();
     this.#unsubscribeStore = undefined;
+    this.#pencil.reset();
+    this.#erase.reset();
+    this.#strokeTool = undefined;
     this.#overlays.dispose();
     this.#rig.dispose();
+  }
+
+  /** Surfaces a failed tool action as a runtime notice. */
+  #report(result: ToolActionResult): ToolActionResult {
+    if (!result.ok) {
+      this.#editor.pushNotice("error", result.error.message);
+    }
+    return result;
+  }
+
+  #activeStrokeTool(): StrokeTool | undefined {
+    const tool = this.#editor.activeTool;
+    if (tool === "pencil") return this.#pencil;
+    if (tool === "erase") return this.#erase;
+    return undefined;
+  }
+
+  /** Host services that keep the stroke tools headless and deterministic. */
+  #makeStrokeHost(strokeVoxelLimit?: number): StrokeToolHost {
+    // The session object is stable for the composition's lifetime; only
+    // `session.current` changes, so the getter stays live without
+    // aliasing `this`.
+    const session = this.#session;
+    return {
+      get store() {
+        return session.current?.store;
+      },
+      maxStrokeVoxels: strokeVoxelLimit ?? MAX_VOXELS_PER_OPERATION,
+      pick: (clientX, clientY) => {
+        const hit = this.pick(clientX, clientY);
+        if (hit === undefined) return undefined;
+        return { volumeId: hit.volumeId, voxel: hit.voxel };
+      },
+      nextCommandId: (): CommandId => {
+        this.#strokeCommandSequence += 1;
+        return commandId(
+          `command:stroke:${String(this.#strokeCommandSequence)}`,
+        );
+      },
+      commit: (commands: readonly Command[], label: string) => {
+        const current = this.#session.current;
+        if (current === undefined) {
+          return new WorkspaceError({
+            family: "conflict",
+            code: "SESSION_NOT_OPEN",
+            message: "No document is open",
+          });
+        }
+        this.#strokeTransactionSequence += 1;
+        const result = current.bus.executeTransaction(commands, {
+          transactionId: transactionId(
+            `transaction:stroke:${String(this.#strokeTransactionSequence)}`,
+          ),
+          expectedRevision: current.store.revision,
+          source: "ui",
+          label,
+        });
+        return result.ok ? undefined : result.error;
+      },
+    };
   }
 
   #subscribeStore(store: DocumentStoreRead): void {

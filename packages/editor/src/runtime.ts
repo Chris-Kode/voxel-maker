@@ -1,15 +1,19 @@
-import { createListenerSet, type NodeId } from "@voxel-maker/shared";
+import {
+  createListenerSet,
+  materialId,
+  type MaterialId,
+  type NodeId,
+} from "@voxel-maker/shared";
+import type { VoxelDocument } from "@voxel-maker/model";
+import type { EditorToolId, StrokeDraft } from "./types.js";
 
 /**
  * Runtime-only editor interaction state (plan S7.1, ARCHITECTURE.md
- * "Editor interaction"): selection, active tool, and notices. None of this
- * is ever persisted or authoritative; the document store and command bus
- * own semantic state. Ticket #15 injects this store into the desktop
- * composition root so tools and panels have one place to read ephemeral
- * interaction state before the full tool workflows land.
+ * "Editor interaction"): selection, active tool, active material, draft
+ * gesture preview, and notices. None of this is ever persisted or
+ * authoritative; the document store and command bus own semantic state.
+ * Ticket #15 ships the store, ticket #17 adds the pencil/erase tool state.
  */
-
-export type EditorToolId = "select";
 
 export interface EditorNotice {
   readonly id: number;
@@ -19,9 +23,15 @@ export interface EditorNotice {
 
 export interface EditorStore {
   readonly activeTool: EditorToolId;
+  /** Runtime-only active paint material; undefined when none is usable. */
+  readonly activeMaterial: MaterialId | undefined;
+  /** Transient in-progress stroke preview; undefined outside a gesture. */
+  readonly draft: StrokeDraft | undefined;
   readonly selection: readonly NodeId[];
   readonly notices: readonly EditorNotice[];
   setActiveTool(tool: EditorToolId): void;
+  setActiveMaterial(material: MaterialId | undefined): void;
+  setDraft(draft: StrokeDraft | undefined): void;
   setSelection(selection: readonly NodeId[]): void;
   pushNotice(level: EditorNotice["level"], message: string): void;
   dismissNotice(id: number): void;
@@ -32,6 +42,8 @@ export interface EditorStore {
 
 export interface EditorStoreSnapshot {
   readonly activeTool: EditorToolId;
+  readonly activeMaterial: MaterialId | undefined;
+  readonly draft: StrokeDraft | undefined;
   readonly selection: readonly NodeId[];
   readonly notices: readonly EditorNotice[];
 }
@@ -39,6 +51,8 @@ export interface EditorStoreSnapshot {
 /** Creates the runtime interaction store with an empty initial state. */
 export function createEditorStore(): EditorStore {
   let activeTool: EditorToolId = "select";
+  let activeMaterial: MaterialId | undefined;
+  let draft: StrokeDraft | undefined;
   let selection: readonly NodeId[] = [];
   let notices: EditorNotice[] = [];
   let nextNoticeId = 1;
@@ -52,6 +66,12 @@ export function createEditorStore(): EditorStore {
     get activeTool() {
       return activeTool;
     },
+    get activeMaterial() {
+      return activeMaterial;
+    },
+    get draft() {
+      return draft;
+    },
     get selection() {
       return selection;
     },
@@ -60,6 +80,14 @@ export function createEditorStore(): EditorStore {
     },
     setActiveTool(tool) {
       activeTool = tool;
+      notify();
+    },
+    setActiveMaterial(material) {
+      activeMaterial = material;
+      notify();
+    },
+    setDraft(next) {
+      draft = next;
       notify();
     },
     setSelection(next) {
@@ -89,7 +117,24 @@ export function createEditorStore(): EditorStore {
 export function snapshotEditorStore(store: EditorStore): EditorStoreSnapshot {
   return {
     activeTool: store.activeTool,
+    activeMaterial: store.activeMaterial,
+    draft: store.draft,
     selection: [...store.selection],
     notices: [...store.notices],
   };
+}
+
+/**
+ * Deterministic default paint material: the lowest material id in the
+ * document (record keys are canonical numeric ids), or undefined when the
+ * document has no materials. Used by the composition root when a document
+ * opens and no active material is set.
+ */
+export function firstMaterialId(
+  document: VoxelDocument,
+): MaterialId | undefined {
+  const keys = Object.keys(document.materials);
+  if (keys.length === 0) return undefined;
+  const first = Number(keys[0]);
+  return Number.isInteger(first) ? materialId(first) : undefined;
 }

@@ -4,11 +4,11 @@ import {
   volumeId,
   type CommandId,
   type MaterialId,
-  type NodeId,
   type VolumeId,
 } from "@voxel-maker/shared";
+import { nodesReferencingVolume } from "@voxel-maker/document";
 import { canonicalVec3i, type Vec3i } from "@voxel-maker/math";
-import type { DocumentLimits, VoxelDocument } from "@voxel-maker/model";
+import type { DocumentLimits } from "@voxel-maker/model";
 import {
   isRecord,
   missingMaterial,
@@ -27,6 +27,7 @@ import type {
 } from "./registry.js";
 import { CommandRegistry } from "./registry.js";
 
+export { nodesReferencingVolume } from "@voxel-maker/document";
 export const VOXEL_SET_COMMAND = "voxel.set" as const;
 export const VOXEL_REMOVE_COMMAND = "voxel.remove" as const;
 export const VOXEL_COMMAND_SCHEMA_VERSION = 1;
@@ -73,25 +74,6 @@ export function removeVoxelCommand(
       coordinate: canonicalVec3i(payload.coordinate),
     },
   };
-}
-
-/** Nodes whose voxel component references the volume (plan 5.3). */
-export function nodesReferencingVolume(
-  document: VoxelDocument,
-  volumeId: VolumeId,
-): readonly NodeId[] {
-  const nodeIds: NodeId[] = [];
-  for (const node of Object.values(document.nodes)) {
-    if (
-      node.components.some(
-        (component) =>
-          component.kind === "voxel" && component.volumeId === volumeId,
-      )
-    ) {
-      nodeIds.push(node.nodeId);
-    }
-  }
-  return nodeIds;
 }
 
 const setVoxelHandler: CommandHandler<

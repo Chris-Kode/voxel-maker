@@ -1,27 +1,41 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import type { EditorToolId } from "@voxel-maker/editor";
 import { DEFAULT_CAMERA_LIMITS } from "./camera.js";
 import type { DesktopComposition } from "../composition.js";
 
 /**
- * Three.js viewport (plan S6.1/S6.10-S6.13, ticket #16): owns the WebGL
- * renderer and forwards pointer/keyboard input to the composition's
- * viewport controller. All camera, picking, and overlay behavior lives in
- * the controller and its pure modules; this component only binds DOM
- * events and renders.
+ * Three.js viewport (plan S6.1/S6.10-S6.13 ticket #16, S7.3/S7.5 ticket
+ * #17): owns the WebGL renderer and forwards pointer/keyboard input to
+ * the composition's viewport controller. All camera, picking, overlay,
+ * and stroke-tool behavior lives in the controller and its pure modules;
+ * this component only binds DOM events and renders.
  *
- * Gestures: left-drag orbits, right/middle-drag pans, wheel zooms, and a
- * click picks the nearest voxel (selecting its node). Keys: 1-6 standard
- * views, F focus, P perspective/orthographic toggle, G/X/B/K overlay
- * toggles. See docs/viewport/overlays-v1.md.
+ * Gestures: with the select tool, left-drag orbits, right/middle-drag
+ * pans, wheel zooms, and a click picks the nearest voxel (selecting its
+ * node). With the pencil/erase tools, a primary-button gesture becomes a
+ * stroke: down starts it, moves rasterize it, up commits it as one
+ * history entry, and a lost pointer cancels it. Keys: 1-6 standard views,
+ * F focus, P perspective/orthographic toggle, G/X/B/K overlay toggles.
+ * See docs/viewport/overlays-v1.md and docs/editor/stroke-tools-v1.md.
  */
 export function Viewport({
   composition,
+  activeTool,
 }: {
   readonly composition: DesktopComposition;
+  /** Current tool selection; routes primary-button gestures to strokes. */
+  readonly activeTool: EditorToolId;
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const controller = composition.viewport;
+  // Read the tool at event time so switching tools mid-session never
+  // requires rebinding the listeners; the ref is synced in an effect
+  // (never during render) per React's latest-value idiom.
+  const activeToolRef = useRef(activeTool);
+  useEffect(() => {
+    activeToolRef.current = activeTool;
+  }, [activeTool]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -45,9 +59,11 @@ export function Viewport({
     resizeObserver.observe(host);
 
     // Pointer gesture state: a click is a primary-button press that moves
-    // less than a few pixels before release.
+    // less than a few pixels before release; a stroke routes every
+    // captured primary-button event to the active pencil/erase tool.
     let gesture:
       | {
+          readonly mode: "orbit" | "stroke";
           readonly button: number;
           readonly startX: number;
           readonly startY: number;
@@ -56,22 +72,47 @@ export function Viewport({
           moved: boolean;
         }
       | undefined;
+    const viewportPoint = (event: PointerEvent): [number, number] => {
+      const rect = host.getBoundingClientRect();
+      return [event.clientX - rect.left, event.clientY - rect.top];
+    };
 
     const onPointerDown = (event: PointerEvent): void => {
       if (event.button === 1) event.preventDefault();
-      gesture = {
-        button: event.button,
-        startX: event.clientX,
-        startY: event.clientY,
-        lastX: event.clientX,
-        lastY: event.clientY,
-        moved: false,
-      };
+      const [x, y] = viewportPoint(event);
+      const tool = activeToolRef.current;
+      if (event.button === 0 && (tool === "pencil" || tool === "erase")) {
+        controller.strokePointerDown(x, y);
+        gesture = {
+          mode: "stroke",
+          button: event.button,
+          startX: event.clientX,
+          startY: event.clientY,
+          lastX: event.clientX,
+          lastY: event.clientY,
+          moved: false,
+        };
+      } else {
+        gesture = {
+          mode: "orbit",
+          button: event.button,
+          startX: event.clientX,
+          startY: event.clientY,
+          lastX: event.clientX,
+          lastY: event.clientY,
+          moved: false,
+        };
+      }
       host.setPointerCapture(event.pointerId);
     };
 
     const onPointerMove = (event: PointerEvent): void => {
       if (gesture === undefined) return;
+      if (gesture.mode === "stroke") {
+        const [x, y] = viewportPoint(event);
+        controller.strokePointerMove(x, y);
+        return;
+      }
       const deltaX = event.clientX - gesture.lastX;
       const deltaY = event.clientY - gesture.lastY;
       if (
@@ -92,12 +133,11 @@ export function Viewport({
 
     const onPointerUp = (event: PointerEvent): void => {
       if (gesture === undefined) return;
-      if (gesture.button === 0 && !gesture.moved) {
-        const rect = host.getBoundingClientRect();
-        controller.selectAt(
-          event.clientX - rect.left,
-          event.clientY - rect.top,
-        );
+      if (gesture.mode === "stroke") {
+        controller.strokePointerUp();
+      } else if (gesture.button === 0 && !gesture.moved) {
+        const [x, y] = viewportPoint(event);
+        controller.selectAt(x, y);
       }
       gesture = undefined;
       if (host.hasPointerCapture(event.pointerId)) {
@@ -106,6 +146,9 @@ export function Viewport({
     };
 
     const onPointerCancel = (): void => {
+      if (gesture?.mode === "stroke") {
+        controller.strokePointerCancel();
+      }
       gesture = undefined;
     };
 
@@ -217,8 +260,9 @@ export function Viewport({
       aria-label="3D viewport showing the open voxel document"
     >
       <div className="viewport-hint" aria-hidden="true">
-        Left-drag orbit · right-drag pan · wheel zoom · click select · 1-6 views
-        · F focus · P mode · G/X/B/K overlays
+        Select: left-drag orbit · right-drag pan · wheel zoom · click select ·
+        Pencil/Erase: drag to stroke (one undo step) · 1-6 views · F focus · P
+        mode · G/X/B/K overlays
       </div>
     </div>
   );
