@@ -3,10 +3,14 @@ import {
   snapshotEditorStore,
   type EditorStore,
   type EditorStoreSnapshot,
+  type TransformToolMode,
 } from "@voxel-maker/editor";
 import { createDesktopComposition } from "./composition.js";
 import { createDefaultPlatform } from "./platform/index.js";
 import { Viewport } from "./viewport/Viewport.js";
+import { HierarchyPanel } from "./panels/HierarchyPanel.js";
+import { InspectorPanel } from "./panels/InspectorPanel.js";
+import { createPanelIds } from "./panels/panel-utils.js";
 import type { FileServiceResult } from "./file-service.js";
 
 /**
@@ -51,6 +55,13 @@ const SELECTION_MODES = [
   label: string;
 }[];
 
+/** Transform gizmo modes (plan S7.8). */
+const GIZMO_MODES = [
+  { id: "translate", label: "Move" },
+  { id: "rotate", label: "Rotate" },
+  { id: "scale", label: "Scale" },
+] as const satisfies readonly { id: TransformToolMode; label: string }[];
+
 /** Subscribes to the runtime editor store for the shell chrome. */
 function useEditorStore(editor: EditorStore): EditorStoreSnapshot {
   const [snapshot, setSnapshot] = useState(() => snapshotEditorStore(editor));
@@ -68,6 +79,7 @@ export function App(): React.JSX.Element {
   const [composition] = useState(() =>
     createDesktopComposition(createDefaultPlatform()),
   );
+  const [panelIds] = useState(() => createPanelIds("panel"));
   const editorState = useEditorStore(composition.editor);
   const [status, setStatus] = useState(() => composition.fileService.status);
   const [busy, setBusy] = useState(false);
@@ -166,13 +178,92 @@ export function App(): React.JSX.Element {
             ))}
           </span>
         ) : null}
+        {editorState.activeTool === "select" ? (
+          <span className="gizmo-controls" role="group" aria-label="Transform gizmo">
+            {GIZMO_MODES.map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                className={
+                  composition.viewport.transformTool.mode === mode.id
+                    ? "active"
+                    : undefined
+                }
+                aria-pressed={composition.viewport.transformTool.mode === mode.id}
+                onClick={() => {
+                  composition.viewport.transformTool.setMode(mode.id);
+                  composition.viewport.refreshGizmo();
+                }}
+              >
+                {mode.label}
+              </button>
+            ))}
+            <span className="toolbar-separator" aria-hidden="true" />
+            <button
+              type="button"
+              className={
+                composition.viewport.transformTool.space === "world"
+                  ? "active"
+                  : undefined
+              }
+              aria-pressed={composition.viewport.transformTool.space === "world"}
+              onClick={() => {
+                composition.viewport.transformTool.setSpace("world");
+                composition.viewport.refreshGizmo();
+              }}
+            >
+              World
+            </button>
+            <button
+              type="button"
+              className={
+                composition.viewport.transformTool.space === "local"
+                  ? "active"
+                  : undefined
+              }
+              aria-pressed={composition.viewport.transformTool.space === "local"}
+              onClick={() => {
+                composition.viewport.transformTool.setSpace("local");
+                composition.viewport.refreshGizmo();
+              }}
+            >
+              Local
+            </button>
+            <label className="gizmo-snap">
+              <input
+                type="checkbox"
+                checked={composition.viewport.transformTool.snapping}
+                onChange={(event) => {
+                  composition.viewport.transformTool.setSnapping(
+                    event.target.checked,
+                  );
+                }}
+              />
+              Snap
+            </label>
+          </span>
+        ) : null}
       </header>
       <main className="stage">
+        <aside className="side-panel left">
+          <HierarchyPanel
+            session={composition.session}
+            editor={composition.editor}
+            ids={panelIds}
+          />
+        </aside>
         <Viewport
           composition={composition}
           activeTool={editorState.activeTool}
           selectionMode={editorState.selectionMode}
         />
+        <aside className="side-panel right">
+          <InspectorPanel
+            session={composition.session}
+            editor={composition.editor}
+            ids={panelIds}
+          />
+        </aside>
       </main>
       <footer className="statusbar" aria-live="polite">
         <span>

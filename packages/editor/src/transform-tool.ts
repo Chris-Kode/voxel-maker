@@ -473,9 +473,16 @@ class TransformToolImpl implements TransformTool {
     // Translate/scale drag on the plane that contains the axis and faces
     // the camera; rotate drags move on the plane perpendicular to the
     // axis (the angle is measured around the axis).
-    const planeNormal =
+    let planeNormal =
       handle.mode === "rotate" ? axis : this.#dragPlaneNormal(axis);
-    const startPoint = intersectPlane(ray, targets.center, planeNormal);
+    let startPoint = intersectPlane(ray, targets.center, planeNormal);
+    if (startPoint === undefined) {
+      // Degenerate: the pointer ray is parallel to the drag plane (for
+      // example the front view at the gizmo's height). Fall back to the
+      // plane facing the camera through the gizmo center.
+      planeNormal = this.#host.cameraForward();
+      startPoint = intersectPlane(ray, targets.center, planeNormal);
+    }
     if (startPoint === undefined) return { ok: true };
     const gesture = this.#host.beginGesture();
     if (gesture === undefined) return { ok: true };

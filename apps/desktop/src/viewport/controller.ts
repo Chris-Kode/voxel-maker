@@ -4,6 +4,7 @@ import {
   transactionId,
   WorkspaceError,
   type CommandId,
+  type NodeId,
 } from "@voxel-maker/shared";
 import type { Command } from "@voxel-maker/commands";
 import type { DocumentStoreRead } from "@voxel-maker/document";
@@ -12,15 +13,25 @@ import {
   createSelectTool,
   createShapeTool,
   createStrokeTool,
+  createTransformTool,
   pruneSelection,
   selectionWorldBounds,
+  transformTargets,
+  type CameraRay,
   type EditorStore,
+  type GestureHost,
   type StrokeTool,
   type Tool,
   type ToolActionResult,
   type ToolHost,
   type ToolModifiers,
+  type TransformTool,
+  type TransformToolHost,
 } from "@voxel-maker/editor";
+import {
+  createGizmoOverlay,
+  type GizmoOverlay,
+} from "./gizmo.js";
 import type { DocumentSession } from "@voxel-maker/session";
 import { MAX_VOXELS_PER_OPERATION } from "@voxel-maker/voxel";
 import {
@@ -112,6 +123,25 @@ export interface ViewportController {
   toolPointerUp(): ToolActionResult;
   /** Cancels the active gesture; semantic state is untouched. */
   toolPointerCancel(): void;
+  /** The headless transform gizmo tool (plan S7.8, ticket #20). */
+  readonly transformTool: TransformTool;
+  /** The rendered gizmo overlay (move/rotate/scale handles). */
+  readonly gizmo: GizmoOverlay;
+  /**
+   * Starts a gizmo drag when the pointer hits a handle of the rendered
+   * gizmo; returns true when the gesture was captured. The caller then
+   * routes moves/up/cancel through the gizmo methods.
+   */
+  gizmoPointerDown(clientX: number, clientY: number): boolean;
+  gizmoPointerMove(clientX: number, clientY: number): void;
+  /** Commits the gizmo drag as one coalesced history entry. */
+  gizmoPointerUp(): void;
+  /** Cancels the gizmo drag, restoring the exact pre-drag transforms. */
+  gizmoPointerCancel(): void;
+  /** Camera ray at viewport coordinates (deterministic pick seam). */
+  cameraRay(clientX: number, clientY: number): CameraRay | undefined;
+  /** Re-positions the gizmo from the current selection and tool state. */
+  refreshGizmo(): void;
   /** Pushes the camera state onto the active camera (idempotent). */
   applyCamera(): void;
   dispose(): void;
@@ -122,6 +152,8 @@ class ViewportControllerImpl implements ViewportController {
   readonly #editor: EditorStore;
   readonly #rig: CameraRig;
   readonly #overlays: OverlayManager;
+  readonly #gizmo: GizmoOverlay;
+  readonly #transform: TransformTool;
   readonly #select: ReturnType<typeof createSelectTool>;
   readonly #pencil: StrokeTool;
   readonly #erase: StrokeTool;
@@ -135,6 +167,7 @@ class ViewportControllerImpl implements ViewportController {
   #unsubscribeStore: (() => void) | undefined;
   #toolCommandSequence = 0;
   #toolTransactionSequence = 0;
+  #transformSequence = 0;
   /** The tool that started the in-progress gesture (pinned until it ends). */
   #gestureTool: Tool | undefined;
 
@@ -143,6 +176,8 @@ class ViewportControllerImpl implements ViewportController {
     this.#editor = options.editor;
     this.#rig = createCameraRig();
     this.#overlays = createOverlayManager(options.scene);
+    this.#gizmo = createGizmoOverlay(options.scene);
+    this.#transform = createTransformTool(this.#makeTransformHost());
     const host = this.#makeToolHost(options.gestureVoxelLimit);
     this.#select = createSelectTool({ host, editor: this.#editor });
     this.#pencil = createStrokeTool({
@@ -178,6 +213,7 @@ class ViewportControllerImpl implements ViewportController {
 
     this.#unsubscribeEditor = this.#editor.subscribe(() => {
       this.#refreshOverlays();
+      this.refreshGizmo();
     });
 
     this.#unsubscribeSession = this.#session.subscribe((event) => {
@@ -187,12 +223,14 @@ class ViewportControllerImpl implements ViewportController {
       ) {
         this.#subscribeStore(event.store);
         this.#refreshOverlays();
+        this.refreshGizmo();
         // Frame the newly opened content so the user sees what they opened.
         this.focus();
       } else {
         this.#unsubscribeStore?.();
         this.#unsubscribeStore = undefined;
         this.#refreshOverlays();
+        this.refreshGizmo();
       }
       // Lifecycle replacement ends any in-progress gesture; a gesture
       // must never straddle two documents (cancel = exact pre-gesture
@@ -205,6 +243,7 @@ class ViewportControllerImpl implements ViewportController {
       this.#box.reset();
       this.#sphere.reset();
       this.#cylinder.reset();
+      this.#transform.reset();
       this.#gestureTool = undefined;
     });
   }
@@ -361,6 +400,103 @@ class ViewportControllerImpl implements ViewportController {
     if (tool !== undefined) tool.pointerCancel();
   }
 
+  get transformTool(): TransformTool {
+    return this.#transform;
+  }
+
+  get gizmo(): GizmoOverlay {
+    return this.#gizmo;
+  }
+
+  gizmoPointerDown(clientX: number, clientY: number): boolean {
+    if (this.#transform.active) return true;
+    const store = this.#session.current?.store;
+    if (store === undefined) return false;
+    if (transformTargets(store, this.#editor.selection) === undefined) {
+      return false;
+    }
+    const handle = this.#gizmo.pick(
+      clientX,
+      clientY,
+      this.#rig.camera,
+      this.#rig.viewportWidth,
+      this.#rig.viewportHeight,
+    );
+    if (handle === undefined) return false;
+    const result = this.#transform.pointerDown(handle, clientX, clientY);
+    if (!result.ok) {
+      this.#editor.pushNotice("error", result.error.message);
+      return false;
+    }
+    return this.#transform.active;
+  }
+
+  gizmoPointerMove(clientX: number, clientY: number): void {
+    if (!this.#transform.active) return;
+    const result = this.#transform.pointerMove(clientX, clientY);
+    if (!result.ok) {
+      this.#editor.pushNotice("error", result.error.message);
+    }
+  }
+
+  gizmoPointerUp(): void {
+    if (!this.#transform.active) return;
+    const result = this.#transform.pointerUp();
+    if (!result.ok) {
+      this.#editor.pushNotice("error", result.error.message);
+    }
+  }
+
+  gizmoPointerCancel(): void {
+    if (this.#transform.active) this.#transform.pointerCancel();
+  }
+
+  cameraRay(clientX: number, clientY: number): CameraRay | undefined {
+    if (
+      this.#session.current === undefined ||
+      this.#rig.viewportWidth <= 0 ||
+      this.#rig.viewportHeight <= 0
+    ) {
+      return undefined;
+    }
+    const ndcX = (clientX / this.#rig.viewportWidth) * 2 - 1;
+    const ndcY = 1 - (clientY / this.#rig.viewportHeight) * 2;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.#rig.camera);
+    return {
+      origin: [
+        raycaster.ray.origin.x,
+        raycaster.ray.origin.y,
+        raycaster.ray.origin.z,
+      ],
+      direction: [
+        raycaster.ray.direction.x,
+        raycaster.ray.direction.y,
+        raycaster.ray.direction.z,
+      ],
+    };
+  }
+
+  refreshGizmo(): void {
+    const store = this.#session.current?.store;
+    if (store === undefined) {
+      this.#gizmo.update(undefined, this.#transform.mode, this.#transform.space, undefined);
+      return;
+    }
+    const targets = transformTargets(store, this.#editor.selection);
+    let localRotation: readonly [number, number, number, number] | undefined;
+    if (targets !== undefined && targets.nodeIds.length > 0) {
+      const first = store.getDocument().nodes[targets.nodeIds[0] as NodeId];
+      if (first !== undefined) localRotation = first.transform.rotation;
+    }
+    this.#gizmo.update(
+      targets,
+      this.#transform.mode,
+      this.#transform.space,
+      localRotation,
+    );
+  }
+
   applyCamera(): void {
     this.#rig.apply();
   }
@@ -378,8 +514,10 @@ class ViewportControllerImpl implements ViewportController {
     this.#box.reset();
     this.#sphere.reset();
     this.#cylinder.reset();
+    this.#transform.reset();
     this.#gestureTool = undefined;
     this.#overlays.dispose();
+    this.#gizmo.dispose();
     this.#rig.dispose();
   }
 
@@ -423,6 +561,72 @@ class ViewportControllerImpl implements ViewportController {
       case "cylinder":
         return this.#cylinder;
     }
+  }
+
+  /** Host services for the headless transform gizmo tool (plan S7.8). */
+  #makeTransformHost(): TransformToolHost {
+    // The session object is stable for the composition's lifetime; only
+    // `session.current` changes, so the getter stays live without
+    // aliasing `this`.
+    const session = this.#session;
+    const editor = this.#editor;
+    return {
+      get store() {
+        return session.current?.store;
+      },
+      get selection() {
+        return editor.selection;
+      },
+      cameraForward: (): CameraRay["direction"] => {
+        const direction = new THREE.Vector3();
+        this.#rig.camera.getWorldDirection(direction);
+        return [direction.x, direction.y, direction.z];
+      },
+      ray: (clientX, clientY) => this.cameraRay(clientX, clientY),
+      nextCommandId: (): CommandId => {
+        this.#transformSequence += 1;
+        return commandId(`command:transform:${String(this.#transformSequence)}`);
+      },
+      beginGesture: (): GestureHost | undefined => {
+        const current = session.current;
+        if (current === undefined) return undefined;
+        this.#transformSequence += 1;
+        const gesture = current.bus.beginGesture(
+          `transform:${String(this.#transformSequence)}`,
+        );
+        return {
+          update: (commands, label) => {
+            this.#transformSequence += 1;
+            const result = gesture.update(commands, {
+              transactionId: transactionId(
+                `transaction:transform:${String(this.#transformSequence)}`,
+              ),
+              expectedRevision: current.store.revision,
+              source: "ui",
+              label,
+            });
+            return result.ok ? undefined : result.error;
+          },
+          end: () => {
+            gesture.end();
+          },
+          cancel: () => {
+            this.#transformSequence += 1;
+            const result = gesture.cancel({
+              transactionId: transactionId(
+                `transaction:transform:${String(this.#transformSequence)}`,
+              ),
+              expectedRevision: current.store.revision,
+              source: "ui",
+            });
+            return result.ok ? undefined : result.error;
+          },
+        };
+      },
+      pushNotice: (level, message) => {
+        editor.pushNotice(level, message);
+      },
+    };
   }
 
   /** Host services that keep the tools headless and deterministic. */

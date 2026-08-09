@@ -122,7 +122,14 @@ type ProjectedMesh = THREE.Mesh<
 function meshesOf(composition: DesktopComposition): ProjectedMesh[] {
   const meshes: ProjectedMesh[] = [];
   composition.renderer.scene.traverse((object) => {
-    if (object instanceof THREE.Mesh) meshes.push(object as ProjectedMesh);
+    // The transform gizmo (ticket #20) is a permanent overlay whose
+    // handles are meshes; projected content excludes it.
+    if (
+      object instanceof THREE.Mesh &&
+      object.name !== "transform-gizmo-handle"
+    ) {
+      meshes.push(object as ProjectedMesh);
+    }
   });
   return meshes;
 }

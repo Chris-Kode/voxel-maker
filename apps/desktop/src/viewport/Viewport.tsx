@@ -76,8 +76,9 @@ export function Viewport({
     // Pointer gesture state: a click is a primary-button press that moves
     // less than a few pixels before release; a tool gesture routes every
     // captured primary-button event to the active tool (stroke, shape
-    // drag, or region select); everything else orbits or pans.
-    type GestureMode = "orbit" | "tool" | "region";
+    // drag, or region select); a gizmo gesture routes to the transform
+    // gizmo (plan S7.8); everything else orbits or pans.
+    type GestureMode = "orbit" | "tool" | "region" | "gizmo";
     let gesture:
       | {
           readonly mode: GestureMode;
@@ -106,6 +107,24 @@ export function Viewport({
       const tool = activeToolRef.current;
       const regionSelect =
         tool === "select" && selectionModeRef.current === "region";
+      if (event.button === 0 && tool === "select" && !regionSelect) {
+        // The select tool first offers the pointer to the transform
+        // gizmo (plan S7.8); when a handle is hit, the drag becomes a
+        // coalesced transform gesture.
+        if (controller.gizmoPointerDown(x, y)) {
+          gesture = {
+            mode: "gizmo",
+            button: event.button,
+            startX: event.clientX,
+            startY: event.clientY,
+            lastX: event.clientX,
+            lastY: event.clientY,
+            moved: false,
+          };
+          host.setPointerCapture(event.pointerId);
+          return;
+        }
+      }
       if (event.button === 0 && (tool !== "select" || regionSelect)) {
         const mode: GestureMode = regionSelect ? "region" : "tool";
         controller.toolPointerDown(x, y, modifiers(event));
@@ -134,6 +153,11 @@ export function Viewport({
 
     const onPointerMove = (event: PointerEvent): void => {
       if (gesture === undefined) return;
+      if (gesture.mode === "gizmo") {
+        const [x, y] = viewportPoint(event);
+        controller.gizmoPointerMove(x, y);
+        return;
+      }
       if (gesture.mode === "tool") {
         const [x, y] = viewportPoint(event);
         controller.toolPointerMove(x, y);
@@ -159,7 +183,9 @@ export function Viewport({
 
     const onPointerUp = (event: PointerEvent): void => {
       if (gesture === undefined) return;
-      if (gesture.mode === "tool") {
+      if (gesture.mode === "gizmo") {
+        controller.gizmoPointerUp();
+      } else if (gesture.mode === "tool") {
         controller.toolPointerUp();
       } else if (gesture.button === 0 && !gesture.moved) {
         const [x, y] = viewportPoint(event);
@@ -172,7 +198,9 @@ export function Viewport({
     };
 
     const onPointerCancel = (): void => {
-      if (gesture?.mode === "tool") {
+      if (gesture?.mode === "gizmo") {
+        controller.gizmoPointerCancel();
+      } else if (gesture?.mode === "tool") {
         controller.toolPointerCancel();
       }
       gesture = undefined;
@@ -249,8 +277,10 @@ export function Viewport({
           controller.toggleOverlay("pivots");
           break;
         case "Escape":
-          // Cancel any in-progress gesture (region drag, stroke, shape)
-          // before clearing, so a late pointer-up cannot commit it.
+          // Cancel any in-progress gesture (gizmo drag, region drag,
+          // stroke, shape) before clearing, so a late pointer-up cannot
+          // commit it.
+          if (controller.transformTool.active) controller.gizmoPointerCancel();
           if (controller.toolActive) controller.toolPointerCancel();
           controller.clearSelection();
           break;

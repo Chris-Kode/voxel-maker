@@ -25,6 +25,7 @@ import {
   type DesktopComposition,
   type FilePicker,
 } from "../composition.js";
+import { transformTargets } from "@voxel-maker/editor";
 
 /**
  * Viewport controller tests (ticket #16): the composition seam between
@@ -263,4 +264,140 @@ describe("viewport controller", () => {
     expect(composition.viewport.overlays.visible.grid).toBe(true);
     composition.dispose();
   });
+
+  it("drives a coalesced gizmo drag from a projected handle (plan S7.8)", () => {
+    const composition = createDesktopComposition({
+      storage: new MemoryProjectStorage(),
+      picker: createFakePicker(),
+    });
+    openFixture(composition);
+    const viewport = composition.viewport;
+    viewport.setViewportSize(800, 600);
+    viewport.setStandardView("front");
+    viewport.focus();
+    // The render loop calls applyCamera every frame; tests must do the
+    // same for the camera projection to be current.
+    viewport.applyCamera();
+    composition.editor.setSelection([{ kind: "node", nodeId: CHILD }]);
+    viewport.refreshGizmo();
+    expect(viewport.gizmo.group.visible).toBe(true);
+
+    // The fixture box spans [2,6]x[0,4]x[0,4], so the gizmo sits at
+    // (4,2,2) with radius sqrt(24)/2; project the +X handle tip to
+    // viewport coordinates and press it.
+    const state = composition.session.current;
+    if (state === undefined) throw new Error("no open session");
+    const targets = transformTargets(state.store, composition.editor.selection);
+    if (targets === undefined) throw new Error("no transform targets");
+    const tip = projectToViewport(composition, [
+      targets.center[0] + targets.radius * 1.1 * 1.25,
+      targets.center[1],
+      targets.center[2],
+    ]);
+    const baseline = state.store.getDocument().nodes[CHILD]?.transform;
+    if (baseline === undefined) throw new Error("missing node");
+    const down = viewport.gizmoPointerDown(tip[0], tip[1]);
+    expect(down).toBe(true);
+    expect(viewport.transformTool.active).toBe(true);
+    viewport.gizmoPointerMove(tip[0] - 60, tip[1]);
+    viewport.gizmoPointerMove(tip[0] - 120, tip[1]);
+    viewport.gizmoPointerUp();
+    expect(viewport.transformTool.active).toBe(false);
+
+    // The whole drag is one coalesced history entry.
+    const history = state.bus.historySnapshot();
+    expect(history.past).toHaveLength(1);
+    expect(history.past[0]?.label).toBe("Move");
+
+    // Only the X component moved, by a snapped increment.
+    const moved = state.store.getDocument().nodes[CHILD]?.transform;
+    if (moved === undefined) throw new Error("missing node");
+    expect(moved.translation[0]).not.toBe(baseline.translation[0]);
+    expect(Math.abs(moved.translation[0] - baseline.translation[0]) % 0.25).toBeLessThan(1e-9);
+    expect(moved.translation[1]).toBe(baseline.translation[1]);
+    expect(moved.translation[2]).toBe(baseline.translation[2]);
+
+    // Undo restores the exact pre-drag transform (the store revision is
+    // live; the session-state snapshot is frozen at open).
+    expect(state.bus.undo(txOptions(state.store.revision)).ok).toBe(true);
+    const restored = state.store.getDocument().nodes[CHILD]?.transform;
+    expect(restored?.translation).toEqual(baseline.translation);
+    composition.dispose();
+  });
+
+  it("cancels a gizmo drag and restores the pre-drag transform", () => {
+    const composition = createDesktopComposition({
+      storage: new MemoryProjectStorage(),
+      picker: createFakePicker(),
+    });
+    openFixture(composition);
+    const viewport = composition.viewport;
+    viewport.setViewportSize(800, 600);
+    viewport.setStandardView("front");
+    viewport.focus();
+    viewport.applyCamera();
+    composition.editor.setSelection([{ kind: "node", nodeId: CHILD }]);
+    viewport.refreshGizmo();
+    const state = composition.session.current;
+    if (state === undefined) throw new Error("no open session");
+    const targets = transformTargets(state.store, composition.editor.selection);
+    if (targets === undefined) throw new Error("no transform targets");
+    const tip = projectToViewport(composition, [
+      targets.center[0] + targets.radius * 1.1 * 1.25,
+      targets.center[1],
+      targets.center[2],
+    ]);
+    const baseline = state.store.getDocument().nodes[CHILD]?.transform;
+    if (baseline === undefined) throw new Error("missing node");
+
+    expect(viewport.gizmoPointerDown(tip[0], tip[1])).toBe(true);
+    viewport.gizmoPointerMove(tip[0] - 80, tip[1]);
+    viewport.gizmoPointerCancel();
+    expect(viewport.transformTool.active).toBe(false);
+    const restored = state.store.getDocument().nodes[CHILD]?.transform;
+    expect(restored?.translation).toEqual(baseline.translation);
+    expect(state.bus.historySnapshot().past).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it("ignores gizmo presses without a node selection", () => {
+    const composition = createDesktopComposition({
+      storage: new MemoryProjectStorage(),
+      picker: createFakePicker(),
+    });
+    openFixture(composition);
+    composition.viewport.setViewportSize(800, 600);
+    composition.viewport.focus();
+    expect(composition.viewport.gizmo.group.visible).toBe(false);
+    expect(composition.viewport.gizmoPointerDown(400, 300)).toBe(false);
+    expect(composition.viewport.transformTool.active).toBe(false);
+    composition.dispose();
+  });
 });
+
+/** Projects a world point to viewport client coordinates. */
+function projectToViewport(
+  composition: DesktopComposition,
+  point: readonly [number, number, number],
+): readonly [number, number] {
+  const vector = new THREE.Vector3(point[0], point[1], point[2]);
+  vector.project(composition.viewport.camera);
+  return [
+    ((vector.x + 1) / 2) * composition.viewport.viewportWidth,
+    ((1 - vector.y) / 2) * composition.viewport.viewportHeight,
+  ];
+}
+
+let txSequence = 0;
+function txOptions(
+  expectedRevision: number,
+): import("@voxel-maker/commands").TransactionOptions {
+  txSequence += 1;
+  return {
+    transactionId: transactionId(
+      `transaction:gizmo-test:${String(txSequence)}`,
+    ),
+    expectedRevision,
+    source: "ui",
+  };
+}
