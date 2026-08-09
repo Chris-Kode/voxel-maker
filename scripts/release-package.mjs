@@ -146,6 +146,46 @@ try {
   );
 }
 
+// macOS signing hook (plan S17.10): when the maintainer's signing
+// identity is configured, sign the freshly built .app bundle before the
+// artifacts are copied, so the published checksums cover signed bytes.
+if (platform === "darwin" && process.env.APPLE_SIGNING_IDENTITY) {
+  const appBundle = join(
+    desktopDirectory,
+    "src-tauri",
+    "target",
+    "release",
+    "bundle",
+    "macos",
+    "Voxel Maker.app",
+  );
+  if (existsSync(appBundle)) {
+    const sign = spawnSync(
+      "codesign",
+      [
+        "--deep",
+        "--force",
+        "--options",
+        "runtime",
+        "--sign",
+        process.env.APPLE_SIGNING_IDENTITY,
+        appBundle,
+      ],
+      { stdio: "inherit" },
+    );
+    if (sign.status === 0) {
+      spawnSync("codesign", ["--verify", "--deep", "--strict", appBundle], {
+        stdio: "inherit",
+      });
+      console.log("[release-package] macOS app bundle signed");
+    } else {
+      console.error(
+        "[release-package] codesign failed; publishing unsigned artifacts",
+      );
+    }
+  }
+}
+
 await mkdir(outDirectory, { recursive: true });
 const artifacts = [];
 for (const artifact of await collectArtifacts()) {

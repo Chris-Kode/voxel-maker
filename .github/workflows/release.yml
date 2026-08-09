@@ -1,0 +1,95 @@
+name: Release qualification and packaging
+
+on:
+  schedule:
+    # Nightly qualification on all three supported OSes (plan S17.8).
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact-suffix: macos
+          - os: windows-latest
+            artifact-suffix: windows
+          - os: ubuntu-22.04
+            artifact-suffix: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: pnpm
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux bundling dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+      - run: pnpm install --frozen-lockfile
+      - name: Full check suite (headless qualification)
+        # The whole gate chain incl. the release smoke and genericity
+        # gate runs on every OS (the engine is platform-independent).
+        run: pnpm check
+      - name: Security and audit gates
+        run: |
+          pnpm check:security
+          pnpm check:audit
+      - name: Build release artifacts for this platform
+        # tauri build produces the platform installers; the packaging
+        # script collects them, adds the headless CLIs, and writes
+        # SHASUMS256.txt + manifest.json. macOS signing/notarization is
+        # applied when the secrets are configured (approved-exception
+        # pattern: unconfigured runs produce unsigned artifacts and
+        # record the fact in the manifest).
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEYCHAIN_PROFILE: ${{ secrets.APPLE_NOTARY_KEYCHAIN_PROFILE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm release:package
+      - name: Verify artifact checksums
+        run: pnpm release:verify-checksums
+      - name: Upload artifact set
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxel-maker-${{ matrix.artifact-suffix }}-${{ github.sha }}
+          path: release/artifacts/**
+          if-no-files-found: error
+
+  publish:
+    # On tag push only: gather every platform artifact set into one
+    # GitHub release with the checksum files.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: qualify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" artifacts/**/*
+            --repo "${{ github.repository }}"
+            --title "Voxel Maker ${{ github.ref_name }}"
+            --notes "See RELEASE.md and docs/release/ in the repository for the support matrix, known limitations, format compatibility, backup guidance, privacy disclosure, and gate evidence."
