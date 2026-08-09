@@ -52,22 +52,24 @@ export function evaluateNodeWorldTransforms(
   const world = new Map<NodeId, Mat4>();
   const root = document.nodes[document.rootNodeId];
   if (root === undefined) return world;
-  world.set(root.nodeId, transformToMatrix(root.transform));
-  const stack: SceneNode[] = [root];
+  const rootWorld = transformToMatrix(root.transform);
+  world.set(root.nodeId, rootWorld);
+  const stack: Array<{ readonly node: SceneNode; readonly parentWorld: Mat4 }> =
+    [{ node: root, parentWorld: rootWorld }];
   while (stack.length > 0) {
-    const node = stack.pop();
-    if (node === undefined) break;
-    const parentWorld = world.get(node.nodeId);
-    if (parentWorld === undefined) break;
+    const entry = stack.pop();
+    if (entry === undefined) break;
+    const { node, parentWorld } = entry;
     for (let index = node.children.length - 1; index >= 0; index -= 1) {
       const childId = node.children[index];
       const child = childId === undefined ? undefined : document.nodes[childId];
       if (child === undefined || world.has(child.nodeId)) continue;
-      world.set(
-        child.nodeId,
-        multiplyMatrices(parentWorld, transformToMatrix(child.transform)),
+      const childWorld = multiplyMatrices(
+        parentWorld,
+        transformToMatrix(child.transform),
       );
-      stack.push(child);
+      world.set(child.nodeId, childWorld);
+      stack.push({ node: child, parentWorld: childWorld });
     }
   }
   return world;

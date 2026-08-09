@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { applyMatrix, type Vec3 } from "@voxel-maker/math";
 import type { DocumentStoreRead } from "@voxel-maker/document";
+import type { SceneNode } from "@voxel-maker/model";
 import {
   selectionWorldBounds,
   volumeLocalWorldBounds,
@@ -343,12 +344,22 @@ class OverlayManagerImpl implements OverlayManager {
     return selectionWorldBounds(store, selection);
   }
 
-  #rebuildPivots(
+  /**
+   * Shared marker-group rebuild for the pivot crosses and the joint rings
+   * (plan S6.13/S9.8, ticket #26): clear the group, dispose every
+   * superseded geometry and material exactly once, then project one
+   * marker per selected node that passes `include` at the node's
+   * world-space transform pivot.
+   */
+  #rebuildMarkers(
+    group: THREE.Group,
     store: DocumentStoreRead | undefined,
     selection: readonly SelectionEntry[],
+    include: (node: SceneNode) => boolean,
+    create: (pivot: Vec3) => THREE.Object3D,
   ): void {
-    for (const child of [...this.#pivotsGroup.children]) {
-      this.#pivotsGroup.remove(child);
+    for (const child of [...group.children]) {
+      group.remove(child);
       child.traverse(disposeGeometry);
       child.traverse(disposeMaterials);
     }
@@ -365,10 +376,24 @@ class OverlayManagerImpl implements OverlayManager {
       const node = document.nodes[nodeId];
       const world = matrices.get(nodeId);
       if (node === undefined || world === undefined) continue;
+      if (!include(node)) continue;
       const pivot: Vec3 = applyMatrix(world, node.transform.pivot);
-      this.#pivotsGroup.add(this.#createPivotMarker(pivot));
+      group.add(create(pivot));
     }
     this.applyVisibility();
+  }
+
+  #rebuildPivots(
+    store: DocumentStoreRead | undefined,
+    selection: readonly SelectionEntry[],
+  ): void {
+    this.#rebuildMarkers(
+      this.#pivotsGroup,
+      store,
+      selection,
+      () => true,
+      (pivot) => this.#createPivotMarker(pivot),
+    );
   }
 
   /**
@@ -381,31 +406,13 @@ class OverlayManagerImpl implements OverlayManager {
     store: DocumentStoreRead | undefined,
     selection: readonly SelectionEntry[],
   ): void {
-    for (const child of [...this.#jointsGroup.children]) {
-      this.#jointsGroup.remove(child);
-      child.traverse(disposeGeometry);
-      child.traverse(disposeMaterials);
-    }
-    const nodeIds = selection
-      .filter((entry) => entry.kind === "node")
-      .map((entry) => entry.nodeId);
-    if (store === undefined || nodeIds.length === 0) {
-      this.applyVisibility();
-      return;
-    }
-    const matrices = nodeWorldMatrices(store);
-    const document = store.getDocument();
-    for (const nodeId of nodeIds) {
-      const node = document.nodes[nodeId];
-      const world = matrices.get(nodeId);
-      if (node === undefined || world === undefined) continue;
-      if (!node.components.some((component) => component.kind === "joint")) {
-        continue;
-      }
-      const pivot: Vec3 = applyMatrix(world, node.transform.pivot);
-      this.#jointsGroup.add(this.#createJointMarker(pivot));
-    }
-    this.applyVisibility();
+    this.#rebuildMarkers(
+      this.#jointsGroup,
+      store,
+      selection,
+      (node) => node.components.some((component) => component.kind === "joint"),
+      (pivot) => this.#createJointMarker(pivot),
+    );
   }
 
   #createJointMarker(pivot: Vec3): THREE.LineLoop {

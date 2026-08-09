@@ -371,6 +371,9 @@ importers:
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../model
+      '@voxel-maker/rigging':
+        specifier: workspace:*
+        version: link:../rigging
       '@voxel-maker/shared':
         specifier: workspace:*
         version: link:../shared

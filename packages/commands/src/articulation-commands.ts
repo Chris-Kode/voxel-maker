@@ -12,9 +12,15 @@ import type {
   CommandExecutionContext,
   CommandHandler,
   CommandValidationContext,
+  InverseCommand,
   MutableDocument,
   MutableSceneNode,
 } from "./registry.js";
+import {
+  NODE_COMMAND_SCHEMA_VERSION,
+  NODE_SET_COMPONENTS_COMMAND,
+  NODE_SET_TRANSFORM_COMMAND,
+} from "./node-commands.js";
 import { CommandRegistry } from "./registry.js";
 
 /**
@@ -22,9 +28,12 @@ import { CommandRegistry } from "./registry.js";
  * #26): pivot and joint are singletons per node, so their lifecycle is a
  * small set of create/update/remove commands instead of whole-list
  * replacement. A joint annotates a node in the single transform
- * hierarchy; it never introduces a second parent graph. Undo restores the
- * exact previous component list via the recorded inverse (which may be a
- * different command type, matching the node.create/node.delete pattern).
+ * hierarchy; it never introduces a second parent graph. `node.setPivot`
+ * writes through to `transform.pivot` so the annotation and the approved
+ * transform formula stay in sync (plan S7.9: geometry/world behavior
+ * matches ADR-0001). Undo restores the exact pre-command state via the
+ * recorded inverses (which may be different command types or a composite,
+ * matching the node.create/node.delete pattern).
  */
 
 export const NODE_SET_PIVOT_COMMAND = "node.setPivot" as const;
@@ -203,35 +212,55 @@ const setPivotHandler: CommandHandler<
   ): CommandExecution {
     const document = context.stageDocument();
     const node = mutableNode(document, payload.nodeId);
+    const transformBefore = node.transform;
     const existing = pivotComponent(node.components);
     const pivot: PivotComponent = {
       kind: "pivot",
       schemaVersion: 1,
       pivot: payload.pivot,
     };
-    if (existing !== undefined) {
+    // Write-through: the pivot annotation is the declared articulation
+    // point, and transform.pivot is the value the approved transform
+    // formula evaluates (plan S7.9: the pivot command's geometry/world
+    // behavior matches ADR-0001). The command keeps both in sync so the
+    // annotation is never an inert copy.
+    const transformUnchanged = vec3Equal(node.transform.pivot, payload.pivot);
+    node.transform = { ...node.transform, pivot: payload.pivot };
+    const existed = existing !== undefined;
+    if (existed) {
       node.components = node.components.map((component) =>
         component.kind === "pivot" ? pivot : component,
       );
-      const unchanged = vec3Equal(existing.pivot, payload.pivot);
-      return {
-        inverse: {
-          type: NODE_SET_PIVOT_COMMAND,
-          schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
-          payload: { nodeId: payload.nodeId, pivot: existing.pivot },
-        },
-        changedRecords: !unchanged,
-        declaredAffectedResources: nodeResources(payload.nodeId),
-      };
+    } else {
+      node.components = [...node.components, pivot];
     }
-    node.components = [...node.components, pivot];
+    const componentUnchanged =
+      existing !== undefined && vec3Equal(existing.pivot, payload.pivot);
+    const inverse: InverseCommand[] = existed
+      ? [
+          {
+            type: NODE_SET_PIVOT_COMMAND,
+            schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+            payload: { nodeId: payload.nodeId, pivot: existing.pivot },
+          },
+        ]
+      : [
+          // Replayed in reverse: restore the previous transform (and with
+          // it transform.pivot), then drop the annotation.
+          {
+            type: NODE_SET_TRANSFORM_COMMAND,
+            schemaVersion: NODE_COMMAND_SCHEMA_VERSION,
+            payload: { nodeId: payload.nodeId, transform: transformBefore },
+          },
+          {
+            type: NODE_REMOVE_PIVOT_COMMAND,
+            schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+            payload: { nodeId: payload.nodeId },
+          },
+        ];
     return {
-      inverse: {
-        type: NODE_REMOVE_PIVOT_COMMAND,
-        schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
-        payload: { nodeId: payload.nodeId },
-      },
-      changedRecords: true,
+      inverse,
+      changedRecords: !(transformUnchanged && componentUnchanged),
       declaredAffectedResources: nodeResources(payload.nodeId),
     };
   },
@@ -260,7 +289,8 @@ const removePivotHandler: CommandHandler<
   ): CommandExecution {
     const document = context.stageDocument();
     const node = mutableNode(document, payload.nodeId);
-    const existing = pivotComponent(node.components);
+    const oldComponents = node.components;
+    const existing = pivotComponent(oldComponents);
     if (existing === undefined) {
       // Removing an absent singleton is a no-op commit, matching the
       // node.delete no-op policy: history stays uniform.
@@ -274,14 +304,17 @@ const removePivotHandler: CommandHandler<
         declaredAffectedResources: nodeResources(payload.nodeId),
       };
     }
-    node.components = node.components.filter(
+    // The annotation is removed but transform.pivot is untouched: the
+    // node keeps its geometric pivot and only loses the articulation
+    // declaration. The exact inverse restores the component list.
+    node.components = oldComponents.filter(
       (component) => component.kind !== "pivot",
     );
     return {
       inverse: {
-        type: NODE_SET_PIVOT_COMMAND,
-        schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
-        payload: { nodeId: payload.nodeId, pivot: existing.pivot },
+        type: NODE_SET_COMPONENTS_COMMAND,
+        schemaVersion: NODE_COMMAND_SCHEMA_VERSION,
+        payload: { nodeId: payload.nodeId, components: oldComponents },
       },
       changedRecords: true,
       declaredAffectedResources: nodeResources(payload.nodeId),

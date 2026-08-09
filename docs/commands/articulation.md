@@ -15,8 +15,8 @@ All commands share `schemaVersion: 1` and a branded `payload.nodeId`.
 
 | Command | Payload fields | Effect |
 | --- | --- | --- |
-| `node.setPivot` | `nodeId`, `pivot` | Creates the pivot component, or updates it when one already exists (canonical finite vector). |
-| `node.removePivot` | `nodeId` | Removes the pivot component; a no-op commit when absent. |
+| `node.setPivot` | `nodeId`, `pivot` | Creates the pivot component, or updates it when one already exists (canonical finite vector). Write-through: `transform.pivot` — the value the approved transform formula evaluates (ADR-0001) — is set to the same value, so the annotation and the geometry never disagree (plan S7.9). |
+| `node.removePivot` | `nodeId` | Removes the pivot annotation; a no-op commit when absent. `transform.pivot` is left untouched: the node keeps its geometric pivot and only loses the articulation declaration. |
 | `node.addJoint` | `nodeId` | Adds the joint annotation; a no-op commit when present. |
 | `node.removeJoint` | `nodeId` | Removes the joint annotation; a no-op commit when absent. |
 
@@ -33,15 +33,19 @@ handlers with `registerArticulationCommands`.
 
 ## Undo and redo
 
-Undo restores the exact pre-command component list: the recorded inverse
-may be a different command type (for example, `node.setPivot` inverse is
-`node.removePivot` when the pivot did not exist before, mirroring the
-`node.create`/`node.delete` pattern). A new commit clears the redo
+Undo restores the exact pre-command state: the recorded inverse may be a
+different command type or a composite (the bus replays a composite in
+reverse order). For example, undoing `node.setPivot` on a node that had
+no pivot component first restores the previous transform — including the
+old `transform.pivot` — and then removes the annotation, mirroring the
+`node.create`/`node.delete` pattern. A new commit clears the redo
 history; `NOTHING_TO_UNDO` / `NOTHING_TO_REDO` are returned at the ends
 of history.
 
 ## No-op semantics
 
 Removing an absent singleton or adding an existing one commits a no-op
-transaction: the revision still increments and an event is emitted, but
-`changedNodeIds` is empty, keeping history uniform.
+transaction; `node.setPivot` is also a no-op when both the annotation and
+`transform.pivot` already hold the requested value. The revision still
+increments and an event is emitted, but `changedNodeIds` is empty,
+keeping history uniform.

@@ -47,7 +47,8 @@ const voxel = (id: VolumeId): Component => ({
 interface Part {
   readonly nodeId: NodeId;
   readonly name: string;
-  readonly parentId: NodeId;
+  /** `null` means the fixture root (resolved at build time). */
+  readonly parentId: NodeId | null;
   readonly transform: Transform;
   readonly components: readonly Component[];
   readonly volume: {
@@ -57,7 +58,6 @@ interface Part {
       readonly [number, number, number],
     ];
   };
-  readonly materialId: number;
 }
 
 interface FixtureShape {
@@ -101,9 +101,10 @@ const materials = (): NonNullable<
 
 function buildFixture(shape: FixtureShape): VoxelDocument {
   const rootId = nodeId(`${shape.documentId}:root`);
+  const parentOf = (part: Part): NodeId => part.parentId ?? rootId;
   const childrenOf = (id: NodeId): readonly NodeId[] =>
     shape.parts
-      .filter((part) => part.parentId === id)
+      .filter((part) => parentOf(part) === id)
       .map((part) => part.nodeId);
   const root: SceneNode = {
     nodeId: rootId,
@@ -119,7 +120,7 @@ function buildFixture(shape: FixtureShape): VoxelDocument {
     nodes.push({
       nodeId: part.nodeId,
       name: part.name,
-      parentId: part.parentId,
+      parentId: parentOf(part),
       children: childrenOf(part.nodeId),
       transform: part.transform,
       components: [...part.components],
@@ -150,7 +151,7 @@ export function createChestLidFixture(): VoxelDocument {
       {
         nodeId: nodeId("node:rig:chest-lid:body"),
         name: "Body",
-        parentId: nodeId("document:rig:chest-lid:0001:root"),
+        parentId: null,
         transform: identity,
         components: [voxel(volumeId("volume:rig:chest-lid:body"))],
         volume: {
@@ -160,12 +161,11 @@ export function createChestLidFixture(): VoxelDocument {
             [4, 6, 3],
           ],
         },
-        materialId: 1,
       },
       {
         nodeId: nodeId("node:rig:chest-lid:lid"),
         name: "Lid",
-        parentId: nodeId("document:rig:chest-lid:0001:root"),
+        parentId: null,
         transform: {
           translation: [0, 6, 0],
           pivot: [0, 0, -3],
@@ -184,7 +184,6 @@ export function createChestLidFixture(): VoxelDocument {
             [4, 2, 3],
           ],
         },
-        materialId: 1,
       },
     ],
   });
@@ -200,7 +199,7 @@ export function createWheelFixture(): VoxelDocument {
       {
         nodeId: nodeId("node:rig:wheel:axle"),
         name: "Axle",
-        parentId: nodeId("document:rig:wheel:0001:root"),
+        parentId: null,
         transform: identity,
         components: [voxel(volumeId("volume:rig:wheel:axle"))],
         volume: {
@@ -210,12 +209,11 @@ export function createWheelFixture(): VoxelDocument {
             [1, 1, 4],
           ],
         },
-        materialId: 2,
       },
       {
         nodeId: nodeId("node:rig:wheel:wheel"),
         name: "Wheel",
-        parentId: nodeId("document:rig:wheel:0001:root"),
+        parentId: null,
         transform: identity,
         components: [
           voxel(volumeId("volume:rig:wheel:wheel")),
@@ -229,7 +227,6 @@ export function createWheelFixture(): VoxelDocument {
             [3, 3, 1],
           ],
         },
-        materialId: 3,
       },
     ],
   });
@@ -241,7 +238,6 @@ export function createWheelFixture(): VoxelDocument {
  * chain.
  */
 export function createLinkedArmFixture(): VoxelDocument {
-  const rootId = nodeId("document:rig:arm:0001:root");
   const link1 = nodeId("node:rig:arm:link1");
   const link2 = nodeId("node:rig:arm:link2");
   const link3 = nodeId("node:rig:arm:link3");
@@ -253,7 +249,7 @@ export function createLinkedArmFixture(): VoxelDocument {
       {
         nodeId: link1,
         name: "Link 1",
-        parentId: rootId,
+        parentId: null,
         transform: identity,
         components: [
           voxel(volumeId("volume:rig:arm:link1")),
@@ -267,7 +263,6 @@ export function createLinkedArmFixture(): VoxelDocument {
             [4, 1, 1],
           ],
         },
-        materialId: 1,
       },
       {
         nodeId: link2,
@@ -286,7 +281,6 @@ export function createLinkedArmFixture(): VoxelDocument {
             [4, 1, 1],
           ],
         },
-        materialId: 2,
       },
       {
         nodeId: link3,
@@ -305,7 +299,6 @@ export function createLinkedArmFixture(): VoxelDocument {
             [4, 1, 1],
           ],
         },
-        materialId: 3,
       },
     ],
   });
@@ -317,7 +310,6 @@ export function createLinkedArmFixture(): VoxelDocument {
  * degree rotation instead of negative scale.
  */
 export function createWingsFixture(): VoxelDocument {
-  const rootId = nodeId("document:rig:wings:0001:root");
   return buildFixture({
     documentId: "document:rig:wings:0001",
     title: "bilateral wings",
@@ -326,7 +318,7 @@ export function createWingsFixture(): VoxelDocument {
       {
         nodeId: nodeId("node:rig:wings:body"),
         name: "Body",
-        parentId: rootId,
+        parentId: null,
         transform: identity,
         components: [voxel(volumeId("volume:rig:wings:body"))],
         volume: {
@@ -336,12 +328,11 @@ export function createWingsFixture(): VoxelDocument {
             [2, 1, 1],
           ],
         },
-        materialId: 1,
       },
       {
         nodeId: nodeId("node:rig:wings:right"),
         name: "Right Wing",
-        parentId: rootId,
+        parentId: null,
         transform: identity,
         components: [
           voxel(volumeId("volume:rig:wings:right")),
@@ -355,12 +346,11 @@ export function createWingsFixture(): VoxelDocument {
             [5, 1, 1],
           ],
         },
-        materialId: 2,
       },
       {
         nodeId: nodeId("node:rig:wings:left"),
         name: "Left Wing",
-        parentId: rootId,
+        parentId: null,
         transform: { ...identity, rotation: [0, 1, 0, 0] },
         components: [
           voxel(volumeId("volume:rig:wings:left")),
@@ -374,7 +364,6 @@ export function createWingsFixture(): VoxelDocument {
             [5, 1, 1],
           ],
         },
-        materialId: 2,
       },
     ],
   });
@@ -386,7 +375,6 @@ export function createWingsFixture(): VoxelDocument {
  * semantics.
  */
 export function createAbstractSculptureFixture(): VoxelDocument {
-  const rootId = nodeId("document:rig:sculpture:0001:root");
   const column = nodeId("node:rig:sculpture:column");
   return buildFixture({
     documentId: "document:rig:sculpture:0001",
@@ -396,7 +384,7 @@ export function createAbstractSculptureFixture(): VoxelDocument {
       {
         nodeId: nodeId("node:rig:sculpture:base"),
         name: "Base",
-        parentId: rootId,
+        parentId: null,
         transform: identity,
         components: [voxel(volumeId("volume:rig:sculpture:base")), joint],
         volume: {
@@ -406,12 +394,11 @@ export function createAbstractSculptureFixture(): VoxelDocument {
             [5, 1, 5],
           ],
         },
-        materialId: 3,
       },
       {
         nodeId: column,
         name: "Column",
-        parentId: rootId,
+        parentId: null,
         transform: { ...identity, translation: [0, 1, 0] },
         components: [
           voxel(volumeId("volume:rig:sculpture:column")),
@@ -425,13 +412,12 @@ export function createAbstractSculptureFixture(): VoxelDocument {
             [1, 5, 1],
           ],
         },
-        materialId: 1,
       },
       {
         nodeId: nodeId("node:rig:sculpture:arm"),
         name: "Arm",
         parentId: column,
-        transform: { ...identity, translation: [0, 5, 0] },
+        transform: { ...identity, translation: [0, 5, 0], pivot: [0, 0, -1] },
         components: [
           voxel(volumeId("volume:rig:sculpture:arm")),
           pivot([0, 0, -1]),
@@ -444,7 +430,6 @@ export function createAbstractSculptureFixture(): VoxelDocument {
             [1, 1, 3],
           ],
         },
-        materialId: 2,
       },
       {
         nodeId: nodeId("node:rig:sculpture:finial"),
@@ -463,7 +448,6 @@ export function createAbstractSculptureFixture(): VoxelDocument {
             [2, 1, 2],
           ],
         },
-        materialId: 3,
       },
     ],
   });

@@ -106,15 +106,33 @@ export function InspectorPanel({
           : field === "scale"
             ? parseScaleInput(text)
             : parseVec3Input(text, field);
-      const commands = buildSetTransformFieldCommands(
-        () => panelIds.nextCommandId(),
-        nodes.map((node) => ({
-          nodeId: node.nodeId,
-          transform: node.transform,
-        })),
-        field,
-        value,
-      );
+      const commands = [
+        ...buildSetTransformFieldCommands(
+          () => panelIds.nextCommandId(),
+          nodes.map((node) => ({
+            nodeId: node.nodeId,
+            transform: node.transform,
+          })),
+          field,
+          value,
+        ),
+        // The pivot annotation mirrors transform.pivot (plan S9.3, ticket
+        // #26): editing the transform pivot also moves the declared
+        // articulation point on nodes that carry the annotation.
+        ...(field === "pivot"
+          ? nodes
+              .filter((node) =>
+                node.components.some((entry) => entry.kind === "pivot"),
+              )
+              .map((node) =>
+                buildSetPivotCommand(
+                  panelIds.nextCommandId(),
+                  node.nodeId,
+                  value as [number, number, number],
+                ),
+              )
+          : []),
+      ];
       const result = executeTransaction(
         session,
         panelIds,
@@ -177,10 +195,12 @@ export function InspectorPanel({
       }
       const commands = missing.map((node) =>
         component.kind === "pivot"
-          ? buildSetPivotCommand(
+          ? // Initialize the annotation from the node's current transform
+            // pivot so declaring articulation never rewinds geometry.
+            buildSetPivotCommand(
               panelIds.nextCommandId(),
               node.nodeId,
-              component.pivot,
+              node.transform.pivot,
             )
           : buildAddJointCommand(panelIds.nextCommandId(), node.nodeId),
       );

@@ -48,7 +48,7 @@ function buildDocument(): VoxelDocument {
         name: "Articulated",
         parentId: ROOT,
         children: [],
-        transform: identity,
+        transform: { ...identity, pivot: [1, 0, 0] },
         components: [
           { kind: "pivot", schemaVersion: 1, pivot: [1, 0, 0] },
           { kind: "joint", schemaVersion: 1 },
@@ -113,6 +113,31 @@ describe("validateRigAnnotations", () => {
       code: "UNREACHABLE_ANNOTATION",
       componentKind: "joint",
     });
+  });
+
+  it("reports pivot annotations that disagree with transform.pivot", () => {
+    const document = buildDocument();
+    const node = document.nodes[ARTICULATED];
+    const tampered: VoxelDocument = {
+      ...document,
+      nodes: {
+        ...document.nodes,
+        [ARTICULATED]: {
+          ...(node as SceneNode),
+          components: [{ kind: "pivot", schemaVersion: 1, pivot: [2, 0, 0] }],
+        },
+      },
+    };
+    const issues = validateRigAnnotations(tampered);
+    expect(
+      issues.some((issue) => issue.code === "PIVOT_ANNOTATION_MISMATCH"),
+    ).toBe(true);
+    // The clean fixture keeps annotation and transform.pivot in sync.
+    expect(
+      validateRigAnnotations(buildDocument()).some(
+        (issue) => issue.code === "PIVOT_ANNOTATION_MISMATCH",
+      ),
+    ).toBe(false);
   });
 
   it("reports non-finite pivot annotations", () => {

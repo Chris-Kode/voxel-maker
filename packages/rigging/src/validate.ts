@@ -19,13 +19,14 @@ export interface RigAnnotationIssue {
   readonly code:
     | "DUPLICATE_ANNOTATION"
     | "UNREACHABLE_ANNOTATION"
-    | "NON_FINITE_PIVOT";
+    | "NON_FINITE_PIVOT"
+    | "PIVOT_ANNOTATION_MISMATCH";
   readonly nodeId: string;
   readonly componentKind: "pivot" | "joint";
   readonly message: string;
 }
 
-const FINITE = (value: number): boolean =>
+const isFiniteValue = (value: number): boolean =>
   Number.isFinite(value) && !Object.is(value, -0);
 
 /**
@@ -37,6 +38,10 @@ const FINITE = (value: number): boolean =>
  *   the document root through `parentId` links, meaning the annotation
  *   sits outside the single transform hierarchy.
  * - `NON_FINITE_PIVOT` — a pivot annotation contains a non-finite value.
+ * - `PIVOT_ANNOTATION_MISMATCH` — a pivot annotation differs from the
+ *   node's `transform.pivot`, the value the approved transform formula
+ *   evaluates. `node.setPivot` keeps both in sync; a mismatch means the
+ *   declared articulation point and the geometry disagree.
  *
  * The check is pure and returns findings; it never throws.
  */
@@ -67,15 +72,28 @@ export function validateRigAnnotations(
       if (component.kind === "pivot") {
         pivotCount += 1;
         if (
-          !FINITE(component.pivot[0]) ||
-          !FINITE(component.pivot[1]) ||
-          !FINITE(component.pivot[2])
+          !isFiniteValue(component.pivot[0]) ||
+          !isFiniteValue(component.pivot[1]) ||
+          !isFiniteValue(component.pivot[2])
         ) {
           issues.push({
             code: "NON_FINITE_PIVOT",
             nodeId: node.nodeId,
             componentKind: "pivot",
             message: `Pivot annotation on ${node.nodeId} contains non-finite values`,
+          });
+        }
+        const transformPivot = node.transform.pivot;
+        if (
+          component.pivot[0] !== transformPivot[0] ||
+          component.pivot[1] !== transformPivot[1] ||
+          component.pivot[2] !== transformPivot[2]
+        ) {
+          issues.push({
+            code: "PIVOT_ANNOTATION_MISMATCH",
+            nodeId: node.nodeId,
+            componentKind: "pivot",
+            message: `Pivot annotation on ${node.nodeId} differs from its transform.pivot`,
           });
         }
       }
