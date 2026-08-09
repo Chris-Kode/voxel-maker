@@ -11,16 +11,19 @@ import { isVec3i } from "./geometry.js";
 import { MAX_REGION_EXTENT } from "./schemas.js";
 
 /**
- * Generic structural-check registry (plan S14.10, ticket #38): named,
- * deterministic predicates over a committed document used by skill
- * evaluation metadata. Checks are generic — they know nothing about
- * asset categories; each creation skill references a subset with fixed
- * options. Every occupancy scan is bounded by an explicit region in the
- * options (extent per axis and total volume capped at the engine
- * limits), so a check can never iterate an unbounded space. Options are
- * validated against each check's JSON-Schema contract at manifest
- * registration, so a manifest can never reference an unknown check or
- * carry malformed options.
+ * Generic structural-check registry (plan S14.10, tickets #38 and #39):
+ * named, deterministic predicates over a committed document used by
+ * skill evaluation metadata. Checks are generic — they know nothing
+ * about asset categories; each skill references a subset with fixed
+ * options. The registry covers voxel occupancy, scene shape, rig state
+ * (pivots, joints, constraints, hierarchy, node presence), and animation
+ * state (clips, tracks, keyframes, duration, loop policy). Every
+ * occupancy scan is bounded by an explicit region in the options
+ * (extent per axis and total volume capped at the engine limits), so a
+ * check can never iterate an unbounded space. Options are validated
+ * against each check's JSON-Schema contract at manifest registration,
+ * so a manifest can never reference an unknown check or carry malformed
+ * options.
  */
 
 /** Stable error codes for unknown checks and invalid check options. */

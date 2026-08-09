@@ -1,13 +1,17 @@
 /**
  * Public entry point of the skills package: removable versioned domain
- * knowledge above the generic engine (plan S14, tickets #37 and #38).
+ * knowledge above the generic engine (plan S14, tickets #37-#39).
  * The surface ships deterministic procedural generators (each versioned
  * definition maps validated parameters plus an explicit seed to a
  * bounded list of proposed generic commands with a preflighted voxel
- * cost) and the versioned creation-skill catalog: validated manifests
- * with fixed instructions, allowed tools, constraints, generator
- * compatibility, provenance, and evaluation metadata (fixed prompts,
- * structural checks, visual baselines, command/tool efficiency limits).
+ * cost) and the versioned skill catalog: validated manifests with fixed
+ * instructions, allowed tools, constraints, generator compatibility,
+ * provenance, and evaluation metadata (fixed prompts, fixture
+ * references, structural/rig/animation checks, visual baselines,
+ * command/tool efficiency limits) for the creation, rigging, and motion
+ * knowledge kinds. Rigging skills articulate assets with the generic
+ * hierarchy/pivot/joint/constraint surface only; motion skills animate
+ * rigged assets with the generic clips/tracks/keyframes surface only.
  * Skills know nothing about renderers or the document; proposals are
  * staged, inspected, applied, discarded, undone, saved, and replayed
  * through the existing agent preview session and command bus seams, and
