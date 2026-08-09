@@ -13,6 +13,7 @@ import {
   type GateResult,
 } from "./gates.js";
 import {
+  collectGarbage,
   measureAnimationScale,
   measureCommandLatency,
   measureExportGltf,
@@ -138,6 +139,7 @@ export async function runBenchmarks(
       // large transient buffers, so their memory is reported separately
       // (`export.peakRssMiB`) and never distorts the ADR-0008
       // open/navigate memory gate.
+      collectGarbage();
       const snapshots: MemorySnapshot[] = [memorySnapshot()];
 
       progress(options.onProgress, `  measuring command latency`);
@@ -145,6 +147,7 @@ export async function runBenchmarks(
 
       progress(options.onProgress, `  measuring remesh + frame pipeline`);
       const remesh = await measureRemeshAndPipeline(fixture, samples);
+      collectGarbage();
       snapshots.push(memorySnapshot());
 
       // Composite headless input-to-preview proxy: commit + remesh +

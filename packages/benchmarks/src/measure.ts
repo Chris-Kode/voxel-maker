@@ -563,6 +563,16 @@ export function measurePreviewLatency(
   return summarize(times);
 }
 
+/**
+ * Runs a full V8 garbage collection when the process exposes one
+ * (launched with --expose-gc, as the benchmark scripts do). Memory
+ * snapshots then reflect the live footprint of ONE open scene, not
+ * uncollected garbage from earlier measurements.
+ */
+export function collectGarbage(): void {
+  (globalThis as { gc?: () => void }).gc?.();
+}
+
 /** Current process memory in MiB. */
 export function memorySnapshot(): MemorySnapshot {
   const usage = process.memoryUsage();

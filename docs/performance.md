@@ -118,6 +118,12 @@ node apps/bench-cli/dist/cli.js --tier reference --full   --samples 100 --save-l
   (ADR-0008).
 - Save/load "cold" runs are repeated in-process runs; five cold process
   starts are a desktop qualification step.
+- Memory snapshots run after an explicit V8 full GC (`--expose-gc`, set
+  by the benchmark scripts and CI). The report records both RSS and
+  heap-used; the gates use the process peak RSS, which is a conservative
+  upper bound of the single-scene footprint (V8 does not return freed
+  pages to the OS), and heap-used reflects the live single-scene
+  footprint.
 - The 1M fixture is a reference-tier viewability gate; low tier and CI
   smoke do not assert 1M budgets.
 - glTF export intermediates currently scale with voxel count (per-voxel

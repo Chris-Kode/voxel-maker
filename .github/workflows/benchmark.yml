@@ -51,6 +51,8 @@ jobs:
             echo "no trend baseline yet"
           fi
       - name: Run full benchmark
+        env:
+          NODE_OPTIONS: --expose-gc
         run: >-
           node apps/bench-cli/dist/cli.js
           --tier auto --full --samples 100 --save-load-runs 5
