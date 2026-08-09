@@ -20,6 +20,7 @@ import {
   registerNodeCommands,
   registerRegionCommands,
   registerVoxelCommands,
+  registerVolumeCommands,
 } from "@voxel-maker/commands";
 import {
   createSceneAdapter,
@@ -157,6 +158,7 @@ const REGISTER_COMMANDS = [
   registerRegionCommands,
   registerNodeCommands,
   registerMaterialCommands,
+  registerVolumeCommands,
 ] as const;
 
 export function createDesktopComposition(

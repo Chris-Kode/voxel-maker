@@ -302,14 +302,36 @@ export function preflightVoxExport(
           },
         });
       }
-      if (bounds.min[axis] < 0 && choices.rebaseOrigins !== true) {
-        blocked.push({
-          code: VOX_EXPORT_LOSSES.origin,
-          message:
-            "Volume extends below the unsigned VOX origin; choose rebaseOrigins to shift it",
-          severity: "block",
-          context: { volumeId: node.volumeId, axis, min: bounds.min[axis] },
-        });
+    }
+    // The unsigned-cube origin is evaluated in VOX space: after the axis
+    // mapping (x, y, z) = (X, -Z, Y), vox y is non-negative only when the
+    // editor Z extent is non-positive. VOX-space minima:
+    //   voxMinX = bounds.min[0], voxMinY = -bounds.max[2], voxMinZ = bounds.min[1]
+    const voxMin = [
+      bounds.min[0],
+      -bounds.max[2],
+      bounds.min[1],
+    ] as const;
+    for (const axis of [0, 1, 2] as const) {
+      const minimum = voxMin[axis];
+      if (minimum < 0) {
+        if (choices.rebaseOrigins === true) {
+          losses.push({
+            code: VOX_EXPORT_LOSSES.origin,
+            message:
+              "Volume is rebased to the unsigned VOX origin; absolute coordinates are lost",
+            severity: "bake",
+            context: { volumeId: node.volumeId, axis, min: minimum },
+          });
+        } else {
+          blocked.push({
+            code: VOX_EXPORT_LOSSES.origin,
+            message:
+              "Volume extends below the unsigned VOX origin; choose rebaseOrigins to shift it",
+            severity: "block",
+            context: { volumeId: node.volumeId, axis, min: minimum },
+          });
+        }
       }
     }
     for (const coordinate of volume.chunkCoordinates()) {
@@ -520,14 +542,9 @@ export function planVoxExport(
     if (volume === undefined) continue;
     const bounds = volume.occupiedBounds();
     if (bounds === undefined) continue; // empty volumes were reported
-    const rebase: Vec3i =
-      choices.rebaseOrigins === true
-        ? [bounds.min[0], bounds.min[1], bounds.min[2]]
-        : [0, 0, 0];
-    const sizeX = bounds.max[0] - rebase[0];
-    const sizeY = bounds.max[2] - rebase[2];
-    const sizeZ = bounds.max[1] - rebase[1];
-    const voxels: VoxVoxel[] = [];
+    // Map every voxel to VOX space first, then rebase by the VOX-space
+    // minimum so the model always fits the unsigned cube.
+    const mapped: { readonly voxel: VoxVoxel }[] = [];
     for (const coordinate of volume.chunkCoordinates()) {
       const chunk = volume.getChunk(coordinate);
       if (chunk === undefined) continue;
@@ -544,7 +561,6 @@ export function planVoxExport(
           coordinate[1] * 16 + local[1],
           coordinate[2] * 16 + local[2],
         ];
-        // (vox x, vox y, vox z) = (X - minX, -(Z - minZ), Y - minY)
         const colorIndex = materialToIndex.get(material as MaterialId);
         if (colorIndex === undefined) {
           throw new WorkspaceError({
@@ -554,24 +570,54 @@ export function planVoxExport(
             context: { material: String(material) },
           });
         }
-        const mappedY = -(editor[2] - rebase[2]);
-        voxels.push({
-          x: editor[0] - rebase[0],
-          y: Object.is(mappedY, -0) ? 0 : mappedY,
-          z: editor[1] - rebase[1],
-          colorIndex,
+        // (vox x, vox y, vox z) = (X, -Z, Y)
+        const mappedY = -editor[2];
+        mapped.push({
+          voxel: {
+            x: editor[0],
+            y: Object.is(mappedY, -0) ? 0 : mappedY,
+            z: editor[1],
+            colorIndex,
+          },
         });
       }
     }
+    if (mapped.length === 0) continue;
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    for (const item of mapped) {
+      minX = Math.min(minX, item.voxel.x);
+      minY = Math.min(minY, item.voxel.y);
+      minZ = Math.min(minZ, item.voxel.z);
+      maxX = Math.max(maxX, item.voxel.x);
+      maxY = Math.max(maxY, item.voxel.y);
+      maxZ = Math.max(maxZ, item.voxel.z);
+    }
+    // Preflight guarantees non-negative VOX-space bounds unless rebasing;
+    // with no rebase the model keeps its absolute (non-negative) origin.
+    const rebase: Vec3i =
+      choices.rebaseOrigins === true
+        ? [minX, minY, minZ]
+        : [0, 0, 0];
+    const voxels: VoxVoxel[] = mapped.map((item) => ({
+      x: item.voxel.x - rebase[0],
+      y: item.voxel.y - rebase[1],
+      z: item.voxel.z - rebase[2],
+      colorIndex: item.voxel.colorIndex,
+    }));
     voxels.sort(
       (a, b) =>
         a.x - b.x || a.y - b.y || a.z - b.z || a.colorIndex - b.colorIndex,
     );
     models.push({
       name: node.name ?? `Model ${String(models.length + 1)}`,
-      sizeX,
-      sizeY,
-      sizeZ,
+      sizeX: maxX - rebase[0] + 1,
+      sizeY: maxY - rebase[1] + 1,
+      sizeZ: maxZ - rebase[2] + 1,
       voxels,
       materialToIndex,
     });

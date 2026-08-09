@@ -235,8 +235,8 @@ describe("preflightVoxExport", () => {
       {
         volumeId: VOLUME_A,
         entries: [
-          { coordinate: [1, 2, 3], material: 1 },
-          { coordinate: [4, 5, 6], material: 1 },
+          { coordinate: [1, 2, -3], material: 1 },
+          { coordinate: [4, 5, -6], material: 1 },
         ],
       },
     ]);
@@ -321,7 +321,7 @@ describe("preflightVoxExport", () => {
       volumes: [{ volumeId: VOLUME_A }],
     });
     const { handle } = exportHarness(nested, [
-      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, 3], material: 1 }] },
+      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, -3], material: 1 }] },
     ]);
     const blocked = preflightVoxExport(
       nested,
@@ -403,7 +403,7 @@ describe("preflightVoxExport", () => {
       },
     };
     const { handle } = exportHarness(shiny, [
-      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, 3], material: 1 }] },
+      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, -3], material: 1 }] },
     ]);
     const result = preflightVoxExport(
       shiny,
@@ -499,7 +499,6 @@ describe("planVoxExport", () => {
     const preflight = preflightVoxExport(
       document,
       (id) => handle.store.getVolume(id),
-      { rebaseOrigins: true },
     );
     expect(preflight.ok).toBe(true);
     if (!preflight.ok) return;
@@ -507,17 +506,17 @@ describe("planVoxExport", () => {
       document,
       (id) => handle.store.getVolume(id),
       preflight,
-      { rebaseOrigins: true },
     );
     expect(plan.models).toHaveLength(1);
     const model = plan.models[0];
-    // Occupied bounds: min (2, 3, -7), max half-open (6, 7, -3); rebase by min.
-    expect(model?.sizeX).toBe(4);
-    expect(model?.sizeY).toBe(4);
-    expect(model?.sizeZ).toBe(4);
+    // Vox space: (2, 4, 3) and (5, 7, 6). Without rebasing, the model cube
+    // spans from 0: sizes 6 x 8 x 7 with empty space below the voxels.
+    expect(model?.sizeX).toBe(6);
+    expect(model?.sizeY).toBe(8);
+    expect(model?.sizeZ).toBe(7);
     expect(model?.voxels).toEqual([
-      { x: 0, y: -3, z: 0, colorIndex: 1 },
-      { x: 3, y: 0, z: 3, colorIndex: 1 },
+      { x: 2, y: 4, z: 3, colorIndex: 1 },
+      { x: 5, y: 7, z: 6, colorIndex: 1 },
     ]);
     expect(plan.palette[1]).toEqual({ r: 255, g: 0, b: 0, a: 255 });
   });
@@ -546,14 +545,14 @@ describe("planVoxExport", () => {
       { rebaseOrigins: true },
     );
     const model = plan.models[0];
-    // Bounds min (-2, 3, -4); rebase maps (-2,3,-4) -> (0,0,0),
-    // (-1,5,-3) -> (1,2,1); VOX space is (x, -z, y).
+    // Vox space: (-2, 4, 3) and (-1, 3, 5); min (-2, 3, 3); rebase maps
+    // them to (0, 1, 0) and (1, 0, 2); sizes 2 x 2 x 3.
     expect(model?.sizeX).toBe(2);
     expect(model?.sizeY).toBe(2);
     expect(model?.sizeZ).toBe(3);
     expect(model?.voxels).toEqual([
-      { x: 0, y: 0, z: 0, colorIndex: 1 },
-      { x: 1, y: -1, z: 2, colorIndex: 1 },
+      { x: 0, y: 1, z: 0, colorIndex: 1 },
+      { x: 1, y: 0, z: 2, colorIndex: 1 },
     ]);
   });
 
@@ -575,7 +574,7 @@ describe("planVoxExport", () => {
       },
     };
     const { handle } = exportHarness(translucent, [
-      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, 3], material: 1 }] },
+      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, -3], material: 1 }] },
     ]);
     const preflight = preflightVoxExport(
       translucent,
