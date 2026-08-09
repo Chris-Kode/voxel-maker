@@ -61,7 +61,7 @@ when an enforced invariant is not represented.
 | Journal | frame bytes, journal bytes | `packages/storage/src/journal.ts` |
 | Agent session | 16 rounds, 64 tool calls, 1024 commands, 128k tokens, 600 s, $5, 4 MiB output, 12 images, 3 visual iterations | `packages/agent/src/agent/budgets.ts` |
 | Inspection | 64 KiB response, 500 page, 32 hierarchy depth, 4096 ray steps | `packages/agent/src/limits.ts` |
-| Provider stream | request timeout; stream byte cap; per-line cap; per-tool-call argument cap; bounded JSON depth | `packages/agent/src/provider/openai.ts` |
+| Provider stream | request timeout; stream byte cap; per-line cap; per-tool-call argument cap; tool-call count cap; malformed/deep JSON maps to structured errors; schema walker depth cap | `packages/agent/src/provider/openai.ts`, `packages/agent/src/schema.ts` |
 
 ## Hostile-input invariants
 
