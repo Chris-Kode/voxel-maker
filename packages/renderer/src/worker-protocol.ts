@@ -54,6 +54,13 @@ const MAX_PROTOCOL_COORDINATE = 1_048_576;
  * (document ids contain colons), so the tail is bounded but broad. */
 const NAMESPACE_PATTERN = /^live$|^preview:[A-Za-z0-9_:.-]{1,96}$/;
 
+/** True when a value is a valid meshing namespace (live or preview). */
+export function isValidChunkNamespace(
+  value: string,
+): value is ChunkMeshInput["namespace"] {
+  return NAMESPACE_PATTERN.test(value);
+}
+
 /** True when `value` is a finite integer within the protocol bounds. */
 function isBoundedInt(
   value: unknown,
@@ -112,7 +119,7 @@ export function parseMeshingRequestMessage(
   const record = input as Record<string, unknown>;
 
   if (typeof record.namespace !== "string") return undefined;
-  if (!NAMESPACE_PATTERN.test(record.namespace)) return undefined;
+  if (!isValidChunkNamespace(record.namespace)) return undefined;
   if (typeof record.volumeId !== "string" || record.volumeId.length === 0) {
     return undefined;
   }
@@ -161,7 +168,7 @@ export function parseMeshingRequestMessage(
     kind: "meshing-request",
     requestId: message.requestId,
     input: {
-      namespace: record.namespace as ChunkMeshInput["namespace"],
+      namespace: record.namespace,
       volumeId: record.volumeId as VolumeId,
       coordinate: [coordinateX, coordinateY, coordinateZ],
       revision: record.revision,

@@ -42,6 +42,7 @@ export {
   type ChunkSchedulerOptions,
 } from "./chunk-scheduler.js";
 export {
+  isValidChunkNamespace,
   meshingKey,
   meshingRequestTransfer,
   meshingResultTransfer,

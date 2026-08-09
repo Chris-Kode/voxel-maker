@@ -29,6 +29,7 @@ import {
   type MeshingWorkerLike,
 } from "./meshing-executors.js";
 import { nodeWorldMatrices } from "./pick.js";
+import { isValidChunkNamespace } from "./worker-protocol.js";
 import type {
   ChunkMeshInput,
   ChunkMeshOutput,
@@ -706,11 +707,7 @@ class ChunkProjection {
 
 /** True when a namespace is a valid `preview:<session>` namespace. */
 function isPreviewNamespace(namespace: ChunkNamespace): boolean {
-  return (
-    namespace.startsWith("preview:") &&
-    namespace.length > "preview:".length &&
-    namespace.length <= 128
-  );
+  return isValidChunkNamespace(namespace) && namespace !== "live";
 }
 
 class SceneAdapterImpl implements SceneAdapter {
