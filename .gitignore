@@ -78,3 +78,7 @@ Desktop.ini
 # Local application diagnostics
 crash-dumps/
 diagnostics/
+
+# Local benchmark reports and trend history (CI retains its own copy).
+benchmarks/out/
+benchmarks/trends.json

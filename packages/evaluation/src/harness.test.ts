@@ -52,6 +52,13 @@ describe("fixed geometry evaluation: golden scenarios", () => {
       expect(result.run.stagedCommands).toBe(scenario.goldenCommands);
       expect(result.run.rounds).toBe(scenario.goldenRounds);
       expect(result.run.toolCalls).toBe(scenario.goldenToolCalls);
+      // Ticket #45 AC: evaluations track commands, modified voxels,
+      // output size, virtual time, and estimated cost.
+      expect(result.run.appliedCommands).toBeGreaterThan(0);
+      expect(result.run.modifiedVoxels).toBeGreaterThan(0);
+      expect(result.run.outputBytes).toBeGreaterThan(0);
+      expect(result.run.durationMs).toBeGreaterThanOrEqual(0);
+      expect(result.run.costUsd).toBeGreaterThanOrEqual(0);
       expect(result.scores.taskCompletion.score).toBe(1);
       expect(result.scores.taskCompletion.failures).toEqual([]);
       expect(result.scores.unrelatedChanges.score).toBe(1);
@@ -316,6 +323,11 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
       result.integrity.revisionBefore,
     );
     expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
+    // Failed runs track zero commands/voxels/output and no spend.
+    expect(result.run.appliedCommands).toBe(0);
+    expect(result.run.modifiedVoxels).toBe(0);
+    expect(result.run.outputBytes).toBeGreaterThan(0);
+    expect(result.run.costUsd).toBe(0);
     const report = evaluatePromotion([result]);
     expect(report.promotable).toBe(false);
     expect(
@@ -346,6 +358,11 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
       result.integrity.revisionBefore,
     );
     expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
+    // Failed runs track zero commands/voxels/output and no spend.
+    expect(result.run.appliedCommands).toBe(0);
+    expect(result.run.modifiedVoxels).toBe(0);
+    expect(result.run.outputBytes).toBeGreaterThan(0);
+    expect(result.run.costUsd).toBe(0);
     const report = evaluatePromotion([result]);
     expect(report.promotable).toBe(false);
     expect(report.blocks.some((block) => block.includes("over-budget"))).toBe(
@@ -436,11 +453,46 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
       result.integrity.revisionBefore,
     );
     expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
+    // Failed runs track zero commands/voxels/output and no spend.
+    expect(result.run.appliedCommands).toBe(0);
+    expect(result.run.modifiedVoxels).toBe(0);
+    expect(result.run.outputBytes).toBeGreaterThan(0);
+    expect(result.run.costUsd).toBe(0);
     const report = evaluatePromotion([result]);
     expect(report.promotable).toBe(false);
     expect(report.blocks.some((block) => block.includes("not applied"))).toBe(
       true,
     );
+  });
+
+  it("tracks virtual time and estimated cost through the real pricing path", async () => {
+    // A scripted run with priced usage and simulated latency: the run
+    // report must carry the deterministic cost (1M input @ $1 + 1M
+    // output @ $2 per the eval model price) and the virtual duration.
+    // Stay inside the default agent budgets (maxTokens 128k,
+    // maxEstimatedCostUsd 5): 60k input @ $1/M + 40k output @ $2/M.
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "planning",
+        usage: { inputTokens: 60_000, outputTokens: 40_000 },
+        delayMs: 10,
+      },
+      {
+        text: "approved",
+        usage: { inputTokens: 30_000, outputTokens: 10_000 },
+        delayMs: 20,
+      },
+    ];
+    const result = await evaluateScenario({
+      scenarioId: "chair-create",
+      script,
+    });
+    expect(result.run.ok).toBe(true);
+    // One text-only round walks to approve, consuming the first step:
+    // 60k input @ $1/M + 40k output @ $2/M = $0.14, 10 ms virtual time.
+    expect(result.run.costUsd).toBe(0.14);
+    expect(result.run.durationMs).toBe(10);
+    expect(result.run.outputBytes).toBeGreaterThan(0);
   });
 
   it("bounds prompt-injection metadata in tool arguments", async () => {

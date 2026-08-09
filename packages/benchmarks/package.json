@@ -1,0 +1,43 @@
+{
+  "name": "@voxel-maker/benchmarks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node ../../scripts/clean.mjs dist",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@voxel-maker/agent": "workspace:*",
+    "@voxel-maker/animation": "workspace:*",
+    "@voxel-maker/commands": "workspace:*",
+    "@voxel-maker/document": "workspace:*",
+    "@voxel-maker/evaluation": "workspace:*",
+    "@voxel-maker/formats": "workspace:*",
+    "@voxel-maker/interchange": "workspace:*",
+    "@voxel-maker/math": "workspace:*",
+    "@voxel-maker/model": "workspace:*",
+    "@voxel-maker/renderer": "workspace:*",
+    "@voxel-maker/session": "workspace:*",
+    "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/storage": "workspace:*",
+    "@voxel-maker/voxel": "workspace:*"
+  }
+}

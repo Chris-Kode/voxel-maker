@@ -54,8 +54,20 @@ export const OPENAI_MODEL_PRICES: Readonly<Record<string, ModelPrice>> =
     }),
   });
 
+/**
+ * Price of the deterministic suite provider (ticket #45 AC): a fixed
+ * QA/eval price so recorded evaluation runs report a deterministic
+ * estimated cost through the real pricing path. It is policy, not a
+ * vendor price, and never appears in the OpenAI allowlist.
+ */
+export const DETERMINISTIC_MODEL_PRICE: ModelPrice = Object.freeze({
+  inputPerMillionUsd: 1,
+  outputPerMillionUsd: 2,
+});
+
 /** Price table lookup; undefined for unknown models. */
 export function priceForModel(model: string): ModelPrice | undefined {
+  if (model === "deterministic-model") return DETERMINISTIC_MODEL_PRICE;
   return OPENAI_MODEL_PRICES[model];
 }
 

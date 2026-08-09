@@ -77,6 +77,29 @@ Every dimension is a 0..1 score plus the evidence that produced it:
    standard views reframe to changed content bounds), and requested-color
    presence (red pixels for the red-seat scenario).
 
+## Tracked run metrics (ticket #45 AC)
+
+Every `RunReport` records the complete cost/scale evidence of one
+evaluation run, so AI evaluations track rounds, tool calls, commands,
+modified voxels, output size, time, and estimated cost:
+
+| Metric | Source | Notes |
+|---|---|---|
+| `rounds`, `toolCalls` | agent loop counters | exact counts of the recorded run |
+| `stagedCommands` | staged proposal | commands the proposal reserves |
+| `appliedCommands` | applied transaction event | commands actually committed by Apply |
+| `voxelEstimate` | preview reservation | proposed voxel changes reserved |
+| `modifiedVoxels` | before/after diff | effective voxels changed by the applied proposal |
+| `outputBytes` | canonical output document JSON | byte size of the applied document |
+| `durationMs` | virtual clock | simulated provider latency, deterministic |
+| `usage` | provider usage | input/output/cached tokens |
+| `costUsd` | `estimateCostUsd` | deterministic eval-model price ($1/M input, $2/M output; `DETERMINISTIC_MODEL_PRICE`) |
+
+The eval-model price is policy, not a vendor price: it gives the
+deterministic suite a real, stable estimated-cost path through the same
+pricing function the live adapters use, so cost tracking is exercised on
+every PR run.
+
 ## Version recording (plan S12.2)
 
 Every result records: evaluation suite version, provider id/version/model
