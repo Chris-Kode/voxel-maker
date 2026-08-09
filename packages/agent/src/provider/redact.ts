@@ -1,4 +1,4 @@
-import type { JsonValue } from "@voxel-maker/shared";
+import { WorkspaceError, type JsonValue } from "@voxel-maker/shared";
 
 /**
  * Deterministic redaction for logs, transcripts, and diagnostics (plan
@@ -58,22 +58,41 @@ export function redactDiagnostics(value: string): string {
  * explicit secret values; leaves the structure intact. Used by the
  * transcript and diagnostics exporters.
  */
+/**
+ * Hard nesting cap for redaction (issue #44): provider payloads and tool
+ * results are untrusted, so a pathologically nested value must fail
+ * structured instead of overflowing the stack. 256 levels is far above any
+ * legitimate transcript/diagnostic entry.
+ */
+export const REDACT_MAX_DEPTH = 256;
+
+const redactDepthError = (): WorkspaceError =>
+  new WorkspaceError({
+    family: "limit",
+    code: "LIMIT_EXCEEDED",
+    message: `Value exceeds the maximum nesting depth of ${String(REDACT_MAX_DEPTH)}`,
+  });
+
 export function redactJson(
   value: JsonValue,
   secrets: readonly string[] = [],
+  depth = 0,
 ): JsonValue {
+  if (depth > REDACT_MAX_DEPTH) throw redactDepthError();
   if (typeof value === "string") {
     return redactSecrets(redactDiagnostics(value), secrets);
   }
   if (Array.isArray(value)) {
     return Object.freeze(
-      (value as readonly JsonValue[]).map((item) => redactJson(item, secrets)),
+      (value as readonly JsonValue[]).map((item) =>
+        redactJson(item, secrets, depth + 1),
+      ),
     );
   }
   if (value !== null && typeof value === "object") {
     const out: Record<string, JsonValue> = {};
     for (const [key, item] of Object.entries(value)) {
-      out[key] = redactJson(item, secrets);
+      out[key] = redactJson(item, secrets, depth + 1);
     }
     return Object.freeze(out);
   }
@@ -96,11 +115,15 @@ const PROTECTED_KEYS = new Set([
  * plus known secret patterns inside strings. Suitable for provider
  * payloads and diagnostics where keys may vary.
  */
-export function redactProviderPayload(value: JsonValue): JsonValue {
+export function redactProviderPayload(
+  value: JsonValue,
+  depth = 0,
+): JsonValue {
+  if (depth > REDACT_MAX_DEPTH) throw redactDepthError();
   if (Array.isArray(value)) {
     return Object.freeze(
       (value as readonly JsonValue[]).map((item) =>
-        redactProviderPayload(item),
+        redactProviderPayload(item, depth + 1),
       ),
     );
   }
@@ -110,7 +133,7 @@ export function redactProviderPayload(value: JsonValue): JsonValue {
       if (PROTECTED_KEYS.has(key.toLowerCase())) {
         out[key] = REDACTION_MARKER;
       } else {
-        out[key] = redactProviderPayload(item);
+        out[key] = redactProviderPayload(item, depth + 1);
       }
     }
     return Object.freeze(out);

@@ -66,10 +66,11 @@ function matchesOneOf(
   value: unknown,
   path: readonly (string | number)[],
   errors: SchemaError[],
+  depth: number,
 ): boolean {
   for (const alternative of schema.anyOf ?? []) {
     const alternativeErrors: SchemaError[] = [];
-    validateValue(alternative, value, path, alternativeErrors);
+    validateValue(alternative, value, path, alternativeErrors, depth + 1);
     if (alternativeErrors.length === 0) return true;
   }
   errors.push(
@@ -87,15 +88,30 @@ function matchesOneOf(
  * value is valid. `value` is never mutated and nothing is allocated beyond
  * the error list; validation is deterministic and side-effect free.
  */
+/**
+ * Hard nesting cap for schema validation (issue #44): tool arguments are
+ * untrusted provider output, so a pathologically nested value must fail
+ * validation instead of overflowing the stack. 64 levels is far above any
+ * v1 tool contract.
+ */
+export const SCHEMA_MAX_DEPTH = 64;
+
 export function validateValue(
   schema: JsonSchema,
   value: unknown,
   path: readonly (string | number)[] = [],
   errors: SchemaError[] = [],
+  depth = 0,
 ): boolean {
+  if (depth > SCHEMA_MAX_DEPTH) {
+    errors.push(
+      errorAt(path, `value exceeds the maximum nesting depth of ${String(SCHEMA_MAX_DEPTH)}`),
+    );
+    return false;
+  }
   const type = schema.type;
   if (type === undefined && schema.anyOf !== undefined) {
-    return matchesOneOf(schema, value, path, errors);
+    return matchesOneOf(schema, value, path, errors, depth);
   }
   const valueType =
     value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
@@ -160,7 +176,7 @@ export function validateValue(
     }
     if (schema.items !== undefined) {
       for (let index = 0; index < value.length; index += 1) {
-        validateValue(schema.items, value[index], [...path, index], errors);
+        validateValue(schema.items, value[index], [...path, index], errors, depth + 1);
       }
     }
   }
@@ -181,7 +197,7 @@ export function validateValue(
       }
       const propertySchema = schema.properties?.[key];
       if (propertySchema !== undefined) {
-        validateValue(propertySchema, record[key], [...path, key], errors);
+        validateValue(propertySchema, record[key], [...path, key], errors, depth + 1);
       }
     }
   }
