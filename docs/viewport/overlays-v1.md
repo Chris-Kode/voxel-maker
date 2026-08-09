@@ -18,7 +18,7 @@ of persistent state.
 | --- | --- | --- | --- |
 | Grid | XZ ground plane at world `y = 0`, one line per voxel unit (100 × 100 units) | visible | depth-tested, `depthWrite = false`, `renderOrder = 1` (draws after opaque voxel geometry, never pollutes the depth buffer) |
 | Axes | `+X` red, `+Y` green, `+Z` blue lines from the world origin, fixed length 10 | visible | `depthTest = false`, `depthWrite = false`, `renderOrder = 3` (always on top) |
-| Bounds | Content bounds wire box (cyan) plus selection bounds wire box (yellow) around the world AABB of occupied voxels | visible when a document is open and content/selection exists | depth-tested, `depthWrite = false`, `renderOrder = 2` |
+| Bounds | Content bounds wire box (cyan), selection bounds wire box (yellow), region-select draft box (orange), and transform-preview destination boxes (magenta, one per exact affected region, ticket #19) around the world AABBs of occupied voxels / affected bounds | visible when a document is open and content/selection/preview exists | depth-tested, `depthWrite = false`, `renderOrder = 2` |
 | Pivots | Orange cross marker at every selected node's world-space transform pivot (`transform.pivot` transformed by the node world matrix) | visible when a selection exists | `depthTest = false`, `depthWrite = false`, `renderOrder = 3` (always on top) |
 
 ## Visibility policy

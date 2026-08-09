@@ -10,6 +10,8 @@ import type {
   SelectionEntry,
   SelectionMode,
   ToolDraft,
+  TransformMode,
+  TransformPreview,
 } from "./types.js";
 
 /**
@@ -19,7 +21,8 @@ import type {
  * persisted or authoritative; the document store and command bus own
  * semantic state. Ticket #15 ships the store, ticket #17 adds the
  * pencil/erase tool state, ticket #18 adds node/voxel/region selection,
- * the selection mode, and the region-select preview.
+ * the selection mode, and the region-select preview, ticket #19 adds the
+ * transform tool mode and the transform preview.
  */
 
 export interface EditorNotice {
@@ -32,6 +35,14 @@ export interface EditorStore {
   readonly activeTool: EditorToolId;
   /** Select-tool granularity (plan S7.2/S7.4). */
   readonly selectionMode: SelectionMode;
+  /** Transform-tool operation mode (plan S7.19, ticket #19). */
+  readonly transformMode: TransformMode;
+  /**
+   * Exact transform preview (plan S7.19, ticket #19): live during a
+   * move/copy drag, pending-apply for rotate/mirror/delete. Runtime-only,
+   * never persisted; undefined outside a transform operation.
+   */
+  readonly transformPreview: TransformPreview | undefined;
   /** Runtime-only active paint material; undefined when none is usable. */
   readonly activeMaterial: MaterialId | undefined;
   /** Transient in-progress gesture preview; undefined outside a gesture. */
@@ -46,6 +57,8 @@ export interface EditorStore {
   readonly notices: readonly EditorNotice[];
   setActiveTool(tool: EditorToolId): void;
   setSelectionMode(mode: SelectionMode): void;
+  setTransformMode(mode: TransformMode): void;
+  setTransformPreview(preview: TransformPreview | undefined): void;
   setActiveMaterial(material: MaterialId | undefined): void;
   setDraft(draft: ToolDraft | undefined): void;
   setRegionDraft(draft: RegionDraft | undefined): void;
@@ -60,6 +73,8 @@ export interface EditorStore {
 export interface EditorStoreSnapshot {
   readonly activeTool: EditorToolId;
   readonly selectionMode: SelectionMode;
+  readonly transformMode: TransformMode;
+  readonly transformPreview: TransformPreview | undefined;
   readonly activeMaterial: MaterialId | undefined;
   readonly draft: ToolDraft | undefined;
   readonly regionDraft: RegionDraft | undefined;
@@ -71,6 +86,8 @@ export interface EditorStoreSnapshot {
 export function createEditorStore(): EditorStore {
   let activeTool: EditorToolId = "select";
   let selectionMode: SelectionMode = "node";
+  let transformMode: TransformMode = "move";
+  let transformPreview: TransformPreview | undefined;
   let activeMaterial: MaterialId | undefined;
   let draft: ToolDraft | undefined;
   let regionDraft: RegionDraft | undefined;
@@ -89,6 +106,12 @@ export function createEditorStore(): EditorStore {
     },
     get selectionMode() {
       return selectionMode;
+    },
+    get transformMode() {
+      return transformMode;
+    },
+    get transformPreview() {
+      return transformPreview;
     },
     get activeMaterial() {
       return activeMaterial;
@@ -111,6 +134,14 @@ export function createEditorStore(): EditorStore {
     },
     setSelectionMode(mode) {
       selectionMode = mode;
+      notify();
+    },
+    setTransformMode(mode) {
+      transformMode = mode;
+      notify();
+    },
+    setTransformPreview(preview) {
+      transformPreview = preview;
       notify();
     },
     setActiveMaterial(material) {
@@ -153,6 +184,8 @@ export function snapshotEditorStore(store: EditorStore): EditorStoreSnapshot {
   return {
     activeTool: store.activeTool,
     selectionMode: store.selectionMode,
+    transformMode: store.transformMode,
+    transformPreview: store.transformPreview,
     activeMaterial: store.activeMaterial,
     draft: store.draft,
     regionDraft: store.regionDraft,

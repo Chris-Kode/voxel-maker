@@ -128,6 +128,7 @@ export function createDesktopComposition(
     editor.setSelection([]);
     editor.clearNotices();
     editor.setDraft(undefined);
+    editor.setTransformPreview(undefined);
     unsubscribeStore?.();
     unsubscribeStore = undefined;
     if (

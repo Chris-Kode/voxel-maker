@@ -6,6 +6,7 @@ import {
   volumeLocalWorldBounds,
   type RegionDraft,
   type SelectionEntry,
+  type TransformPreview,
 } from "@voxel-maker/editor";
 import {
   nodeWorldMatrices,
@@ -59,13 +60,16 @@ export interface OverlayManager {
   toggle(key: OverlayKey): boolean;
   /**
    * Rebuilds the document-dependent overlays from the current store, the
-   * mixed selection (node/voxel/region entries), and the in-progress
-   * region-select draft. Pass `undefined` when no document is open.
+   * mixed selection (node/voxel/region entries), the in-progress
+   * region-select draft, and the transform preview (plan S7.19, ticket
+   * #19: exact per-entry destination bounds of the pending operation).
+   * Pass `undefined` when no document is open.
    */
   update(
     store: DocumentStoreRead | undefined,
     selection: readonly SelectionEntry[],
     regionDraft?: RegionDraft,
+    transformPreview?: TransformPreview,
   ): void;
   /** Removes every overlay object from the scene and releases resources. */
   dispose(): void;
@@ -77,6 +81,9 @@ interface BoxProjection {
   readonly bounds: WorldBounds;
 }
 
+/** Distinct overlay color for the transform destination preview. */
+const TRANSFORM_PREVIEW_COLOR = 0xff2d55;
+
 class OverlayManagerImpl implements OverlayManager {
   readonly #grid: THREE.GridHelper;
   readonly #axes: THREE.Group;
@@ -85,6 +92,8 @@ class OverlayManagerImpl implements OverlayManager {
   #contentBox: BoxProjection | undefined;
   #selectionBox: BoxProjection | undefined;
   #regionDraftBox: BoxProjection | undefined;
+  #transformPreviewBoxes: BoxProjection[] = [];
+  #transformPreviewSignature: string | undefined;
   #visibility: OverlayVisibility = { ...DEFAULT_OVERLAY_VISIBILITY };
 
   constructor(scene: THREE.Scene) {
@@ -145,8 +154,9 @@ class OverlayManagerImpl implements OverlayManager {
     store: DocumentStoreRead | undefined,
     selection: readonly SelectionEntry[],
     regionDraft?: RegionDraft,
+    transformPreview?: TransformPreview,
   ): void {
-    this.#rebuildBounds(store, selection, regionDraft);
+    this.#rebuildBounds(store, selection, regionDraft, transformPreview);
     this.#rebuildPivots(store, selection);
   }
 
@@ -164,7 +174,8 @@ class OverlayManagerImpl implements OverlayManager {
       this.#visibility.bounds &&
       (this.#contentBox !== undefined ||
         this.#selectionBox !== undefined ||
-        this.#regionDraftBox !== undefined);
+        this.#regionDraftBox !== undefined ||
+        this.#transformPreviewBoxes.length > 0);
     this.#pivotsGroup.visible =
       this.#visibility.pivots && this.#pivotsGroup.children.length > 0;
   }
@@ -210,6 +221,7 @@ class OverlayManagerImpl implements OverlayManager {
     store: DocumentStoreRead | undefined,
     selection: readonly SelectionEntry[],
     regionDraft?: RegionDraft,
+    transformPreview?: TransformPreview,
   ): void {
     const nextContent =
       store === undefined ? undefined : worldContentBounds(store);
@@ -262,6 +274,50 @@ class OverlayManagerImpl implements OverlayManager {
       // exists only while the drag is in progress.
       this.#regionDraftBox = this.#createBox(nextRegionDraft, 0xff9f0a, 0.9);
       this.#boundsGroup.add(this.#regionDraftBox.object);
+    }
+    this.#rebuildTransformPreviewBoxes(store, transformPreview);
+    this.applyVisibility();
+  }
+
+  /**
+   * Projects the exact per-entry destination bounds of the transform
+   * preview (plan S7.19, ticket #19) as magenta wireframe boxes. The
+   * boxes are rebuilt only when the preview signature changes; like every
+   * other overlay they are runtime projections and never persist.
+   */
+  #rebuildTransformPreviewBoxes(
+    store: DocumentStoreRead | undefined,
+    transformPreview: TransformPreview | undefined,
+  ): void {
+    const signature =
+      store === undefined || transformPreview === undefined
+        ? undefined
+        : `${String(store.revision)}|${transformPreview.entries
+            .map(
+              (entry) =>
+                `${String(entry.volumeId)}:${String(entry.destination.min[0])},${String(entry.destination.min[1])},${String(entry.destination.min[2])}..${String(entry.destination.max[0])},${String(entry.destination.max[1])},${String(entry.destination.max[2])}`,
+            )
+            .join("|")}`;
+    if (signature === this.#transformPreviewSignature) return;
+    this.#transformPreviewSignature = signature;
+    for (const box of this.#transformPreviewBoxes) {
+      this.#disposeBox(box);
+    }
+    this.#transformPreviewBoxes = [];
+    if (transformPreview === undefined || store === undefined) {
+      this.applyVisibility();
+      return;
+    }
+    for (const entry of transformPreview.entries) {
+      const world = volumeLocalWorldBounds(
+        store,
+        entry.volumeId,
+        entry.destination,
+      );
+      if (world === undefined) continue;
+      const box = this.#createBox(world, TRANSFORM_PREVIEW_COLOR, 0.95);
+      this.#transformPreviewBoxes.push(box);
+      this.#boundsGroup.add(box.object);
     }
     this.applyVisibility();
   }

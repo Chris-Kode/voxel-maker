@@ -10,10 +10,10 @@ import type { DesktopComposition } from "../composition.js";
 
 /**
  * Three.js viewport (plan S6.1/S6.10-S6.13 ticket #16, S7.3-S7.7/S7.19
- * tickets #17/#18): owns the WebGL renderer and forwards pointer/keyboard
- * input to the composition's viewport controller. All camera, picking,
- * overlay, and tool behavior lives in the controller and its pure
- * modules; this component only binds DOM events and renders.
+ * tickets #17/#18/#19): owns the WebGL renderer and forwards
+ * pointer/keyboard input to the composition's viewport controller. All
+ * camera, picking, overlay, and tool behavior lives in the controller and
+ * its pure modules; this component only binds DOM events and renders.
  *
  * Gestures: with the select tool, left-drag orbits (node/voxel modes) or
  * rubber-bands a region (region mode); right/middle-drag pans; wheel
@@ -22,12 +22,16 @@ import type { DesktopComposition } from "../composition.js";
  * clears it. With the pencil/erase/paint/box/sphere/cylinder tools, a
  * primary-button gesture becomes a stroke or a shape drag: down starts
  * it, moves update the transient preview, up commits one labeled history
- * entry, and a lost pointer cancels it. The eyedropper samples the
- * material under a click. Keys: 1-6 standard views, F focus, P
- * perspective/orthographic toggle, G/X/B/K overlay toggles, Escape clears
- * the selection. See docs/viewport/overlays-v1.md,
- * docs/editor/stroke-tools-v1.md, and
- * docs/editor/selection-and-shape-tools-v1.md.
+ * entry, and a lost pointer cancels it. With the transform tool, a
+ * move/copy drag previews the exact destination bounds and commits one
+ * labeled transaction; rotate/mirror/delete are button-driven
+ * preview-and-apply flows. The eyedropper samples the material under a
+ * click. Keys: 1-6 standard views, F focus, P perspective/orthographic
+ * toggle, G/X/B/K overlay toggles, Escape cancels a gesture or a pending
+ * transform preview before clearing the selection. See
+ * docs/viewport/overlays-v1.md, docs/editor/stroke-tools-v1.md,
+ * docs/editor/selection-and-shape-tools-v1.md, and
+ * docs/editor/transform-tools-v1.md.
  */
 export function Viewport({
   composition,
@@ -249,10 +253,14 @@ export function Viewport({
           controller.toggleOverlay("pivots");
           break;
         case "Escape":
-          // Cancel any in-progress gesture (region drag, stroke, shape)
-          // before clearing, so a late pointer-up cannot commit it.
+          // Cancel any in-progress gesture (region drag, stroke, shape,
+          // transform drag) first; then cancel a pending transform
+          // preview (rotate/mirror/delete) without touching the
+          // selection; only a bare Escape clears the selection.
           if (controller.toolActive) controller.toolPointerCancel();
-          controller.clearSelection();
+          else if (controller.transformApplyPending)
+            controller.transformCancel();
+          else controller.clearSelection();
           break;
         default:
           handled = false;
@@ -294,8 +302,9 @@ export function Viewport({
       <div className="viewport-hint" aria-hidden="true">
         Select: left-drag orbit · right-drag pan · wheel zoom · click select
         (Shift add · Ctrl toggle · Esc clear) · Pencil/Erase/Paint: drag to
-        stroke · Box/Sphere/Cylinder: drag a shape · Eyedropper: sample · 1-6
-        views · F focus · P mode · G/X/B/K overlays
+        stroke · Box/Sphere/Cylinder: drag a shape · Transform: drag to move/
+        copy, preview rotate/mirror/delete · Eyedropper: sample · 1-6 views · F
+        focus · P mode · G/X/B/K overlays
       </div>
     </div>
   );

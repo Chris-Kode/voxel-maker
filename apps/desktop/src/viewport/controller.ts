@@ -12,6 +12,7 @@ import {
   createSelectTool,
   createShapeTool,
   createStrokeTool,
+  createTransformTool,
   pruneSelection,
   selectionWorldBounds,
   type EditorStore,
@@ -20,9 +21,10 @@ import {
   type ToolActionResult,
   type ToolHost,
   type ToolModifiers,
+  type TransformTool,
 } from "@voxel-maker/editor";
 import type { DocumentSession } from "@voxel-maker/session";
-import { MAX_VOXELS_PER_OPERATION } from "@voxel-maker/voxel";
+import { MAX_VOXELS_PER_OPERATION, type ShapeAxis } from "@voxel-maker/voxel";
 import {
   pickScene,
   worldContentBounds,
@@ -42,17 +44,18 @@ import {
 
 /**
  * Viewport controller (plan S6.10-S6.13 ticket #16, S7.3-S7.7/S7.19
- * tickets #17/#18): the desktop seam between the DOM viewport and the
+ * tickets #17/#18/#19): the desktop seam between the DOM viewport and the
  * pure camera/picking/overlay modules plus the headless editor tools
- * (select, pencil, erase, paint, eyedropper, box, sphere, cylinder).
- * The controller owns the camera rig, the overlay manager, and one tool
- * instance per tool id; it follows the document lifecycle and editor
- * selection and converts pointer/NDC input into deterministic picks over
- * the authoritative store. It never mutates semantic state: clicks update
- * runtime `EditorStore` selection, gestures commit exactly one labeled
- * transaction through the session's command bus, and selection
+ * (select, pencil, erase, paint, eyedropper, box, sphere, cylinder,
+ * transform). The controller owns the camera rig, the overlay manager,
+ * and one tool instance per tool id; it follows the document lifecycle
+ * and editor selection and converts pointer/NDC input into deterministic
+ * picks over the authoritative store. It never mutates semantic state:
+ * clicks update runtime `EditorStore` selection, gestures commit exactly
+ * one labeled transaction through the session's command bus, selection
  * references to deleted nodes/volumes are pruned on every committed
- * document event.
+ * document event, and the transform tool previews exact affected bounds
+ * and collision behavior before every commit (ticket #19).
  */
 
 export interface ViewportControllerOptions {
@@ -112,6 +115,25 @@ export interface ViewportController {
   toolPointerUp(): ToolActionResult;
   /** Cancels the active gesture; semantic state is untouched. */
   toolPointerCancel(): void;
+  /**
+   * Transform tool (plan S7.19, ticket #19): previews the next exact
+   * 90-degree rotation step around `axis` (button-driven; nothing
+   * commits until `transformApply`).
+   */
+  transformPreviewRotate(axis: ShapeAxis): ToolActionResult;
+  /** Previews mirroring the selection across the plane perpendicular to `axis`. */
+  transformPreviewMirror(axis: ShapeAxis): ToolActionResult;
+  /** Previews deleting the selected geometry. */
+  transformPreviewDelete(): ToolActionResult;
+  /**
+   * Applies the pending rotate/mirror/delete preview as one labeled,
+   * atomic, undoable transaction. A no-op when nothing is pending.
+   */
+  transformApply(): ToolActionResult;
+  /** Cancels the pending transform preview; zero side effects. */
+  transformCancel(): void;
+  /** True while a rotate/mirror/delete preview awaits apply or cancel. */
+  readonly transformApplyPending: boolean;
   /** Pushes the camera state onto the active camera (idempotent). */
   applyCamera(): void;
   dispose(): void;
@@ -130,6 +152,7 @@ class ViewportControllerImpl implements ViewportController {
   readonly #box: ReturnType<typeof createShapeTool>;
   readonly #sphere: ReturnType<typeof createShapeTool>;
   readonly #cylinder: ReturnType<typeof createShapeTool>;
+  readonly #transform: TransformTool;
   #unsubscribeSession: () => void;
   #unsubscribeEditor: () => void;
   #unsubscribeStore: (() => void) | undefined;
@@ -175,6 +198,7 @@ class ViewportControllerImpl implements ViewportController {
       host,
       editor: this.#editor,
     });
+    this.#transform = createTransformTool({ host, editor: this.#editor });
 
     this.#unsubscribeEditor = this.#editor.subscribe(() => {
       this.#refreshOverlays();
@@ -205,6 +229,7 @@ class ViewportControllerImpl implements ViewportController {
       this.#box.reset();
       this.#sphere.reset();
       this.#cylinder.reset();
+      this.#transform.reset();
       this.#gestureTool = undefined;
     });
   }
@@ -361,6 +386,35 @@ class ViewportControllerImpl implements ViewportController {
     if (tool !== undefined) tool.pointerCancel();
   }
 
+  transformPreviewRotate(axis: ShapeAxis): ToolActionResult {
+    return this.#report(this.#transform.previewRotate(axis));
+  }
+
+  transformPreviewMirror(axis: ShapeAxis): ToolActionResult {
+    return this.#report(this.#transform.previewMirror(axis));
+  }
+
+  transformPreviewDelete(): ToolActionResult {
+    return this.#report(this.#transform.previewDelete());
+  }
+
+  transformApply(): ToolActionResult {
+    return this.#report(this.#transform.applyPending());
+  }
+
+  transformCancel(): void {
+    this.#transform.cancelPending();
+  }
+
+  get transformApplyPending(): boolean {
+    const preview = this.#editor.transformPreview;
+    return (
+      preview !== undefined &&
+      preview.operation !== "move" &&
+      preview.operation !== "copy"
+    );
+  }
+
   applyCamera(): void {
     this.#rig.apply();
   }
@@ -378,6 +432,7 @@ class ViewportControllerImpl implements ViewportController {
     this.#box.reset();
     this.#sphere.reset();
     this.#cylinder.reset();
+    this.#transform.reset();
     this.#gestureTool = undefined;
     this.#overlays.dispose();
     this.#rig.dispose();
@@ -422,6 +477,8 @@ class ViewportControllerImpl implements ViewportController {
         return this.#sphere;
       case "cylinder":
         return this.#cylinder;
+      case "transform":
+        return this.#transform;
     }
   }
 
@@ -494,6 +551,7 @@ class ViewportControllerImpl implements ViewportController {
       this.#session.current?.store,
       this.#editor.selection,
       this.#editor.regionDraft,
+      this.#editor.transformPreview,
     );
   }
 

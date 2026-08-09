@@ -331,7 +331,8 @@ body {
 }
 
 .toolbar .tools button.active,
-.toolbar .selection-modes button.active {
+.toolbar .selection-modes button.active,
+.toolbar .transform-modes button.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
@@ -346,4 +347,47 @@ body {
 .toolbar .selection-modes button {
   padding: 6px 10px;
   font-size: 12px;
+}
+
+.toolbar .transform-modes {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+  align-items: center;
+}
+
+.toolbar .transform-modes button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.toolbar .transform-axes {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.toolbar .transform-axes button {
+  padding: 6px 8px;
+  font-size: 12px;
+  min-width: 30px;
+}
+
+.toolbar .transform-pending {
+  display: flex;
+  gap: 6px;
+  margin-left: 8px;
+  align-items: center;
+}
+
+.toolbar .transform-summary {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.toolbar .transform-pending button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }

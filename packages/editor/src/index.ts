@@ -42,6 +42,14 @@ export {
   type ShapeToolOptions,
 } from "./shape-tool.js";
 export {
+  createTransformTool,
+  selectionRegions,
+  type SelectionRegion,
+  type TransformParams,
+  type TransformTool,
+  type TransformToolOptions,
+} from "./transform-tool.js";
+export {
   addSelectionEntry,
   applySelectionIntent,
   pruneSelection,
@@ -64,4 +72,7 @@ export {
   type ToolHost,
   type ToolModifiers,
   type ToolPick,
+  type TransformEntryPreview,
+  type TransformMode,
+  type TransformPreview,
 } from "./types.js";

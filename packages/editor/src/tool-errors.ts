@@ -28,3 +28,54 @@ export const missingActiveMaterial = (material: MaterialId): WorkspaceError =>
     message: "The active material no longer exists",
     context: { materialId: material },
   });
+
+/** Region-domain failure shared with the region-command code. */
+export const outOfBoundsError = (
+  volumeId: string,
+  region: { readonly min: readonly number[]; readonly max: readonly number[] },
+  name: string,
+): WorkspaceError =>
+  new WorkspaceError({
+    family: "limit",
+    code: "REGION_OUT_OF_BOUNDS",
+    message: `${name} region exceeds the volume coordinate domain`,
+    context: {
+      volumeId,
+      region: {
+        min: [
+          region.min[0] as number,
+          region.min[1] as number,
+          region.min[2] as number,
+        ],
+        max: [
+          region.max[0] as number,
+          region.max[1] as number,
+          region.max[2] as number,
+        ],
+      },
+    },
+  });
+
+/** Per-gesture voxel budget failure (ADR-0009). */
+export const tooManyVoxelsError = (
+  requested: number,
+  limit: number,
+): WorkspaceError =>
+  new WorkspaceError({
+    family: "limit",
+    code: "TOO_MANY_VOXELS",
+    message: "Operation exceeds the per-gesture voxel budget",
+    context: { requested, limit },
+  });
+
+/** Volume occupied-voxel limit failure (ADR-0009). */
+export const tooManyOccupiedError = (
+  requested: number,
+  limit: number,
+): WorkspaceError =>
+  new WorkspaceError({
+    family: "limit",
+    code: "TOO_MANY_OCCUPIED_VOXELS",
+    message: "Volume exceeds its occupied-voxel limit",
+    context: { requested, limit },
+  });
