@@ -1,5 +1,6 @@
 import type { MaterialId, VolumeId } from "@voxel-maker/shared";
 import type { Vec3i } from "@voxel-maker/math";
+import type { ChunkHalo } from "./halo.js";
 
 /**
  * Scene namespace (plan S6.4, ADR-0005): the live document or an isolated
@@ -9,10 +10,12 @@ import type { Vec3i } from "@voxel-maker/math";
 export type ChunkNamespace = "live" | `preview:${string}`;
 
 /**
- * Immutable mesh request/transfer DTO (plan S6.4). The `values` buffer is
- * always a COPY of chunk storage plus a caller-provided halo sampler —
- * never authoritative backing memory — so workers can compute over it
- * without touching semantic state.
+ * Immutable mesh request/transfer DTO (plan S6.4, ticket #23). Both
+ * buffers are always COPIES of authoritative storage — the 4096 core
+ * values plus the one-voxel halo — never backing memory, so workers can
+ * compute over them without touching semantic state. The DTO is fully
+ * transferable: `values` and `halo` typed arrays can be moved into a
+ * worker without copying.
  */
 export interface ChunkMeshInput {
   readonly namespace: ChunkNamespace;
@@ -22,6 +25,8 @@ export interface ChunkMeshInput {
   readonly revision: number;
   /** 4096 X-fastest material values (0 = empty) copied from the chunk. */
   readonly values: Uint16Array;
+  /** Copied one-voxel halo around the chunk (see `halo.ts` layout). */
+  readonly halo: ChunkHalo;
 }
 
 /**

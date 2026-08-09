@@ -14,6 +14,12 @@ export {
   type EditorStoreSnapshot,
 } from "./runtime.js";
 export {
+  countMaterialUsage,
+  defaultNewMaterialPayload,
+  materialUpdateChanges,
+  type MaterialFieldChanges,
+} from "./materials-panel.js";
+export {
   createStrokeTool,
   type StrokeTool,
   type StrokeToolOptions,
@@ -35,6 +41,14 @@ export {
   type ShapeToolKind,
   type ShapeToolOptions,
 } from "./shape-tool.js";
+export {
+  createTransformTool,
+  selectionRegions,
+  type SelectionRegion,
+  type TransformParams,
+  type TransformTool,
+  type TransformToolOptions,
+} from "./transform-tool.js";
 export {
   addSelectionEntry,
   applySelectionIntent,
@@ -58,4 +72,7 @@ export {
   type ToolHost,
   type ToolModifiers,
   type ToolPick,
+  type TransformEntryPreview,
+  type TransformMode,
+  type TransformPreview,
 } from "./types.js";

@@ -21,7 +21,12 @@ import {
   registerRegionCommands,
   registerVoxelCommands,
 } from "@voxel-maker/commands";
-import { createSceneAdapter, type SceneAdapter } from "@voxel-maker/renderer";
+import {
+  createSceneAdapter,
+  type MeshingWorkerLike,
+  type RendererDiagnostics,
+  type SceneAdapter,
+} from "@voxel-maker/renderer";
 import { createFileService, type FileService } from "./file-service.js";
 import { createDefaultPrompts, type PromptService } from "./prompts.js";
 import {
@@ -32,6 +37,10 @@ import {
   createViewportController,
   type ViewportController,
 } from "./viewport/controller.js";
+import {
+  createMaterialPanelController,
+  type MaterialPanelController,
+} from "./materials/material-panel-controller.js";
 
 /**
  * Desktop application composition root (plan S6.2, ticket #15): the single
@@ -55,6 +64,14 @@ export interface FilePicker {
 export interface RendererService {
   readonly scene: THREE.Scene;
   readonly adapter: SceneAdapter;
+  /**
+   * Per-frame meshing step (plan S6.8, ticket #23): dispatches and
+   * installs chunk meshes within the frame budgets, visible chunks
+   * first. The render loop calls this once per frame with the camera.
+   */
+  flush(camera: THREE.Camera): void;
+  /** Live renderer diagnostics for the dev overlay (plan S6.14). */
+  diagnostics(): RendererDiagnostics;
 }
 
 export interface DesktopComposition {
@@ -65,6 +82,8 @@ export interface DesktopComposition {
   readonly viewport: ViewportController;
   /** Transient pencil/erase stroke preview projection (ticket #17). */
   readonly draftOverlay: DraftOverlay;
+  /** Materials panel controller (plan S7.13, ticket #21). */
+  readonly materialPanel: MaterialPanelController;
   readonly fileService: FileService;
   dispose(): void;
 }
@@ -95,6 +114,41 @@ export interface CompositionOptions {
    * composition.
    */
   readonly gestureVoxelLimit?: number;
+  /**
+   * Meshes chunks in a real Web Worker (plan S6.6, ticket #23). The
+   * desktop app enables it; headless and test compositions keep the
+   * in-process executor so no browser worker is required.
+   */
+  readonly useMeshingWorker?: boolean;
+}
+
+/**
+ * Builds the desktop meshing worker (plan S6.6, ticket #23) adapted to
+ * the renderer package's narrow worker surface: the real worker's
+ * `MessageEvent` is reduced to `{ data }` before it reaches the meshing
+ * executor, keeping three/worker types out of the renderer package.
+ */
+function createMeshingWorker(): MeshingWorkerLike {
+  const worker = new Worker(new URL("./meshing-worker.ts", import.meta.url), {
+    type: "module",
+  });
+  const adapted: MeshingWorkerLike = {
+    postMessage(message, transfer) {
+      if (transfer === undefined) {
+        worker.postMessage(message);
+      } else {
+        worker.postMessage(message, [...transfer]);
+      }
+    },
+    onmessage: null,
+    terminate() {
+      worker.terminate();
+    },
+  };
+  worker.onmessage = (event: MessageEvent) => {
+    adapted.onmessage?.({ data: event.data });
+  };
+  return adapted;
 }
 
 const REGISTER_COMMANDS = [
@@ -109,7 +163,14 @@ export function createDesktopComposition(
   options: CompositionOptions,
 ): DesktopComposition {
   const scene = new THREE.Scene();
-  const adapter = createSceneAdapter({ scene });
+  const adapter = createSceneAdapter({
+    scene,
+    // Meshing runs in a real Web Worker in the desktop app (plan S6.6);
+    // tests and headless runs omit this and use the in-process executor.
+    ...(options.useMeshingWorker === true
+      ? { createWorker: createMeshingWorker }
+      : {}),
+  });
   // The composition-owned journal sink: every fresh bus the session
   // installs carries `busHooks.onCommitted`, which delegates to the file
   // service's current-document journal (ticket #22 recovery wiring).
@@ -152,6 +213,7 @@ export function createDesktopComposition(
       ? {}
       : { autosaveDelayMs: options.autosaveDelayMs }),
   });
+  const materialPanel = createMaterialPanelController({ session, editor });
 
   // Lifecycle rebinding: opening, replacing, and closing a document fully
   // dispose and rebind scene resources through lifecycle events (plan S6.3).
@@ -166,6 +228,7 @@ export function createDesktopComposition(
     editor.setSelection([]);
     editor.clearNotices();
     editor.setDraft(undefined);
+    editor.setTransformPreview(undefined);
     unsubscribeStore?.();
     unsubscribeStore = undefined;
     if (
@@ -199,11 +262,22 @@ export function createDesktopComposition(
   return {
     session,
     editor,
-    renderer: { scene, adapter },
+    renderer: {
+      scene,
+      adapter,
+      flush(camera: THREE.Camera) {
+        adapter.flush(camera);
+      },
+      diagnostics() {
+        return adapter.diagnostics();
+      },
+    },
     viewport,
     draftOverlay,
+    materialPanel,
     fileService,
     dispose() {
+      materialPanel.dispose();
       viewport.dispose();
       draftOverlay.dispose();
       fileService.dispose();

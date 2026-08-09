@@ -164,6 +164,55 @@ describe("overlay manager", () => {
     overlays.dispose();
   });
 
+  it("projects transform preview destination bounds and clears on cancel", () => {
+    const scene = new THREE.Scene();
+    const overlays = createOverlayManager(scene);
+    const store = buildStore();
+    // A pending rotate preview over the box volume (world x shifted +2
+    // by the node translation).
+    overlays.update(store, [], undefined, {
+      operation: "rotate",
+      axis: "z",
+      quarterTurns: 1,
+      entries: [
+        {
+          volumeId: VOLUME,
+          source: { min: [0, 0, 0], max: [4, 4, 4] },
+          destination: { min: [0, 0, 0], max: [4, 4, 4] },
+        },
+      ],
+      movedVoxels: 64,
+      overwrittenVoxels: 0,
+      removedVoxels: 0,
+    });
+    const previewBoxes = objectsOfType(scene, THREE.LineSegments).filter(
+      (object) =>
+        object.renderOrder === 2 &&
+        (
+          (object as THREE.LineSegments).material as THREE.LineBasicMaterial
+        ).color.getHex() === 0xff2d55,
+    );
+    expect(previewBoxes).toHaveLength(1);
+    const box = previewBoxes[0] as THREE.LineSegments;
+    // World destination box [2,6] x [0,4] x [0,4].
+    expect(box.position.x).toBe(4);
+    expect(box.position.y).toBe(2);
+    expect(box.position.z).toBe(2);
+    // Cancelling the preview removes the box without touching the scene
+    // helpers.
+    overlays.update(store, []);
+    expect(
+      objectsOfType(scene, THREE.LineSegments).filter(
+        (object) =>
+          object.renderOrder === 2 &&
+          (
+            (object as THREE.LineSegments).material as THREE.LineBasicMaterial
+          ).color.getHex() === 0xff2d55,
+      ),
+    ).toHaveLength(0);
+    overlays.dispose();
+  });
+
   it("shows selection bounds and pivot markers for the selection", () => {
     const scene = new THREE.Scene();
     const overlays = createOverlayManager(scene);

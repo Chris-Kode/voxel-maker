@@ -17,6 +17,7 @@ import {
   missingActiveMaterial,
   noActiveMaterial,
   sessionNotOpen,
+  tooManyOccupiedError,
 } from "./tool-errors.js";
 import type { ToolActionResult, ToolDraft, ToolHost } from "./types.js";
 import { spanRegion } from "./selection.js";
@@ -280,16 +281,6 @@ export function shapeCoordinates(
   }
 }
 
-/** WorkspaceError matching the volume's own occupied-voxel limit error. */
-function occupiedLimitError(requested: number, limit: number): WorkspaceError {
-  return new WorkspaceError({
-    family: "limit",
-    code: "TOO_MANY_OCCUPIED_VOXELS",
-    message: "Volume exceeds its occupied-voxel limit",
-    context: { requested, limit },
-  });
-}
-
 class ShapeToolImpl implements ShapeTool {
   readonly kind: ShapeToolKind;
 
@@ -477,7 +468,7 @@ class ShapeToolImpl implements ShapeTool {
       if (store.getVoxel(params.volumeId, coordinate) === 0) additions += 1;
     }
     if (volume.occupiedCount() + additions > volume.limits.maxOccupiedVoxels) {
-      throw occupiedLimitError(
+      throw tooManyOccupiedError(
         volume.occupiedCount() + additions,
         volume.limits.maxOccupiedVoxels,
       );
