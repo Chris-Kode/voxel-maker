@@ -15,7 +15,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { materialId, nodeId, volumeId } from "../packages/shared/dist/index.js";
+import {
+  componentId,
+  materialId,
+  nodeId,
+  volumeId,
+} from "../packages/shared/dist/index.js";
 import {
   canonicalDocumentJson,
   createDocument,
@@ -168,6 +173,9 @@ const fixtures = [];
       faces: plan.metadata.faces,
       voxels: plan.metadata.voxels,
       losses: plan.losses.length,
+      animations: 0,
+      channels: 0,
+      samplers: 0,
     },
   });
 }
@@ -277,6 +285,9 @@ const fixtures = [];
       faces: plan.metadata.faces,
       voxels: plan.metadata.voxels,
       losses: plan.losses.length,
+      animations: 0,
+      channels: 0,
+      samplers: 0,
     },
   });
 }
@@ -370,17 +381,19 @@ const fixtures = [];
   const json = readGlb(glb);
   const codes = new Set(plan.losses.map((loss) => loss.code));
   for (const expected of [
-    GLTF_EXPORT_LOSSES.clips,
     GLTF_EXPORT_LOSSES.joints,
     GLTF_EXPORT_LOSSES.metadata,
     GLTF_EXPORT_LOSSES.emptyVolume,
   ]) {
     if (!codes.has(expected)) throw new Error(`missing loss ${expected}`);
   }
+  if (codes.has(GLTF_EXPORT_LOSSES.clips)) {
+    throw new Error("lossy clip should map to an animation, not a clips loss");
+  }
   fixtures.push({
     name: "lossy",
     vector:
-      "transparent material, clip, joint, node/document metadata, empty volume",
+      "transparent material, exported single-keyframe clip, joint, node/document metadata, empty volume",
     document,
     volumesJson: [
       [BODY_VOLUME, [[0, 0, 0, 1]]],
@@ -396,7 +409,233 @@ const fixtures = [];
       faces: plan.metadata.faces,
       voxels: plan.metadata.voxels,
       losses: plan.losses.length,
+      animations: plan.animations.length,
+      channels: plan.animations.reduce(
+        (total, animation) => total + animation.channels.length,
+        0,
+      ),
+      samplers: plan.animations.reduce(
+        (total, animation) => total + animation.samplers.length,
+        0,
+      ),
     },
+  });
+}
+
+// --- Golden 4: animated pivoted hierarchy ---------------------------------
+{
+  const ROOT = nodeId("node:fixture:anim:root");
+  const ARM = nodeId("node:fixture:anim:arm");
+  const HAND = nodeId("node:fixture:anim:hand");
+  const ARM_VOLUME = volumeId("volume:fixture:anim:arm");
+  const HAND_VOLUME = volumeId("volume:fixture:anim:hand");
+  const document = createDocument({
+    documentId: "document:fixture:anim:0001",
+    rootNodeId: ROOT,
+    nodes: [
+      {
+        nodeId: ROOT,
+        name: "Anim Root",
+        parentId: null,
+        children: [ARM],
+        transform: identity,
+        components: [],
+      },
+      {
+        nodeId: ARM,
+        name: "Anim Arm",
+        parentId: ROOT,
+        children: [HAND],
+        transform: {
+          translation: [1, 2, 0],
+          pivot: [0, 1, 0],
+          rotation: [0, 0, 0, 1],
+          scale: [1, 1, 1],
+        },
+        components: [
+          { kind: "voxel", schemaVersion: 1, volumeId: ARM_VOLUME },
+          {
+            kind: "constraint",
+            schemaVersion: 1,
+            constraints: [
+              {
+                componentId: componentId("component:fixture:anim:limit"),
+                type: "rotation-limits",
+                limits: { min: [0, 0, 0], max: [0, 0, 1] },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        nodeId: HAND,
+        name: "Anim Hand",
+        parentId: ARM,
+        children: [],
+        transform: {
+          translation: [2, 0, 0],
+          pivot: [0, 0, 0],
+          rotation: [0, 0, 0, 1],
+          scale: [1, 1, 1],
+        },
+        components: [{ kind: "voxel", schemaVersion: 1, volumeId: HAND_VOLUME }],
+      },
+    ],
+    materials: [
+      {
+        materialId: materialId(1),
+        name: "joint",
+        color: "#c8b89a",
+        opacity: 1,
+        roughness: 0.4,
+        metallic: 0.2,
+        emissive: 0,
+      },
+    ],
+    volumes: [
+      { volumeId: ARM_VOLUME, name: "Arm voxels" },
+      { volumeId: HAND_VOLUME, name: "Hand voxels" },
+    ],
+    animations: [
+      {
+        animationId: "animation:fixture:anim:swing",
+        name: "Swing",
+        duration: 1,
+        loop: "loop",
+        tracks: [
+          {
+            trackId: "track:fixture:anim:swing:rotate",
+            targetNodeId: ARM,
+            interpolation: "linear",
+            keyframes: [
+              {
+                keyframeId: "key:fixture:anim:swing:rotate:0",
+                time: 0,
+                property: { channel: "rotation", value: [0, 0, 0, 1] },
+              },
+              {
+                keyframeId: "key:fixture:anim:swing:rotate:1",
+                time: 1,
+                property: { channel: "rotation", value: [0, 0, 1, 0] },
+              },
+            ],
+          },
+          {
+            trackId: "track:fixture:anim:swing:slide",
+            targetNodeId: ARM,
+            interpolation: "step",
+            keyframes: [
+              {
+                keyframeId: "key:fixture:anim:swing:slide:0",
+                time: 0,
+                property: { channel: "translation", value: [1, 2, 0] },
+              },
+              {
+                keyframeId: "key:fixture:anim:swing:slide:1",
+                time: 0.5,
+                property: { channel: "translation", value: [2, 2, 0] },
+              },
+            ],
+          },
+          {
+            trackId: "track:fixture:anim:swing:grow",
+            targetNodeId: HAND,
+            interpolation: "smoothstep",
+            keyframes: [
+              {
+                keyframeId: "key:fixture:anim:swing:grow:0",
+                time: 0,
+                property: { channel: "scale", value: [1, 1, 1] },
+              },
+              {
+                keyframeId: "key:fixture:anim:swing:grow:1",
+                time: 1,
+                property: { channel: "scale", value: [2, 2, 2] },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const store = storeWithEntries(document, [
+    [
+      ARM_VOLUME,
+      [
+        [0, 0, 0, 1],
+        [1, 0, 0, 1],
+        [0, 1, 0, 1],
+      ],
+    ],
+    [HAND_VOLUME, [[0, 0, 0, 1]]],
+  ]);
+  const preflight = preflightGltfExport(document, (id) => store.getVolume(id));
+  if (!preflight.ok) throw new Error("animated preflight blocked");
+  const plan = planGltfExport(document, (id) => store.getVolume(id), preflight);
+  const glb = encodeGlb(plan);
+  const json = readGlb(glb);
+  const codes = new Set(plan.losses.map((loss) => loss.code));
+  for (const expected of [
+    GLTF_EXPORT_LOSSES.clipLoop,
+    GLTF_EXPORT_LOSSES.smoothstep,
+    GLTF_EXPORT_LOSSES.constraints,
+  ]) {
+    if (!codes.has(expected)) throw new Error(`missing loss ${expected}`);
+  }
+  if (plan.animations.length !== 1) {
+    throw new Error(`expected one animation, got ${plan.animations.length}`);
+  }
+  const animationSamples = plan.animations.map((animation) => ({
+    name: animation.name,
+    channels: animation.channels.map((channel) => ({
+      sampler: channel.sampler,
+      node: channel.node,
+      path: channel.path,
+    })),
+    samplers: animation.samplers.map((sampler) => ({
+      input: [...sampler.input],
+      output: [...sampler.output],
+      interpolation: sampler.interpolation,
+      outputType: sampler.outputType,
+    })),
+  }));
+  fixtures.push({
+    name: "animated",
+    vector:
+      "pivoted arm with linear rotation, step translation, baked smoothstep scale, loop clip, and a constraint",
+    document,
+    volumesJson: [
+      [
+        ARM_VOLUME,
+        [
+          [0, 0, 0, 1],
+          [1, 0, 0, 1],
+          [0, 1, 0, 1],
+        ],
+      ],
+      [HAND_VOLUME, [[0, 0, 0, 1]]],
+    ],
+    glb,
+    gltf: undefined,
+    counts: {
+      nodes: plan.metadata.nodes,
+      meshes: plan.metadata.meshes,
+      materials: plan.metadata.materials,
+      accessors: json.accessors.length,
+      faces: plan.metadata.faces,
+      voxels: plan.metadata.voxels,
+      losses: plan.losses.length,
+      animations: plan.animations.length,
+      channels: plan.animations.reduce(
+        (total, animation) => total + animation.channels.length,
+        0,
+      ),
+      samplers: plan.animations.reduce(
+        (total, animation) => total + animation.samplers.length,
+        0,
+      ),
+    },
+    animationSamples,
   });
 }
 
@@ -434,7 +673,13 @@ for (const fixture of fixtures) {
     faces: fixture.counts.faces,
     voxels: fixture.counts.voxels,
     losses: fixture.counts.losses,
+    animations: fixture.counts.animations ?? 0,
+    channels: fixture.counts.channels ?? 0,
+    samplers: fixture.counts.samplers ?? 0,
   };
+  if (fixture.animationSamples !== undefined) {
+    entry.animationSamples = fixture.animationSamples;
+  }
   if (fixture.gltf !== undefined) {
     await writeFile(join(goldenDir, `${base}.gltf`), fixture.gltf.json);
     entry.gltf = `golden/${base}.gltf`;
@@ -443,7 +688,7 @@ for (const fixture of fixtures) {
   golden.push(entry);
 }
 
-const corpus = { schemaVersion: 1, golden };
+const corpus = { schemaVersion: 2, golden };
 await writeFile(
   join(corpusDir, "corpus.json"),
   `${JSON.stringify(corpus, null, 2)}\n`,
