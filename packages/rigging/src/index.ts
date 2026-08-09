@@ -28,6 +28,7 @@ export {
   createAbstractSculptureFixture,
   createChestLidFixture,
   createLinkedArmFixture,
+  createSimpleCharacterFixture,
   createWheelFixture,
   createWingsFixture,
 } from "./fixtures.js";

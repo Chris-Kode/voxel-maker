@@ -9,6 +9,7 @@ import {
   trackId,
   transactionId,
   volumeId,
+  type NodeId,
 } from "@voxel-maker/shared";
 import {
   canonicalColor,
@@ -18,11 +19,19 @@ import {
   parseDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import { quaternionFromAxisAngle } from "@voxel-maker/math";
 import {
+  decomposeMatrix,
+  quaternionFromAxisAngle,
+  quaternionToEulerXYZ,
+  type Vec3,
+} from "@voxel-maker/math";
+import {
+  ANIMATED_DEMOS,
   createAnimatedWheelDocument,
   createPlaybackController,
   evaluateAnimationRuntime,
+  evaluateWorldTransforms,
+  type AnimationRuntimeState,
 } from "@voxel-maker/animation";
 import { chunkCoordinate, localCoordinate } from "@voxel-maker/voxel";
 import { createDocumentStore } from "@voxel-maker/document";
@@ -414,4 +423,117 @@ export function runAnimationTrace(): string {
         revisionAfterPlayback === revisionAfterAuthoring,
     },
   });
+}
+
+/**
+ * Headless definition-of-done demo trace (plan S10.15/M3, ticket #30):
+ * one runnable pass over all six unrelated asset categories — constrained
+ * chest lid, continuous wheel, linked arm, flapping wings, simple
+ * character, and abstract animation. Every demo evaluates the layered
+ * runtime (base -> animation -> constraints -> hierarchy world pass) at
+ * four fixed times, reports the mid-pose world rotation of every animated
+ * node, and proves determinism, base-state immutability, and exact base
+ * restoration on stop — all through the same generic runtime with no
+ * category-specific core symbols.
+ */
+export function runAnimationDemosTrace(): string {
+  const serializeState = (state: AnimationRuntimeState): string =>
+    JSON.stringify({
+      time: state.time,
+      clipId: state.clipId,
+      local: [...state.local.entries()],
+      world: [...state.world.entries()],
+    });
+
+  const demos = ANIMATED_DEMOS.map((demo) => {
+    const { document, clip } = demo.create();
+    const hashBefore = canonicalDocumentHash(document);
+    const sampledTimes = [
+      0,
+      clip.duration / 4,
+      clip.duration / 2,
+      (3 * clip.duration) / 4,
+    ];
+    const firstRun = sampledTimes.map((time) =>
+      evaluateAnimationRuntime(document, clip, time),
+    );
+    const secondRun = sampledTimes.map((time) =>
+      evaluateAnimationRuntime(document, clip, time),
+    );
+    const mid = firstRun[2];
+    if (mid === undefined) throw new Error("demo trace: missing mid pose");
+    const animatedNodes = [
+      ...new Set(clip.tracks.map((track) => track.targetNodeId)),
+    ];
+    const poseOf = (
+      state: AnimationRuntimeState,
+      nodeId: NodeId,
+    ): { localEuler: Vec3 | null; worldEuler: Vec3 | null } => {
+      const node = document.nodes[nodeId];
+      const local = state.local.get(nodeId);
+      const world = state.world.get(nodeId);
+      return {
+        localEuler:
+          local === undefined ? null : quaternionToEulerXYZ(local.rotation),
+        worldEuler:
+          world === undefined || node === undefined
+            ? null
+            : quaternionToEulerXYZ(
+                decomposeMatrix(world, node.transform.pivot).rotation,
+              ),
+      };
+    };
+    // The clamp signal is exact: the runtime's world pass applies the
+    // constraint layer to the sampled locals, so evaluating the SAME
+    // locals without the constraint layer and comparing the two world
+    // tables isolates clamping from ordinary parent composition.
+    const clampedAny = firstRun.some((state) => {
+      const unconstrained = evaluateWorldTransforms(document, state.local);
+      return [...state.world.entries()].some(([nodeId, matrix]) => {
+        const plain = unconstrained.get(nodeId);
+        if (plain === undefined) return false;
+        return matrix.some(
+          (value, index) => Math.abs(value - (plain[index] ?? 0)) > 1e-9,
+        );
+      });
+    });
+    const midPose = animatedNodes.map((nodeId) => {
+      const pose = poseOf(mid, nodeId);
+      return { nodeId, ...pose };
+    });
+    const base = evaluateAnimationRuntime(document, null, 0);
+    return {
+      kind: demo.kind,
+      name: demo.name,
+      duration: clip.duration,
+      loop: clip.loop,
+      tracks: clip.tracks.length,
+      keyframes: clip.tracks.reduce(
+        (sum, track) => sum + track.keyframes.length,
+        0,
+      ),
+      componentKinds: [
+        ...new Set(
+          Object.values(document.nodes).flatMap((node) =>
+            node.components.map((component) => component.kind),
+          ),
+        ),
+      ].sort(),
+      clampedAny,
+      deterministic:
+        JSON.stringify(firstRun.map(serializeState)) ===
+        JSON.stringify(secondRun.map(serializeState)),
+      hashStable: canonicalDocumentHash(document) === hashBefore,
+      baseRestored: Object.values(document.nodes).every((node) => {
+        const local = base.local.get(node.nodeId);
+        return (
+          local !== undefined &&
+          JSON.stringify(local) === JSON.stringify(node.transform)
+        );
+      }),
+      midPose,
+    };
+  });
+
+  return canonicalJson({ demos });
 }

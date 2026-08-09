@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { canonicalDocumentHash, parseDocument } from "@voxel-maker/model";
-import { runHeadlessTrace } from "./index.js";
+import { runAnimationDemosTrace, runHeadlessTrace } from "./index.js";
 
 const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
@@ -90,6 +90,65 @@ describe("headless workspace tracer", () => {
       parsed.document.hash,
     );
     expect(runHeadlessTrace()).toBe(output);
+  });
+
+  it("traces all six definition-of-done animation demos deterministically", () => {
+    const output = JSON.parse(runAnimationDemosTrace()) as {
+      demos: Array<{
+        kind: string;
+        name: string;
+        duration: number;
+        loop: string;
+        tracks: number;
+        keyframes: number;
+        componentKinds: string[];
+        clampedAny: boolean;
+        deterministic: boolean;
+        hashStable: boolean;
+        baseRestored: boolean;
+        midPose: Array<{
+          nodeId: string;
+          localEuler: number[] | null;
+          worldEuler: number[] | null;
+        }>;
+      }>;
+    };
+    expect(output.demos.map((demo) => demo.kind)).toEqual([
+      "chest-lid",
+      "wheel",
+      "linked-arm",
+      "wings",
+      "simple-character",
+      "abstract",
+    ]);
+    for (const demo of output.demos) {
+      // No category-specific core symbols in any demo (ticket #30):
+      // every component kind is one of the four generic articulation
+      // symbols (constraints are optional per category).
+      expect(
+        demo.componentKinds.every((kind) =>
+          ["voxel", "pivot", "joint", "constraint"].includes(kind),
+        ),
+      ).toBe(true);
+      expect(demo.componentKinds).toContain("voxel");
+      expect(demo.componentKinds).toContain("pivot");
+      expect(demo.componentKinds).toContain("joint");
+      expect(demo.deterministic).toBe(true);
+      expect(demo.hashStable).toBe(true);
+      expect(demo.baseRestored).toBe(true);
+      expect(demo.tracks).toBeGreaterThan(0);
+      expect(demo.keyframes).toBeGreaterThan(0);
+      for (const pose of demo.midPose) {
+        expect(pose.nodeId.length).toBeGreaterThan(0);
+      }
+    }
+    // The clamp signal is exact and derived from the trace data: exactly
+    // the demos whose documents carry a constraint component show a world
+    // table that differs from the unconstrained composition of the same
+    // sampled locals (wheel and abstract animation pass through).
+    for (const demo of output.demos) {
+      expect(demo.clampedAny).toBe(demo.componentKinds.includes("constraint"));
+    }
   });
 
   it("serializes byte-identically across fresh processes", () => {

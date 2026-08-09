@@ -11,7 +11,7 @@ import {
   volumeId,
   type VolumeId,
 } from "@voxel-maker/shared";
-import type { Vec3i } from "@voxel-maker/math";
+import { quaternionFromAxisAngle, type Vec3i } from "@voxel-maker/math";
 import {
   canonicalColor,
   createDocument,
@@ -24,10 +24,15 @@ import {
 import {
   CommandBus,
   CommandRegistry,
+  addTrackCommand,
+  createAnimationCommand,
+  deleteAnimationCommand,
+  deleteKeyframeCommand,
   createMaterialCommand,
   createNodeCommand,
   fillBoxCommand,
   fillSphereCommand,
+  moveKeyframeCommand,
   registerAnimationCommands,
   registerBatchCommands,
   registerMaterialCommands,
@@ -36,6 +41,7 @@ import {
   registerRegionCommands,
   registerVoxelCommands,
   renameNodeCommand,
+  setKeyframeCommand,
   updateMaterialCommand,
   type Command,
 } from "@voxel-maker/commands";
@@ -187,12 +193,195 @@ export async function runPersistenceTrace(): Promise<string> {
   const hashStable = hashBefore === hashAfter;
 
   // Validated lifecycle replacement: reinstall into a fresh store.
-  const { store: reloadedStore } = createDocumentStore({
-    document: loaded.document,
-    volumes: new Map(
-      [...loaded.volumes.entries()].map(([id, volume]) => [id, volume.chunks]),
+  const { store: reloadedStore, writeCapability: reloadedWriteCapability } =
+    createDocumentStore({
+      document: loaded.document,
+      volumes: new Map(
+        [...loaded.volumes.entries()].map(([id, volume]) => [
+          id,
+          volume.chunks,
+        ]),
+      ),
+    });
+
+  // Editing and undoing clips and keyframes after save and reload (ticket
+  // #30): a fresh command bus over the reloaded store authors a new clip,
+  // moves a keyframe, undoes and redoes the move, and edits a keyframe
+  // value, then undoes that edit — all against the reloaded snapshot.
+  const reloadedRegistry = new CommandRegistry();
+  registerAnimationCommands(reloadedRegistry);
+  const reloadedBus = new CommandBus(
+    reloadedStore,
+    reloadedRegistry,
+    reloadedWriteCapability,
+  );
+  const bounceId = animationId("animation:demo:persist:bounce");
+  const bounceTrack = trackId("track:demo:persist:bounce");
+  const bounceKey0 = keyframeId("keyframe:demo:persist:bounce:0");
+  const bounceKey1 = keyframeId("keyframe:demo:persist:bounce:1");
+  let reloadedRevision = loaded.document.revision;
+  let reloadedSerial = 0;
+  const reloadedTx = (): {
+    transactionId: ReturnType<typeof transactionId>;
+    expectedRevision: number;
+    source: "ui";
+  } => {
+    const transaction = {
+      transactionId: transactionId(
+        `transaction:demo:persist-reload:${String(reloadedSerial).padStart(4, "0")}`,
+      ),
+      expectedRevision: reloadedRevision,
+      source: "ui" as const,
+    };
+    reloadedSerial += 1;
+    return transaction;
+  };
+  const reloadedExecute = (command: Command): boolean => {
+    const result = reloadedBus.execute(command, reloadedTx());
+    if (result.ok) reloadedRevision = result.value.revisionAfter;
+    return result.ok;
+  };
+  const bounceKeyTimes = (): readonly number[] =>
+    reloadedStore
+      .getDocument()
+      .animations[bounceId]?.tracks[0]?.keyframes.map((key) => key.time) ?? [];
+  const bounceKeyValue = (): readonly number[] | undefined =>
+    reloadedStore.getDocument().animations[bounceId]?.tracks[0]?.keyframes[1]
+      ?.property.value;
+  const createBounceAccepted = reloadedExecute(
+    createAnimationCommand(
+      commandId("command:demo:persist-reload:create-animation"),
+      {
+        animationId: bounceId,
+        name: "Bounce",
+        duration: 2,
+        loop: "loop",
+      },
     ),
-  });
+  );
+  const addBounceTrackAccepted = reloadedExecute(
+    addTrackCommand(commandId("command:demo:persist-reload:add-track"), {
+      animationId: bounceId,
+      trackId: bounceTrack,
+      targetNodeId: ARM,
+      interpolation: "linear",
+    }),
+  );
+  const setBounceKeysAccepted =
+    reloadedExecute(
+      setKeyframeCommand(commandId("command:demo:persist-reload:set-key-0"), {
+        animationId: bounceId,
+        trackId: bounceTrack,
+        keyframeId: bounceKey0,
+        time: 0,
+        property: {
+          channel: "rotation",
+          value: quaternionFromAxisAngle([1, 0, 0], 0),
+        },
+      }),
+    ) &&
+    reloadedExecute(
+      setKeyframeCommand(commandId("command:demo:persist-reload:set-key-1"), {
+        animationId: bounceId,
+        trackId: bounceTrack,
+        keyframeId: bounceKey1,
+        time: 2,
+        property: {
+          channel: "rotation",
+          value: quaternionFromAxisAngle([1, 0, 0], Math.PI / 4),
+        },
+      }),
+    );
+  const moveAccepted = reloadedExecute(
+    moveKeyframeCommand(commandId("command:demo:persist-reload:move-key"), {
+      animationId: bounceId,
+      trackId: bounceTrack,
+      keyframeId: bounceKey1,
+      time: 1.5,
+    }),
+  );
+  const timesAfterMove = bounceKeyTimes();
+  const undoMoveResult = reloadedBus.undo(reloadedTx());
+  const undoMoveAccepted = undoMoveResult.ok;
+  // Undo and redo are themselves history transactions (ADR-0003): the
+  // revision advances monotonically with every committed transaction.
+  if (undoMoveAccepted) {
+    reloadedRevision = undoMoveResult.value.revisionAfter;
+  }
+  const timesAfterUndo = bounceKeyTimes();
+  const redoMoveResult = reloadedBus.redo(reloadedTx());
+  const redoMoveAccepted = redoMoveResult.ok;
+  if (redoMoveAccepted) {
+    reloadedRevision = redoMoveResult.value.revisionAfter;
+  }
+  const timesAfterRedo = bounceKeyTimes();
+  const editValueAccepted = reloadedExecute(
+    setKeyframeCommand(commandId("command:demo:persist-reload:edit-value"), {
+      animationId: bounceId,
+      trackId: bounceTrack,
+      keyframeId: bounceKey1,
+      time: 1.5,
+      property: {
+        channel: "rotation",
+        value: quaternionFromAxisAngle([1, 0, 0], Math.PI / 2),
+      },
+    }),
+  );
+  const valueAfterEdit = bounceKeyValue();
+  const undoValueResult = reloadedBus.undo(reloadedTx());
+  const undoValueAccepted = undoValueResult.ok;
+  if (undoValueAccepted) {
+    reloadedRevision = undoValueResult.value.revisionAfter;
+  }
+  const valueAfterUndo = bounceKeyValue();
+  // Deleting clips and keyframes after save and reload (S10.6 CRUD):
+  // deleting the second keyframe and undoing restores it exactly, then
+  // deleting the authored clip and undoing restores the full clip.
+  const keyframeCount = (): number =>
+    reloadedStore.getDocument().animations[bounceId]?.tracks[0]?.keyframes
+      .length ?? 0;
+  const clipCount = (): number =>
+    Object.keys(reloadedStore.getDocument().animations).length;
+  const deleteKeyAccepted = reloadedExecute(
+    deleteKeyframeCommand(commandId("command:demo:persist-reload:delete-key"), {
+      animationId: bounceId,
+      trackId: bounceTrack,
+      keyframeId: bounceKey1,
+    }),
+  );
+  const keyframesAfterDelete = keyframeCount();
+  const undoDeleteKeyResult = reloadedBus.undo(reloadedTx());
+  const undoDeleteKeyAccepted = undoDeleteKeyResult.ok;
+  if (undoDeleteKeyAccepted) {
+    reloadedRevision = undoDeleteKeyResult.value.revisionAfter;
+  }
+  const keyframesAfterUndoDelete = keyframeCount();
+  const deleteClipAccepted = reloadedExecute(
+    deleteAnimationCommand(
+      commandId("command:demo:persist-reload:delete-clip"),
+      {
+        animationId: bounceId,
+      },
+    ),
+  );
+  const clipsAfterDelete = clipCount();
+  const undoDeleteClipResult = reloadedBus.undo(reloadedTx());
+  const undoDeleteClipAccepted = undoDeleteClipResult.ok;
+  if (undoDeleteClipAccepted) {
+    reloadedRevision = undoDeleteClipResult.value.revisionAfter;
+  }
+  const clipsAfterUndoDelete = clipCount();
+  const valueEditUndone = (() => {
+    if (valueAfterEdit === undefined || valueAfterUndo === undefined) {
+      return false;
+    }
+    const undoneX = valueAfterUndo[0] ?? NaN;
+    const editedX = valueAfterEdit[0] ?? NaN;
+    return (
+      Math.abs(undoneX - editedX) > 1e-9 &&
+      Math.abs(undoneX - Math.sin(Math.PI / 8)) < 1e-9
+    );
+  })();
   const sampleCoordinates: Vec3i[] = [
     [-4, 0, -4],
     [0, 4, 0],
@@ -295,6 +484,32 @@ export async function runPersistenceTrace(): Promise<string> {
       voxelSamples,
     },
     transactions,
+    animationReload: {
+      clipCountAfterReload: Object.keys(loaded.document.animations).length,
+      createBounceAccepted,
+      addBounceTrackAccepted,
+      setBounceKeysAccepted,
+      moveAccepted,
+      timesAfterMove,
+      timesAfterUndo,
+      timesAfterRedo,
+      undoMoveAccepted,
+      redoMoveAccepted,
+      editValueAccepted,
+      valueAfterEdit: valueAfterEdit ?? null,
+      valueAfterUndo: valueAfterUndo ?? null,
+      valueEditUndone,
+      undoValueAccepted,
+      deleteKeyAccepted,
+      keyframesAfterDelete,
+      undoDeleteKeyAccepted,
+      keyframesAfterUndoDelete,
+      deleteClipAccepted,
+      clipsAfterDelete,
+      undoDeleteClipAccepted,
+      clipsAfterUndoDelete,
+      reloadedRevision,
+    },
     durable: {
       firstSave: {
         status: firstSave.status,

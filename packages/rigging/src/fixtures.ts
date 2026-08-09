@@ -200,8 +200,8 @@ export function createChestLidFixture(): VoxelDocument {
           joint,
           constraint(
             componentId("component:rig:chest-lid:hinge"),
-            [FREE[0], FREE[0], -Math.PI / 6],
-            [FREE[1], FREE[1], Math.PI / 12],
+            [-Math.PI / 6, FREE[0], FREE[0]],
+            [Math.PI / 4, FREE[1], FREE[1]],
           ),
         ],
         volume: {
@@ -395,14 +395,36 @@ export function createWingsFixture(): VoxelDocument {
         },
       },
       {
+        nodeId: nodeId("node:rig:wings:left-mirror"),
+        name: "Left Mirror",
+        parentId: null,
+        // The mirror lives on a parent so that rotation animation of the
+        // wing node (ticket #30) composes through it instead of replacing
+        // the mirror: the left wing flaps mirrored about the body.
+        transform: { ...identity, rotation: [0, 1, 0, 0] },
+        components: [],
+        volume: {
+          volumeId: volumeId("volume:rig:wings:left-mirror"),
+          bounds: [
+            [0, 0, 0],
+            [1, 1, 1],
+          ],
+        },
+      },
+      {
         nodeId: nodeId("node:rig:wings:left"),
         name: "Left Wing",
-        parentId: null,
-        transform: { ...identity, rotation: [0, 1, 0, 0] },
+        parentId: nodeId("node:rig:wings:left-mirror"),
+        transform: identity,
         components: [
           voxel(volumeId("volume:rig:wings:left")),
           pivot([0, 0, 0]),
           joint,
+          constraint(
+            componentId("component:rig:wings:left-flap"),
+            [FREE[0], FREE[0], -Math.PI / 4],
+            [FREE[1], FREE[1], Math.PI / 6],
+          ),
         ],
         volume: {
           volumeId: volumeId("volume:rig:wings:left"),
@@ -413,6 +435,154 @@ export function createWingsFixture(): VoxelDocument {
         },
       },
     ],
+  });
+}
+
+/**
+ * Simple character (plan S10.15, ticket #30): a generic humanoid built
+ * entirely from nodes, voxel volumes, pivots, joints, and rotation
+ * constraints — head, torso, two mirrored arms, and two legs. Each limb
+ * pivots at its joint (neck, shoulders, hips) and carries a joint
+ * annotation plus rotation limits; nothing here is a category-specific
+ * skeleton, bone, or rig component.
+ */
+export function createSimpleCharacterFixture(): VoxelDocument {
+  const parts: readonly Part[] = [
+    {
+      nodeId: nodeId("node:rig:character:torso"),
+      name: "Torso",
+      parentId: null,
+      transform: identity,
+      components: [voxel(volumeId("volume:rig:character:torso"))],
+      volume: {
+        volumeId: volumeId("volume:rig:character:torso"),
+        bounds: [
+          [-2, 0, -1],
+          [2, 3, 1],
+        ],
+      },
+    },
+    {
+      nodeId: nodeId("node:rig:character:head"),
+      name: "Head",
+      parentId: nodeId("node:rig:character:torso"),
+      transform: { ...identity, translation: [0, 3, 0] },
+      components: [
+        voxel(volumeId("volume:rig:character:head")),
+        pivot([0, 0, 0]),
+        joint,
+        constraint(
+          componentId("component:rig:character:neck"),
+          [-Math.PI / 6, -Math.PI / 3, FREE[0]],
+          [Math.PI / 6, Math.PI / 3, FREE[1]],
+        ),
+      ],
+      volume: {
+        volumeId: volumeId("volume:rig:character:head"),
+        bounds: [
+          [-1, 0, -1],
+          [1, 1, 1],
+        ],
+      },
+    },
+    {
+      nodeId: nodeId("node:rig:character:left-arm"),
+      name: "Left Arm",
+      parentId: nodeId("node:rig:character:torso"),
+      transform: { ...identity, translation: [-2, 2, 0] },
+      components: [
+        voxel(volumeId("volume:rig:character:left-arm")),
+        pivot([0, 0, 0]),
+        joint,
+        constraint(
+          componentId("component:rig:character:left-shoulder"),
+          [-Math.PI / 2, FREE[0], -Math.PI / 6],
+          [Math.PI / 3, FREE[1], Math.PI / 6],
+        ),
+      ],
+      volume: {
+        volumeId: volumeId("volume:rig:character:left-arm"),
+        bounds: [
+          [-1, -2, -1],
+          [1, 1, 1],
+        ],
+      },
+    },
+    {
+      nodeId: nodeId("node:rig:character:right-arm"),
+      name: "Right Arm",
+      parentId: nodeId("node:rig:character:torso"),
+      transform: { ...identity, translation: [2, 2, 0] },
+      components: [
+        voxel(volumeId("volume:rig:character:right-arm")),
+        pivot([0, 0, 0]),
+        joint,
+        constraint(
+          componentId("component:rig:character:right-shoulder"),
+          [-Math.PI / 2, FREE[0], -Math.PI / 6],
+          [Math.PI / 3, FREE[1], Math.PI / 6],
+        ),
+      ],
+      volume: {
+        volumeId: volumeId("volume:rig:character:right-arm"),
+        bounds: [
+          [-1, -2, -1],
+          [1, 1, 1],
+        ],
+      },
+    },
+    {
+      nodeId: nodeId("node:rig:character:left-leg"),
+      name: "Left Leg",
+      parentId: nodeId("node:rig:character:torso"),
+      transform: { ...identity, translation: [-1, 0, 0] },
+      components: [
+        voxel(volumeId("volume:rig:character:left-leg")),
+        pivot([0, 0, 0]),
+        joint,
+        constraint(
+          componentId("component:rig:character:left-hip"),
+          [-Math.PI / 3, FREE[0], -Math.PI / 6],
+          [Math.PI / 3, FREE[1], Math.PI / 6],
+        ),
+      ],
+      volume: {
+        volumeId: volumeId("volume:rig:character:left-leg"),
+        bounds: [
+          [-1, -3, -1],
+          [1, 0, 1],
+        ],
+      },
+    },
+    {
+      nodeId: nodeId("node:rig:character:right-leg"),
+      name: "Right Leg",
+      parentId: nodeId("node:rig:character:torso"),
+      transform: { ...identity, translation: [1, 0, 0] },
+      components: [
+        voxel(volumeId("volume:rig:character:right-leg")),
+        pivot([0, 0, 0]),
+        joint,
+        constraint(
+          componentId("component:rig:character:right-hip"),
+          [-Math.PI / 3, FREE[0], -Math.PI / 6],
+          [Math.PI / 3, FREE[1], Math.PI / 6],
+        ),
+      ],
+      volume: {
+        volumeId: volumeId("volume:rig:character:right-leg"),
+        bounds: [
+          [-1, -3, -1],
+          [1, 0, 1],
+        ],
+      },
+    },
+  ];
+  return buildFixture({
+    documentId: "document:rig:character:0001",
+    title: "simple character",
+    rootName: "Character",
+    parts,
   });
 }
 
@@ -507,7 +677,8 @@ export const RIG_FIXTURES: readonly {
     | "wheel"
     | "linked-arm"
     | "wings"
-    | "abstract-sculpture";
+    | "abstract-sculpture"
+    | "simple-character";
   readonly name: string;
   readonly create: () => VoxelDocument;
 }[] = [
@@ -527,5 +698,10 @@ export const RIG_FIXTURES: readonly {
     kind: "abstract-sculpture",
     name: "Abstract sculpture",
     create: createAbstractSculptureFixture,
+  },
+  {
+    kind: "simple-character",
+    name: "Simple character",
+    create: createSimpleCharacterFixture,
   },
 ];
