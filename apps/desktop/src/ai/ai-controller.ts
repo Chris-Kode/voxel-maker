@@ -395,12 +395,15 @@ class AiControllerImpl implements AiController {
       diff: this.#diff,
       usage: this.#usage,
       activity: Object.freeze([...this.#activity]),
+      error: this.#error,
       reason: this.#reason,
-<<<<<<< HEAD
-=======
+      applied: this.#applied,
+      stagedClips: this.#stagedClips(),
+      visualEnabled: this.#visualEnabled,
+      imageConsent: this.#imageConsent,
       refinementPlan: this.#refinementPlan,
       refinement: this.#refinement,
->>>>>>> origin/main
+    };
   }
 
   /** Bounded staged overlay clip summaries (plan S13.5, ticket #36). */
