@@ -18,13 +18,24 @@ import {
   type DocumentStore,
 } from "@voxel-maker/document";
 import type { VoxelVolume, VoxelWriteCapability } from "@voxel-maker/voxel";
-import { createSceneAdapter } from "./index.js";
+import {
+  createSceneAdapter,
+  handleMeshingRequest,
+  type MeshingWorkerLike,
+} from "./index.js";
 
 /**
- * Scene adapter tests. Commits are driven through the store's public
- * surface (stage/validate/commit) instead of the command bus so the
- * renderer package keeps its architectural boundary (renderer never
+ * Scene adapter tests for the incremental meshing pipeline (plan
+ * S6.3/S6.6-S6.8, ticket #23). Commits are driven through the store's
+ * public surface (stage/validate/commit) instead of the command bus so
+ * the renderer package keeps its architectural boundary (renderer never
  * imports `commands`; the boundary checker scans test files too).
+ *
+ * Meshing is asynchronous and budgeted: after `rebind` or a commit the
+ * adapter only schedules work, so tests flush the scheduler until the
+ * queues drain before asserting installed geometry. The old geometry
+ * stays visible until its replacement lands, and a controlled fake
+ * worker proves stale results never win.
  */
 
 const IDENTITY = {
@@ -69,7 +80,9 @@ interface CommitSpec {
   readonly changedVolumes?: readonly ChangedVolume[];
 }
 
-function createHarness(): Harness {
+function createHarness(
+  options: { readonly maxUploadsPerFrame?: number } = {},
+): Harness {
   const document = createDocument({
     documentId: documentId("document:scene:0001"),
     metadata: { title: "scene fixture" },
@@ -112,7 +125,12 @@ function createHarness(): Harness {
     ]),
   });
   const scene = new THREE.Scene();
-  const adapter = createSceneAdapter({ scene });
+  const adapter = createSceneAdapter({
+    scene,
+    ...(options.maxUploadsPerFrame === undefined
+      ? {}
+      : { maxUploadsPerFrame: options.maxUploadsPerFrame }),
+  });
   adapter.rebind(handle.store);
   let serial = 0;
 
@@ -174,6 +192,22 @@ function chunkMeshes(scene: THREE.Scene): ProjectedMesh[] {
   return meshes;
 }
 
+/** Flushes until every queue drains (bounded, deterministic). */
+function flushAll(adapter: ReturnType<typeof createSceneAdapter>): void {
+  for (let index = 0; index < 64; index += 1) {
+    adapter.flush();
+    const diagnostics = adapter.diagnostics();
+    if (
+      diagnostics.pendingChunks === 0 &&
+      diagnostics.inFlightMeshes === 0 &&
+      diagnostics.uploadsThisFrame === 0
+    ) {
+      return;
+    }
+  }
+  throw new Error("meshing queues did not drain");
+}
+
 function childMesh(
   adapter: ReturnType<typeof createSceneAdapter>,
 ): ProjectedMesh {
@@ -186,14 +220,18 @@ function childMesh(
 }
 
 describe("scene adapter", () => {
-  it("projects the node hierarchy and chunk meshes on rebind", () => {
+  it("projects the node hierarchy synchronously and chunk meshes after flush", () => {
     const { adapter, scene } = createHarness();
+    // Node projection is synchronous; meshes are scheduled.
     expect(adapter.nodeCount).toBe(2);
-    expect(adapter.chunkMeshCount).toBe(1);
+    expect(adapter.chunkMeshCount).toBe(0);
+    expect(adapter.diagnostics().pendingChunks).toBe(1);
     const rootGroup = adapter.objectForNode(ROOT);
     const childGroup = adapter.objectForNode(CHILD);
     expect(rootGroup?.parent).toBe(scene);
     expect(childGroup?.parent).toBe(rootGroup);
+    flushAll(adapter);
+    expect(adapter.chunkMeshCount).toBe(1);
     const mesh = childMesh(adapter);
     expect(mesh.parent).toBe(childGroup);
     // 4x4x4 box: 6*16 faces * 4 verts = 384.
@@ -211,11 +249,11 @@ describe("scene adapter", () => {
     adapter.dispose();
   });
 
-  it("remeshes changed chunks after a voxel commit", () => {
+  it("keeps the old geometry visible until the replacement mesh lands", () => {
     const harness = createHarness();
-    expect(
-      childMesh(harness.adapter).geometry.getAttribute("position").count,
-    ).toBe(384);
+    flushAll(harness.adapter);
+    const before = childMesh(harness.adapter).geometry.getAttribute("position");
+    expect(before.count).toBe(384);
     harness.commit({
       stageVolume(volume, capability) {
         volume.setVoxel([10, 10, 10], 1, capability);
@@ -227,10 +265,53 @@ describe("scene adapter", () => {
         },
       ],
     });
-    // The superseded geometry was disposed and a fresh one installed.
-    expect(
-      childMesh(harness.adapter).geometry.getAttribute("position").count,
-    ).toBe(408);
+    // The commit only schedules; the superseded geometry stays visible.
+    expect(harness.adapter.diagnostics().pendingChunks).toBe(1);
+    const mesh = childMesh(harness.adapter);
+    expect(mesh.geometry.getAttribute("position").count).toBe(384);
+    // The superseded geometry must be disposed exactly once when the
+    // replacement installs (spy before the pipeline drains).
+    const dispose = vi.spyOn(mesh.geometry, "dispose");
+    flushAll(harness.adapter);
+    const fresh = childMesh(harness.adapter);
+    expect(fresh.geometry.getAttribute("position").count).toBe(408);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(fresh.geometry).not.toBe(mesh.geometry);
+    harness.adapter.dispose();
+  });
+
+  it("disposes a chunk immediately when an edit empties it", () => {
+    const harness = createHarness();
+    flushAll(harness.adapter);
+    const mesh = childMesh(harness.adapter);
+    const dispose = vi.spyOn(mesh.geometry, "dispose");
+    harness.commit({
+      stageVolume(volume, capability) {
+        // Remove every voxel of the 4x4x4 box (keep 1 for the change set).
+        for (let z = 0; z < 4; z += 1) {
+          for (let y = 0; y < 4; y += 1) {
+            for (let x = 0; x < 4; x += 1) {
+              if (x === 0 && y === 0 && z === 0) continue;
+              volume.removeVoxel([x, y, z], capability);
+            }
+          }
+        }
+        volume.removeVoxel([0, 0, 0], capability);
+      },
+      changedVolumes: [
+        {
+          volumeId: VOLUME,
+          chunks: [{ coordinate: [0, 0, 0], revision: 1 }],
+        },
+      ],
+    });
+    // The emptied chunk is disposed on the main thread: no worker
+    // round-trip, no pending work, no lingering mesh.
+    expect(dispose).toHaveBeenCalled();
+    expect(harness.adapter.chunkMeshCount).toBe(0);
+    expect(harness.adapter.diagnostics().pendingChunks).toBe(0);
+    flushAll(harness.adapter);
+    expect(chunkMeshes(harness.scene)).toHaveLength(0);
     harness.adapter.dispose();
   });
 
@@ -259,6 +340,7 @@ describe("scene adapter", () => {
 
   it("updates shared materials after a material commit", () => {
     const harness = createHarness();
+    flushAll(harness.adapter);
     const mesh = childMesh(harness.adapter);
     const material = mesh.material;
     if (!(material instanceof THREE.MeshStandardMaterial)) {
@@ -277,8 +359,103 @@ describe("scene adapter", () => {
     harness.adapter.dispose();
   });
 
-  it("disposes a deleted node subtree", () => {
+  it("budgets main-thread uploads per frame", () => {
+    // Two volumes, two chunks: with one upload per frame the meshes must
+    // appear one frame apart.
+    const SECOND = nodeId("node:scene:child-2");
+    const SECOND_VOLUME = volumeId("volume:scene:0002");
+    const document = createDocument({
+      documentId: documentId("document:scene:budget"),
+      metadata: { title: "budget fixture" },
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [CHILD, SECOND],
+          transform: IDENTITY,
+          components: [{ kind: "voxel", schemaVersion: 1, volumeId: VOLUME }],
+        },
+        {
+          nodeId: CHILD,
+          name: "Box",
+          parentId: ROOT,
+          children: [],
+          transform: IDENTITY,
+          components: [],
+        },
+        {
+          nodeId: SECOND,
+          name: "Box 2",
+          parentId: ROOT,
+          children: [],
+          transform: IDENTITY,
+          components: [
+            { kind: "voxel", schemaVersion: 1, volumeId: SECOND_VOLUME },
+          ],
+        },
+      ],
+      materials: [
+        {
+          materialId: materialId(1),
+          name: "box",
+          color: "#ff8800",
+          opacity: 1,
+          roughness: 0.5,
+          metallic: 0,
+          emissive: 0,
+        },
+      ],
+      volumes: [
+        { volumeId: VOLUME, bounds: { min: [0, 0, 0], max: [5, 5, 5] } },
+        {
+          volumeId: SECOND_VOLUME,
+          bounds: { min: [0, 0, 0], max: [5, 5, 5] },
+        },
+      ],
+    });
+    const handle = createDocumentStore({
+      document,
+      volumes: new Map([
+        [VOLUME, [{ coordinate: [0, 0, 0], values: boxChunkSeed() }]],
+        [SECOND_VOLUME, [{ coordinate: [0, 0, 0], values: boxChunkSeed() }]],
+      ]),
+    });
+    const scene = new THREE.Scene();
+    const adapter = createSceneAdapter({ scene, maxUploadsPerFrame: 1 });
+    adapter.rebind(handle.store);
+    adapter.flush();
+    expect(adapter.chunkMeshCount).toBe(1);
+    expect(adapter.diagnostics().uploadsThisFrame).toBe(1);
+    adapter.flush();
+    expect(adapter.chunkMeshCount).toBe(2);
+    expect(adapter.diagnostics().uploadsThisFrame).toBe(1);
+    adapter.dispose();
+  });
+
+  it("reports diagnostics: triangles, draw calls, and memory estimates", () => {
     const harness = createHarness();
+    flushAll(harness.adapter);
+    const diagnostics = harness.adapter.diagnostics();
+    // 4x4x4 box = 6 faces * 16 face-voxels = 96 quads = 192 triangles.
+    expect(diagnostics.installedChunks).toBe(1);
+    expect(diagnostics.triangles).toBe(192);
+    // One material group -> one draw call.
+    expect(diagnostics.drawCallEstimate).toBe(1);
+    // 384 verts * 3 floats * 4 bytes * 2 (pos+normal) + 576 indices * 4.
+    expect(diagnostics.meshBytes).toBe(384 * 3 * 4 * 2 + 96 * 6 * 4);
+    expect(diagnostics.lastMeshMs).toBeGreaterThanOrEqual(0);
+    expect(diagnostics.averageMeshMs).toBeGreaterThanOrEqual(0);
+    harness.adapter.dispose();
+    expect(harness.adapter.diagnostics().meshBytes).toBe(0);
+    expect(harness.adapter.diagnostics().triangles).toBe(0);
+    expect(harness.adapter.diagnostics().installedChunks).toBe(0);
+  });
+
+  it("disposes a deleted node subtree and cancels its pending meshes", () => {
+    const harness = createHarness();
+    flushAll(harness.adapter);
     const mesh = childMesh(harness.adapter);
     const dispose = vi.spyOn(mesh.geometry, "dispose");
     harness.commit({
@@ -300,11 +477,14 @@ describe("scene adapter", () => {
     expect(dispose).toHaveBeenCalled();
     expect(harness.adapter.objectForNode(CHILD)).toBeUndefined();
     expect(harness.adapter.chunkMeshCount).toBe(0);
+    flushAll(harness.adapter);
+    expect(chunkMeshes(harness.scene)).toHaveLength(0);
     harness.adapter.dispose();
   });
 
   it("clear disposes every projection and unsubscribes from the store", () => {
     const harness = createHarness();
+    flushAll(harness.adapter);
     const mesh = childMesh(harness.adapter);
     const dispose = vi.spyOn(mesh.geometry, "dispose");
     const materialDispose = vi.spyOn(
@@ -332,6 +512,7 @@ describe("scene adapter", () => {
 
   it("rebind disposes the previous projection and subscribes to the new store", () => {
     const { adapter, scene } = createHarness();
+    flushAll(adapter);
     const mesh = childMesh(adapter);
     const dispose = vi.spyOn(mesh.geometry, "dispose");
     const oldMaterial = mesh.material;
@@ -341,6 +522,7 @@ describe("scene adapter", () => {
     adapter.rebind(second.store);
     expect(dispose).toHaveBeenCalled();
     expect(materialDispose).toHaveBeenCalled();
+    flushAll(adapter);
     // The rebound projection uses a fresh material instance, not the
     // disposed cache entry of the replaced document.
     const reboundMesh = childMesh(adapter);
@@ -356,6 +538,7 @@ describe("scene adapter", () => {
         { volumeId: VOLUME, chunks: [{ coordinate: [0, 0, 0], revision: 1 }] },
       ],
     });
+    flushAll(adapter);
     expect(chunkMeshes(scene)).toHaveLength(1);
     second.adapter.dispose();
     adapter.dispose();
@@ -375,7 +558,145 @@ describe("scene adapter", () => {
         { volumeId: VOLUME, chunks: [{ coordinate: [0, 0, 0], revision: 1 }] },
       ],
     });
+    flushAll(harness.adapter);
     expect(snapshot).toEqual(before);
     harness.adapter.dispose();
+  });
+
+  it("never lets a stale worker result win over a newer edit", () => {
+    // A controllable fake worker lets the test deliver the OLD revision's
+    // result AFTER the newer edit was scheduled; the adapter must drop it
+    // and install only the newest mesh.
+    const worker: MeshingWorkerLike = {
+      postMessage: () => undefined,
+      onmessage: null,
+      terminate: () => undefined,
+    };
+    const document = createDocument({
+      documentId: documentId("document:scene:stale"),
+      metadata: { title: "stale fixture" },
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [CHILD],
+          transform: IDENTITY,
+          components: [],
+        },
+        {
+          nodeId: CHILD,
+          name: "Box",
+          parentId: ROOT,
+          children: [],
+          transform: IDENTITY,
+          components: [{ kind: "voxel", schemaVersion: 1, volumeId: VOLUME }],
+        },
+      ],
+      materials: [
+        {
+          materialId: materialId(1),
+          name: "box",
+          color: "#ff8800",
+          opacity: 1,
+          roughness: 0.5,
+          metallic: 0,
+          emissive: 0,
+        },
+      ],
+      volumes: [
+        { volumeId: VOLUME, bounds: { min: [0, 0, 0], max: [5, 5, 5] } },
+      ],
+    });
+    const handle = createDocumentStore({
+      document,
+      volumes: new Map([
+        [VOLUME, [{ coordinate: [0, 0, 0], values: boxChunkSeed() }]],
+      ]),
+    });
+    const adapter = createSceneAdapter({
+      scene: new THREE.Scene(),
+      createWorker: () => worker,
+    });
+    adapter.rebind(handle.store);
+
+    // Helper: read the pool's posted request and answer it.
+    const requests: Array<{
+      readonly requestId: number;
+      readonly input: Parameters<typeof handleMeshingRequest>[0];
+    }> = [];
+    const originalPost = worker.postMessage.bind(worker);
+    worker.postMessage = (message, transfer) => {
+      originalPost(message, transfer);
+      const record = message as Record<string, unknown>;
+      if (record.kind === "meshing-request") {
+        requests.push({
+          requestId: record.requestId as number,
+          input: record.input as Parameters<typeof handleMeshingRequest>[0],
+        });
+      }
+    };
+    const respond = (index: number): void => {
+      const request = requests[index];
+      if (request === undefined) throw new Error("missing request");
+      worker.onmessage?.({
+        data: {
+          kind: "meshing-result",
+          requestId: request.requestId,
+          result: handleMeshingRequest(request.input),
+        },
+      });
+    };
+
+    adapter.flush();
+    expect(requests).toHaveLength(1);
+
+    // A newer edit supersedes the in-flight revision-0 job.
+    const clone = JSON.parse(
+      JSON.stringify(handle.store.getDocument()),
+    ) as VoxelDocument & { revision: number };
+    clone.revision = handle.store.revision + 1;
+    const stagedVolumes = new Map<VolumeId, VoxelVolume>();
+    const volume = handle.store.stageVolume(VOLUME);
+    if (volume === undefined) throw new Error("missing staged volume");
+    volume.setVoxel([10, 10, 10], 1, handle.writeCapability);
+    stagedVolumes.set(VOLUME, volume);
+    handle.store.commit(
+      { document: clone, volumes: stagedVolumes },
+      {
+        revisionBefore: handle.store.revision,
+        revisionAfter: clone.revision,
+        transactionId: transactionId("transaction:scene:stale"),
+        source: "ui",
+        commandIds: [],
+        commandTypes: [],
+        changedNodeIds: [],
+        changedMaterialIds: [],
+        changedAnimationIds: [],
+        changedVolumes: [
+          {
+            volumeId: VOLUME,
+            chunks: [{ coordinate: [0, 0, 0], revision: 1 }],
+          },
+        ],
+      },
+      handle.writeCapability,
+    );
+    adapter.flush();
+    expect(requests).toHaveLength(2);
+
+    // Deliver the OLD result first: it must be dropped (the newer job is
+    // the latest for the chunk). Then the new result installs.
+    respond(0);
+    adapter.flush();
+    expect(adapter.chunkMeshCount).toBe(0);
+    respond(1);
+    adapter.flush();
+    expect(adapter.chunkMeshCount).toBe(1);
+    expect(adapter.diagnostics().installedChunks).toBe(1);
+    expect(adapter.diagnostics().staleDropped).toBe(0);
+    expect(adapter.diagnostics().cancelled).toBe(1);
+    adapter.dispose();
   });
 });

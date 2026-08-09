@@ -127,6 +127,26 @@ function meshesOf(composition: DesktopComposition): ProjectedMesh[] {
   return meshes;
 }
 
+/**
+ * Flushes the incremental meshing pipeline until every queue drains
+ * (ticket #23): the desktop render loop drives this per frame, so tests
+ * drive it deterministically before asserting installed geometry.
+ */
+function flushAll(composition: DesktopComposition): void {
+  for (let index = 0; index < 64; index += 1) {
+    composition.renderer.flush(new THREE.PerspectiveCamera());
+    const diagnostics = composition.renderer.diagnostics();
+    if (
+      diagnostics.pendingChunks === 0 &&
+      diagnostics.inFlightMeshes === 0 &&
+      diagnostics.uploadsThisFrame === 0
+    ) {
+      return;
+    }
+  }
+  throw new Error("meshing queues did not drain");
+}
+
 describe("desktop composition root", () => {
   it("injects services without a global engine singleton", () => {
     const storage = new MemoryProjectStorage();
@@ -170,6 +190,7 @@ describe("desktop composition root", () => {
     expect(result.documentId).toBe("document:test:0001");
     expect(composition.session.current?.documentId).toBe("document:test:0001");
     expect(composition.renderer.adapter.nodeCount).toBe(2);
+    flushAll(composition);
     expect(composition.renderer.adapter.chunkMeshCount).toBe(1);
     const boxGroup = composition.renderer.adapter.objectForNode(CHILD);
     expect(boxGroup).toBeDefined();
@@ -194,6 +215,7 @@ describe("desktop composition root", () => {
       "fixture.vxl",
       buildFixtureProject(),
     );
+    flushAll(composition);
     const boxGroup = composition.renderer.adapter.objectForNode(CHILD);
     const mesh = boxGroup?.children.find(
       (child): child is THREE.Mesh => child instanceof THREE.Mesh,
@@ -217,6 +239,7 @@ describe("desktop composition root", () => {
       "fixture.vxl",
       buildFixtureProject(),
     );
+    flushAll(composition);
     const boxGroup = composition.renderer.adapter.objectForNode(CHILD);
     const mesh = boxGroup?.children.find(
       (child): child is THREE.Mesh => child instanceof THREE.Mesh,
@@ -240,6 +263,7 @@ describe("desktop composition root", () => {
       },
     );
     expect(result.ok).toBe(true);
+    flushAll(composition);
     // The superseded geometry is disposed and a fresh mesh installed; an
     // isolated voxel adds 6 faces (24 verts) to the same chunk mesh.
     const freshMesh = composition.renderer.adapter
@@ -275,6 +299,7 @@ describe("desktop composition root", () => {
       },
     );
     expect(result.ok).toBe(true);
+    flushAll(composition);
     expect(composition.renderer.adapter.objectForNode(CHILD)).toBeUndefined();
     expect(composition.renderer.adapter.chunkMeshCount).toBe(0);
     expect(meshesOf(composition)).toHaveLength(0);
@@ -290,6 +315,7 @@ describe("desktop composition root", () => {
       "fixture.vxl",
       buildFixtureProject(),
     );
+    flushAll(composition);
     expect(composition.renderer.adapter.chunkMeshCount).toBe(1);
     const result = composition.fileService.closeProject();
     expect(result.ok).toBe(true);
@@ -311,6 +337,7 @@ describe("desktop composition root", () => {
     expect(result?.ok).toBe(true);
     expect(result?.path).toBe("picked.vxl");
     expect(composition.session.current?.documentId).toBe("document:test:0001");
+    flushAll(composition);
     expect(composition.renderer.adapter.chunkMeshCount).toBe(1);
     composition.dispose();
   });
