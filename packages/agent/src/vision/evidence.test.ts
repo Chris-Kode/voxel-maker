@@ -222,6 +222,7 @@ describe("evidence sets", () => {
           width: 2,
           height: 2,
           pngBytes: new Uint8Array(2 * 2 * 4),
+          rgbaBytes: new Uint8Array(2 * 2 * 4),
           revision: 1,
           semanticHash: "h",
           source: "live",

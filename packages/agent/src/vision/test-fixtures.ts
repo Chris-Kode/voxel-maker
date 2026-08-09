@@ -61,16 +61,22 @@ export function createFakeEvidenceCapture(
         "top",
       ];
       const hash = fakeSemanticHash(request.store);
-      const images: VisualEvidenceImage[] = views.map((view) => ({
-        view,
-        width,
-        height,
-        pngBytes: patternedBytes(hash, width, height, view),
-        revision: request.store.revision,
+      const images: VisualEvidenceImage[] = views.map((view) => {
+        const bytes = patternedBytes(hash, width, height, view);
+        return {
+          view,
+          width,
+          height,
+          pngBytes: bytes,
+          rgbaBytes: bytes,
+          revision: request.store.revision,
         semanticHash: hash,
-        source: request.source,
-        ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
-      }));
+          source: request.source,
+          ...(request.sessionId === undefined
+            ? {}
+            : { sessionId: request.sessionId }),
+        };
+      });
       return buildEvidenceSet({
         documentId: request.store.getDocument().documentId,
         revision: request.store.revision,

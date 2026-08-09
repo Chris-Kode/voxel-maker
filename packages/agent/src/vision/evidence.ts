@@ -50,8 +50,17 @@ export interface VisualEvidenceImage {
   readonly view: StandardViewId;
   readonly width: number;
   readonly height: number;
-  /** Byte-exact PNG of the rendered view (bounded). */
+  /**
+   * Byte-exact PNG of the rendered view (bounded). This is the payload
+   * that MAY be transmitted under image consent.
+   */
   readonly pngBytes: Uint8Array;
+  /**
+   * Straight-alpha RGBA pixels (`width * height * 4` bytes) of the same
+   * render. Local-only: used by the deterministic visual comparison,
+   * never transmitted and never retained.
+   */
+  readonly rgbaBytes: Uint8Array;
   /** Store revision the image was rendered from. */
   readonly revision: number;
   /** Canonical asset semantic hash at render time. */
@@ -238,6 +247,14 @@ export function validateEvidenceSet(
       throw evidenceError(
         "INVALID_EVIDENCE_SET",
         "Evidence image bytes exceed the bounded PNG size",
+      );
+    }
+    if (
+      image.rgbaBytes.byteLength !== image.width * image.height * 4
+    ) {
+      throw evidenceError(
+        "INVALID_EVIDENCE_SET",
+        "Evidence image RGBA buffer must match the image dimensions",
       );
     }
     if (image.revision !== set.revision) {

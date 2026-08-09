@@ -38,6 +38,7 @@ function renderEvidence(
     width: result.width,
     height: result.height,
     pngBytes: encodePng(result.rgba, result.width, result.height),
+    rgbaBytes: result.rgba,
     revision: result.revision,
     semanticHash: result.semanticHash,
     source: request.source,

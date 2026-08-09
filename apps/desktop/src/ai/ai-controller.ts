@@ -412,6 +412,10 @@ class AiControllerImpl implements AiController {
           : undefined;
       if (this.#imageConsent !== imageConsent) {
         this.#imageConsent = imageConsent;
+        this.#refinementPlan =
+          imageConsent === undefined
+            ? undefined
+            : this.#planFromConsent(imageConsent);
         this.#emit();
       }
     } catch {
@@ -419,6 +423,26 @@ class AiControllerImpl implements AiController {
         this.#configured = false;
         this.#emit();
       }
+    }
+  }
+
+  /** Derives the per-session plan from a stored consent record. */
+  #planFromConsent(
+    consent: ImageTransmissionConsent,
+  ): VisualRefinementPlan | undefined {
+    try {
+      return createVisualRefinementPlan({
+        providerId: consent.providerId,
+        model: consent.model,
+        views: [...consent.views],
+        resolution: consent.maxResolution,
+        maxImages: consent.maxImages,
+        maxVisualIterations: 3,
+        estimatedCostUsd: consent.estimatedCostUsd,
+      });
+    } catch {
+      // A stored record that cannot form a plan is treated as absent.
+      return undefined;
     }
   }
 

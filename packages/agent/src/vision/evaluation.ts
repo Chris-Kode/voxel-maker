@@ -174,8 +174,8 @@ function compareEvidence(
       continue;
     }
     const result = imageSimilarity(
-      before.pngBytes,
-      after.pngBytes,
+      before.rgbaBytes,
+      after.rgbaBytes,
       before.width,
       before.height,
     );

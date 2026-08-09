@@ -181,7 +181,7 @@ export function AiPanel({
             <input
               type="checkbox"
               checked={state.visualEnabled}
-              disabled={!state.imageConsent || busy}
+              disabled={busy}
               aria-label="Enable visual refinement evidence"
               onChange={(event) => {
                 controller.setVisualEnabled(event.target.checked);
