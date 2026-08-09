@@ -36,6 +36,22 @@ export {
   type ShapeToolOptions,
 } from "./shape-tool.js";
 export {
+  buildSetComponentsCommand,
+  buildSetMetadataCommand,
+  buildSetTransformFieldCommands,
+  formatMetadata,
+  formatNumber,
+  formatRotationDegrees,
+  formatVec3,
+  parseMetadataInput,
+  parseRotationDegreesInput,
+  parseScaleInput,
+  parseVec3Input,
+  transformFieldValue,
+  type FieldValue,
+  type TransformField,
+} from "./inspector.js";
+export {
   buildCreateChildCommand,
   buildDeleteCommand,
   buildRenameCommand,
