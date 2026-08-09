@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CommandBus, CommandRegistry } from "@voxel-maker/commands";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import { WorkspaceError } from "@voxel-maker/shared";
-import { createInspectionStore } from "../fixtures.js";
+import { FIXTURE_IDS, createInspectionStore } from "../fixtures.js";
 import { createInspector } from "../inspector.js";
 import { createMutator } from "../mutator.js";
 import { createPreviewSession, previewSessionId } from "../preview.js";
@@ -142,6 +142,162 @@ const SUCCESS_SCRIPT: readonly DeterministicStep[] = [
   },
   { text: "The proposal is ready for approval." },
 ];
+
+describe("agent loop: rigging and animation staging (plan S13.5)", () => {
+  it("stages rig and clip tools end to end, plays the overlay clip, and applies", async () => {
+    const h = harness();
+    const script: readonly DeterministicStep[] = [
+      { text: "I will inspect the current state.", toolCalls: [summaryCall()] },
+      {
+        text: "Rigging the body and adding a looping clip.",
+        toolCalls: [
+          {
+            id: "call_pivot",
+            name: "setNodePivot",
+            arguments: { nodeId: FIXTURE_IDS.body, pivot: [0, 0, 0] },
+          },
+          {
+            id: "call_joint",
+            name: "addNodeJoint",
+            arguments: { nodeId: FIXTURE_IDS.body },
+          },
+          {
+            id: "call_anim",
+            name: "createAnimation",
+            arguments: {
+              animationId: "anim:loop:test",
+              duration: 2,
+              loop: "loop",
+            },
+          },
+          {
+            id: "call_track",
+            name: "addTrack",
+            arguments: {
+              animationId: "anim:loop:test",
+              trackId: "track:loop:test",
+              targetNodeId: FIXTURE_IDS.body,
+              interpolation: "linear",
+            },
+          },
+          {
+            id: "call_k0",
+            name: "setKeyframe",
+            arguments: {
+              animationId: "anim:loop:test",
+              trackId: "track:loop:test",
+              keyframeId: "keyframe:loop:0",
+              time: 0,
+              channel: "rotation",
+              value: [0, 0, 0, 1],
+            },
+          },
+          {
+            id: "call_k1",
+            name: "setKeyframe",
+            arguments: {
+              animationId: "anim:loop:test",
+              trackId: "track:loop:test",
+              keyframeId: "keyframe:loop:1",
+              time: 2,
+              channel: "rotation",
+              value: [0, 1, 0, 0],
+            },
+          },
+        ],
+      },
+      {
+        text: "Verifying the staged result.",
+        toolCalls: [summaryCall("call_summary2")],
+      },
+      { text: "The proposal is ready for approval." },
+    ];
+    const session = h.makeSession(script);
+    const result = runOk(await session.run());
+    expect(result.stagedCommands).toBe(6);
+    expect(session.preview.stagedCount).toBe(6);
+    // The staged overlay clip is playable before Apply with no live effect.
+    const overlay = session.preview.overlayClip("anim:loop:test" as never);
+    expect(overlay?.duration).toBe(2);
+    expect(overlay?.tracks[0]?.keyframes).toHaveLength(2);
+    expect(
+      h.store.getDocument().animations["anim:loop:test" as never],
+    ).toBeUndefined();
+    const applied = session.apply({ label: "AI rig proposal" });
+    expect(applied.ok).toBe(true);
+    const doc = h.store.getDocument();
+    expect(doc.animations["anim:loop:test" as never]).toBeDefined();
+    expect(
+      (doc.nodes[FIXTURE_IDS.body]?.components ?? []).some(
+        (component) => component.kind === "pivot",
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed when animation budgets are exhausted", async () => {
+    const h = harness();
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "Adding a huge clip.",
+        toolCalls: [
+          {
+            id: "call_anim",
+            name: "createAnimation",
+            arguments: {
+              animationId: "anim:loop:huge",
+              duration: 10_000,
+              loop: "loop",
+            },
+          },
+        ],
+      },
+    ];
+    const session = h.makeSession(script, {
+      budgets: { maxClipDurationSeconds: 60 },
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    expect(session.preview.closed).toBe(true);
+    expect(
+      h.store.getDocument().animations["anim:loop:huge" as never],
+    ).toBeUndefined();
+  });
+});
+
+describe("agent loop: bounded context recipes (plan S13.1/S13.2)", () => {
+  it("appends bounded rig/animation context to the system prompt when enabled", async () => {
+    const h = harness();
+    const session = h.makeSession(
+      [{ text: "I will use the provided context to plan.", toolCalls: [] }],
+      { contextRecipes: { rigging: true, animation: true } },
+    );
+    const result = await session.run();
+    expect(result.ok).toBe(true);
+    const systemMessages = session.messages.filter(
+      (message) => message.role === "system",
+    );
+    expect(systemMessages.length).toBe(2);
+    const block = systemMessages[1]?.content ?? "";
+    expect(block).toContain("Rig context");
+    expect(block).toContain("Animation context");
+    expect(block).toContain('"hierarchy"');
+    expect(block).toContain('"edgeKeyframes"');
+    // The block is bounded JSON, never a full voxel dump.
+    expect(block).not.toContain('"voxels"');
+  });
+
+  it("keeps the fixed system prompt when recipes are disabled", async () => {
+    const h = harness();
+    const session = h.makeSession([
+      { text: "No context recipes requested.", toolCalls: [] },
+    ]);
+    await session.run();
+    const systemMessages = session.messages.filter(
+      (message) => message.role === "system",
+    );
+    expect(systemMessages.length).toBe(1);
+  });
+});
 
 describe("agent loop: successful path (AC: explicit states)", () => {
   it("walks understand->inspect->plan->stage->inspect-staged->validate->approve", async () => {

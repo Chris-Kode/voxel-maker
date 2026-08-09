@@ -5,7 +5,13 @@ import type {
   ToolCall,
 } from "@voxel-maker/agent";
 import type { IntAabb } from "@voxel-maker/math";
-import type { MaterialId } from "@voxel-maker/shared";
+import type { AnimationDescriptor } from "@voxel-maker/model";
+import type {
+  AnimationId,
+  MaterialId,
+  NodeId,
+  VolumeId,
+} from "@voxel-maker/shared";
 import { STANDARD_PREVIEW_VIEWS } from "@voxel-maker/renderer";
 import {
   CHAIR_REGIONS,
@@ -63,9 +69,22 @@ export interface PreviewSignal {
   ) => boolean;
 }
 
-/** One fixed evaluation scenario. */
-export interface GeometryScenario {
-  readonly id: ScenarioId;
+/** One overlay-clip playback signal (plan S13.5, ticket #36). */
+export interface PlaybackSignal {
+  readonly name: string;
+  /**
+   * Check over the staged overlay clip read before Apply: `store` is the
+   * preview session read surface, `clip` the staged descriptor.
+   */
+  readonly check: (
+    store: DocumentStoreRead,
+    clip: AnimationDescriptor,
+  ) => boolean;
+}
+
+/** All fields of one fixed evaluation scenario (shared by both suites). */
+export interface ScenarioShape {
+  readonly id: string;
   readonly name: string;
   readonly description: string;
   /**
@@ -77,7 +96,20 @@ export interface GeometryScenario {
   /** The fixed user prompt (recorded as the scenario prompt version). */
   readonly prompt: string;
   readonly fixtureVersion: string;
-  readonly fixture: "empty-scaffold" | "chair" | "chair-armrest";
+  readonly fixture:
+    | "empty-scaffold"
+    | "chair"
+    | "chair-armrest"
+    | "chest-lid"
+    | "wheel"
+    | "wings"
+    | "linked-arm"
+    | "abstract"
+    | "chest-lid-rigged"
+    | "wheel-rigged"
+    | "wings-rigged"
+    | "linked-arm-rigged"
+    | "abstract-rigged";
   /** Deterministic starting selection snapshots (empty = none). */
   readonly selection: readonly EditorSelectionSnapshot[];
   /** Golden recorded tool trace (deterministic provider script). */
@@ -97,7 +129,31 @@ export interface GeometryScenario {
   readonly taskChecks: readonly TaskCheck[];
   /** Rendered-preview signals over before/after evidence. */
   readonly previewSignals: readonly PreviewSignal[];
+  /**
+   * Voxel scan volumes (rig/animation scenarios, ticket #36): one entry
+   * per volume with its scan region. Defaults to the single
+   * `scanRegion` scan of `volume:main`.
+   */
+  readonly scanVolumes?: readonly {
+    readonly volumeId: VolumeId;
+    readonly region: IntAabb;
+  }[];
+  /** Node ids the scenario may change (rig/animation allowances). */
+  readonly allowedChangedNodes?: readonly NodeId[];
+  /** Animation (clip) ids the scenario may change. */
+  readonly allowedChangedAnimations?: readonly AnimationId[];
+  /**
+   * Staged clip id played before Apply (plan S13.5): the harness reads
+   * the overlay clip from the preview session and evaluates the
+   * playback signals over the staged state, with no live mutation.
+   */
+  readonly playbackClipId?: AnimationId;
+  /** Overlay-clip playback signals evaluated before Apply. */
+  readonly playbackSignals?: readonly PlaybackSignal[];
 }
+
+/** One fixed geometry evaluation scenario (ticket #35). */
+export type GeometryScenario = ScenarioShape & { readonly id: ScenarioId };
 
 /** JSON-safe region value for tool-call arguments. */
 const box = (

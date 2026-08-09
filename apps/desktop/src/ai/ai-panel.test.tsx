@@ -279,7 +279,91 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+/** A deterministic rig+clip proposal script (plan S13.5, ticket #36). */
+const RIG_SCRIPT: readonly DeterministicStep[] = [
+  { text: "I will inspect the box.", toolCalls: [summaryCall()] },
+  {
+    text: "Rigging the child and staging a clip.",
+    toolCalls: [
+      {
+        id: "call_anim",
+        name: "createAnimation",
+        arguments: {
+          animationId: "anim:ai:test",
+          name: "AI Spin",
+          duration: 2,
+          loop: "loop",
+        },
+      },
+      {
+        id: "call_track",
+        name: "addTrack",
+        arguments: {
+          animationId: "anim:ai:test",
+          trackId: "track:ai:test",
+          targetNodeId: "node:ai:child",
+          interpolation: "linear",
+        },
+      },
+      {
+        id: "call_k0",
+        name: "setKeyframe",
+        arguments: {
+          animationId: "anim:ai:test",
+          trackId: "track:ai:test",
+          keyframeId: "keyframe:ai:test:0",
+          time: 0,
+          channel: "rotation",
+          value: [0, 0, 0, 1],
+        },
+      },
+      {
+        id: "call_k1",
+        name: "setKeyframe",
+        arguments: {
+          animationId: "anim:ai:test",
+          trackId: "track:ai:test",
+          keyframeId: "keyframe:ai:test:1",
+          time: 2,
+          channel: "rotation",
+          value: [0, Math.SQRT1_2, 0, Math.SQRT1_2],
+        },
+      },
+    ],
+  },
+  {
+    text: "Verifying the staged rig and clip.",
+    toolCalls: [summaryCall("call_summary2")],
+  },
+  { text: "The proposal is ready for approval." },
+];
+
 describe("ai panel", () => {
+  it("lists staged overlay clips with a pre-Apply play control (plan S13.5)", async () => {
+    const mounted = mountPanel({ script: RIG_SCRIPT });
+    await act(async () => {
+      await mounted.composition.ai.refreshStatus();
+    });
+    const prompt = textarea(mounted.panel, "AI edit request");
+    act(() => {
+      setValue(prompt, "Rig the child and animate it.");
+    });
+    await act(async () => {
+      button(mounted.panel, "Run").click();
+      await flushAsync();
+    });
+    expect(mounted.panel.textContent).toContain("Proposal ready for review");
+    expect(mounted.panel.textContent).toContain("1 staged overlay clip");
+    expect(mounted.panel.textContent).toContain("AI Spin");
+    const play = button(mounted.panel, "Play overlay clip");
+    // Playing the staged clip drives the runtime-only sampler; the staged
+    // overlay clip is playable before Apply.
+    act(() => {
+      play.click();
+    });
+    expect(button(mounted.panel, "Stop")).toBeDefined();
+    mounted.unmount();
+  });
   it("shows the empty state without a document", () => {
     const mounted = mountPanel({ withDocument: false });
     expect(mounted.panel.textContent).toContain(

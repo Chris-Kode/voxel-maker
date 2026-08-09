@@ -41,6 +41,9 @@ import {
   type RefinementEvaluation,
   type VisualRefinementPlan,
 } from "@voxel-maker/agent";
+import { evaluateAnimationRuntime } from "@voxel-maker/animation";
+import type { AnimationDescriptor } from "@voxel-maker/model";
+import type { AnimationId } from "@voxel-maker/shared";
 
 /**
  * Desktop AI controller (plan S12.10/S12.14/S12.15, ticket #34): the
@@ -56,6 +59,9 @@ import {
  * journal untouched. Offline or unconfigured providers degrade to a
  * clear status while manual editing keeps working (ADR-0008/0010).
  */
+
+/** Max staged clip summaries kept in the panel snapshot (plan S13.5). */
+const MAX_STAGED_CLIPS = 16;
 
 /** Max characters of one user prompt. */
 export const MAX_AI_PROMPT_LENGTH = 8_000;
@@ -131,6 +137,18 @@ export interface AiControllerState {
   readonly applied:
     | { readonly label: string; readonly stagedCommandCount: number }
     | undefined;
+  /**
+   * Bounded summaries of the staged overlay clips (plan S13.5): the
+   * staged clips are playable before Apply through `overlayClip`.
+   */
+  readonly stagedClips: readonly {
+    readonly animationId: string;
+    readonly name: string;
+    readonly duration: number;
+    readonly loop: "once" | "loop";
+    readonly trackCount: number;
+    readonly keyframeCount: number;
+  }[];
   /** True when the user enabled visual refinement evidence (opt-in). */
   readonly visualEnabled: boolean;
   /** Stored image-transmission consent for the current provider/model. */
@@ -217,6 +235,26 @@ export interface AiController {
   applyForced(label?: string): void;
   /** Discards the staged proposal; no history entry is created. */
   discard(): void;
+  /**
+   * Read-only snapshot of one staged overlay clip (plan S13.5): playback
+   * consumers (timeline/playback controller) play the staged clip before
+   * Apply with no live mutation. Returns undefined when the clip is not
+   * staged or no proposal is open.
+   */
+  overlayClip(animationId: string): AnimationDescriptor | undefined;
+  /**
+   * Evaluates one staged overlay clip at `time` against the staged
+   * document (plan S13.5): returns the sample time and the bounded list
+   * of track-target nodes whose world transform moved from the t=0
+   * sample. Playback consumers drive this read-only sampler before Apply;
+   * it never mutates live or staged state.
+   */
+  sampleStagedClip(
+    animationId: string,
+    time: number,
+  ):
+    | { readonly time: number; readonly movedNodes: readonly string[] }
+    | undefined;
   /** Dismisses a terminal error/canceled phase and returns to idle. */
   dismiss(): void;
   /** Conflict recovery: discards and re-inspects the changed live state. */
@@ -360,11 +398,89 @@ class AiControllerImpl implements AiController {
       error: this.#error,
       reason: this.#reason,
       applied: this.#applied,
+      stagedClips: this.#stagedClips(),
       visualEnabled: this.#visualEnabled,
       imageConsent: this.#imageConsent,
       refinementPlan: this.#refinementPlan,
       refinement: this.#refinement,
     };
+  }
+
+  /** Bounded staged overlay clip summaries (plan S13.5, ticket #36). */
+  #stagedClips(): AiControllerState["stagedClips"] {
+    const preview = this.#preview;
+    if (preview === undefined || preview.closed) return [];
+    // Only clips the run actually staged are "overlay clips": the preview
+    // clones the whole base document, so pre-existing clips must not be
+    // reported as staged. The diff tracks the staged animation ids.
+    const changedIds = new Set(
+      (this.#diff?.changedAnimationIds ?? []).map((id) => String(id)),
+    );
+    try {
+      const animations = Object.values(preview.getDocument().animations)
+        .filter((clip) => changedIds.has(String(clip.animationId)))
+        .slice(0, MAX_STAGED_CLIPS);
+      return animations.map((clip) => ({
+        animationId: clip.animationId,
+        name: clip.name ?? clip.animationId,
+        duration: clip.duration,
+        loop: clip.loop,
+        trackCount: clip.tracks.length,
+        keyframeCount: clip.tracks.reduce(
+          (sum, track) => sum + track.keyframes.length,
+          0,
+        ),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Read-only staged overlay clip snapshot for pre-Apply playback. */
+  overlayClip(animationId: string): AnimationDescriptor | undefined {
+    const preview = this.#preview;
+    if (preview === undefined || preview.closed) return undefined;
+    try {
+      return preview.overlayClip(animationId as AnimationId);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Bounded evaluated sample of one staged overlay clip (plan S13.5). */
+  sampleStagedClip(
+    animationId: string,
+    time: number,
+  ):
+    | { readonly time: number; readonly movedNodes: readonly string[] }
+    | undefined {
+    const preview = this.#preview;
+    if (preview === undefined || preview.closed) return undefined;
+    try {
+      const clip = preview.overlayClip(animationId as AnimationId);
+      if (clip === undefined) return undefined;
+      const duration = clip.duration;
+      const boundedTime = Math.max(0, Math.min(time, duration));
+      const document = preview.getDocument();
+      const sample = evaluateAnimationRuntime(document, clip, boundedTime);
+      const base = evaluateAnimationRuntime(document, clip, 0);
+      const movedNodes: string[] = [];
+      for (const track of clip.tracks) {
+        const target = track.targetNodeId;
+        const before = base.world.get(target);
+        const after = sample.world.get(target);
+        if (before === undefined || after === undefined) continue;
+        if (before.some((value, index) => value !== after[index])) {
+          movedNodes.push(String(target));
+        }
+      }
+      return {
+        time: sample.time,
+        movedNodes: movedNodes.slice(0, MAX_STAGED_CLIPS),
+      };
+    } catch {
+      return undefined;
+    }
   }
 
   subscribe(listener: () => void): () => void {
@@ -714,6 +830,12 @@ class AiControllerImpl implements AiController {
         this.#onEvent(event);
       },
       isLiveCurrent: () => this.#liveCurrent(),
+      // Bounded rig/animation context recipes (plan S13.1/S13.2, ticket
+      // #36): the loop appends the compact, bounded rig and animation
+      // summaries to the system prompt so rigging/animation requests have
+      // the hierarchy/pivot/bounds/transform/constraint/clip/track/
+      // keyframe context they need.
+      contextRecipes: { rigging: true, animation: true },
     });
 
     this.#agentSession = agent;

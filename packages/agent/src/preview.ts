@@ -9,6 +9,7 @@ import {
   err,
   ok,
   transactionId,
+  type AnimationId,
   type CommandId,
   type DocumentId,
   type MaterialId,
@@ -17,7 +18,8 @@ import {
   type VolumeId,
 } from "@voxel-maker/shared";
 import type { Vec3i } from "@voxel-maker/math";
-import type { VoxelDocument } from "@voxel-maker/model";
+import type { AnimationDescriptor, VoxelDocument } from "@voxel-maker/model";
+import { deepFreeze } from "./freeze.js";
 import type {
   DocumentCommitted,
   DocumentStoreRead,
@@ -141,6 +143,12 @@ export interface PreviewDiff {
   readonly changedNodeIds: readonly NodeId[];
   readonly changedMaterialIds: readonly MaterialId[];
   readonly changedVolumeIds: readonly VolumeId[];
+  /**
+   * Changed animation (clip) ids in staging order, bounded by
+   * `maxDiffEntries` (plan S13.5: staged clips are visualized and played
+   * before Apply).
+   */
+  readonly changedAnimationIds: readonly AnimationId[];
   /** Cumulative proposed voxel changes of the staged commands. */
   readonly voxelEstimate: number;
   /** True when an id list was capped at the diff entry budget. */
@@ -182,6 +190,14 @@ export interface PreviewSession extends DocumentStoreRead {
   stageMany(commands: readonly Command[]): StageManyResult;
   /** Bounded semantic diff of the staged overlay. */
   diff(): DiffResult;
+  /**
+   * Read-only snapshot of one staged animation descriptor (plan S13.5):
+   * consumers play the overlay clip before Apply through the animation
+   * runtime; the returned descriptor is frozen and never mutates live
+   * state. Returns undefined when the clip is not staged, throws when
+   * the session is closed.
+   */
+  overlayClip(animationId: AnimationId): AnimationDescriptor | undefined;
   /** One optimistic live transaction with all staged commands. */
   apply(options?: ApplyOptions): TransactionResult;
   /** Releases all preview resources with no live side effects. */
@@ -224,6 +240,7 @@ class PreviewSessionImpl implements PreviewSession {
   #changedNodes = new Set<NodeId>();
   #changedMaterials = new Set<MaterialId>();
   #changedVolumes = new Set<VolumeId>();
+  #changedAnimations = new Set<AnimationId>();
   #commandTypes: { type: string; count: number }[] = [];
 
   constructor(state: PreviewSessionState) {
@@ -353,6 +370,9 @@ class PreviewSessionImpl implements PreviewSession {
     for (const volume of event.changedVolumes) {
       this.#changedVolumes.add(volume.volumeId);
     }
+    for (const id of event.changedAnimationIds) {
+      this.#changedAnimations.add(id);
+    }
     for (const type of event.commandTypes) {
       const entry = this.#commandTypes.find((item) => item.type === type);
       if (entry !== undefined) {
@@ -400,9 +420,22 @@ class PreviewSessionImpl implements PreviewSession {
       changedNodeIds: cap([...this.#changedNodes]),
       changedMaterialIds: cap([...this.#changedMaterials]),
       changedVolumeIds: cap([...this.#changedVolumes]),
+      changedAnimationIds: cap([...this.#changedAnimations]),
       voxelEstimate: this.#voxelEstimate,
       truncated,
     });
+  }
+
+  overlayClip(animationId: AnimationId): AnimationDescriptor | undefined {
+    this.#ensureOpen();
+    const descriptor = this.#store.getDocument().animations[animationId];
+    if (descriptor === undefined) return undefined;
+    // A deep-frozen snapshot: playback consumers must never mutate the
+    // staged descriptor, which would bypass the staging budgets.
+    const snapshot = JSON.parse(
+      JSON.stringify(descriptor),
+    ) as AnimationDescriptor;
+    return deepFreeze(snapshot);
   }
 
   apply(options: ApplyOptions = {}): TransactionResult {
@@ -452,6 +485,7 @@ class PreviewSessionImpl implements PreviewSession {
     this.#changedNodes.clear();
     this.#changedMaterials.clear();
     this.#changedVolumes.clear();
+    this.#changedAnimations.clear();
     this.#commandTypes = [];
   }
 

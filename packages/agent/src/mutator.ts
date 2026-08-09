@@ -187,6 +187,9 @@ export function createMutator(options: MutatorOptions): Mutator {
         baseRevision,
         voxelEstimate: payload.voxelEstimate,
         command: commandValue,
+        ...(payload.animation === undefined
+          ? {}
+          : { animation: payload.animation }),
         truncated: false,
       };
       return { ok: true, value: deepFreeze(value) };

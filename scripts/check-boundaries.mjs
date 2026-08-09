@@ -92,6 +92,8 @@ const allowedDependencies = {
     "commands",
     "agent",
     "renderer",
+    "rigging",
+    "animation",
   ],
   // QA harness (ticket #45): measures every gate metric through the real
   // seams, so it may depend on every semantic and adapter package. Nothing

@@ -12,7 +12,10 @@ import type { JsonSchema } from "./schema.js";
 export const INSPECTION_CONTRACT_VERSION = 1;
 
 /** Contract version of the v1 mutation surface (plan S11.5/S11.6). */
-export const MUTATION_CONTRACT_VERSION = 1;
+/** Version of the v1 mutation envelope (bumped to 2 when the rigging and
+ * animation tool surface and the optional `animation` reservation field
+ * were added, ticket #36). */
+export const MUTATION_CONTRACT_VERSION = 2;
 
 /**
  * Capability classes (plan S11.9): inspection is authorized separately
@@ -107,12 +110,14 @@ export function outputSchema(
   toolName: string,
   payload: Readonly<Record<string, JsonSchema>>,
   requiredPayload: readonly string[],
+  contractVersion: number = INSPECTION_CONTRACT_VERSION,
 ): JsonSchema {
   return {
     type: "object",
     additionalProperties: false,
     properties: {
       ...BASE_RESPONSE_PROPERTIES,
+      contractVersion: { const: contractVersion },
       tool: { enum: [toolName] },
       ...payload,
     },
@@ -143,8 +148,20 @@ export function mutationOutputSchema(toolName: string): JsonSchema {
         },
         required: ["id", "type", "schemaVersion", "payload"],
       },
+      animation: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          tracks: { type: "integer", minimum: 1 },
+          keyframes: { type: "integer", minimum: 1 },
+          clipDurationSeconds: { type: "number", minimum: 0 },
+        },
+        description:
+          "Optional animation deltas (rigging/animation tools, plan S13.5) reserved against the session animation budgets",
+      },
     },
     ["baseRevision", "voxelEstimate", "command"],
+    MUTATION_CONTRACT_VERSION,
   );
 }
 

@@ -6,7 +6,12 @@ import {
 } from "@voxel-maker/model";
 import { voxelKey } from "./fixtures.js";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
-import type { MaterialId, NodeId, VolumeId } from "@voxel-maker/shared";
+import type {
+  AnimationId,
+  MaterialId,
+  NodeId,
+  VolumeId,
+} from "@voxel-maker/shared";
 
 /**
  * Structural metrics of the fixed evaluation suite (plan S12.2, ticket
@@ -274,7 +279,33 @@ export function changedMaterials(
   return changes;
 }
 
-/** Changed node ids between two documents (any canonical difference). */
+/**
+ * Exact changed-animation (clip) id set between two documents: ids whose
+ * descriptor differs by deep equality (ticket #36 follow-up evidence).
+ */
+export function changedAnimations(
+  before: VoxelDocument,
+  after: VoxelDocument,
+): readonly AnimationId[] {
+  const changed: AnimationId[] = [];
+  const beforeIds = Object.keys(before.animations);
+  const afterIds = Object.keys(after.animations);
+  const ids = new Set([...beforeIds, ...afterIds]);
+  for (const id of ids) {
+    const key = id as AnimationId;
+    const beforeAnimation = before.animations[key];
+    const afterAnimation = after.animations[key];
+    if (
+      beforeAnimation === undefined ||
+      afterAnimation === undefined ||
+      JSON.stringify(beforeAnimation) !== JSON.stringify(afterAnimation)
+    ) {
+      changed.push(key);
+    }
+  }
+  return changed;
+}
+
 export function changedNodes(
   before: VoxelDocument,
   after: VoxelDocument,

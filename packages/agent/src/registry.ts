@@ -1,4 +1,6 @@
 import {
+  registerAnimationCommands,
+  registerArticulationCommands,
   registerBatchCommands,
   registerMaterialCommands,
   registerNodeCommands,
@@ -62,11 +64,11 @@ export const MUTATION_TOOL_CONTRACTS: readonly ToolContract[] = Object.freeze(
 );
 
 /**
- * Composes the preview command registry (plan S11.11): every registered
- * command family the v1 scene/material/coarse-geometry mutation surface
- * can construct. Rigging and animation commands are later-stage surfaces
- * (S11.7/S11.8) and are intentionally absent; staging any other command
- * type fails with the stable UNKNOWN_COMMAND_TYPE error.
+ * Composes the preview command registry (plan S11.11/S13.5): every
+ * registered command family the v1 mutation surface can construct —
+ * scene/material/coarse-geometry plus the articulation (pivot/joint/
+ * constraint) and animation (clip/track/keyframe) families. Staging any
+ * other command type fails with the stable UNKNOWN_COMMAND_TYPE error.
  */
 export function createPreviewRegistry(): CommandRegistry {
   const registry = new CommandRegistry();
@@ -76,5 +78,7 @@ export function createPreviewRegistry(): CommandRegistry {
   registerNodeCommands(registry);
   registerMaterialCommands(registry);
   registerVolumeCommands(registry);
+  registerArticulationCommands(registry);
+  registerAnimationCommands(registry);
   return registry;
 }

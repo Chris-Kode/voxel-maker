@@ -1,4 +1,4 @@
-import { EVALUATION_VERSION } from "./versions.js";
+import { EVALUATION_VERSION, RIG_EVALUATION_VERSION } from "./versions.js";
 import { SCORE_DIMENSIONS, type ScoreDimension } from "./score.js";
 import type { GeometryEvalResult } from "./harness.js";
 
@@ -65,12 +65,15 @@ export interface BaselineRecord {
   readonly recordedAtVersion: string;
 }
 
-function suiteBaselines(scenarioId: string): readonly BaselineRecord[] {
+function suiteBaselines(
+  scenarioId: string,
+  version: string = EVALUATION_VERSION,
+): readonly BaselineRecord[] {
   return SCORE_DIMENSIONS.map((dimension) => ({
     scenarioId,
     dimension,
     score: 1,
-    recordedAtVersion: EVALUATION_VERSION,
+    recordedAtVersion: version,
   }));
 }
 
@@ -86,6 +89,16 @@ export const RECORDED_BASELINES: readonly BaselineRecord[] = Object.freeze([
   ...suiteBaselines("shorter-legs"),
   ...suiteBaselines("red-seat"),
   ...suiteBaselines("mirror-left"),
+  ...suiteBaselines("chest-lid-open", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("wheel-spin", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("wings-flap", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("arm-reach", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("abstract-rig", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("chest-farther", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("wheel-slower", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("wings-one", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("arm-elbow-limit", RIG_EVALUATION_VERSION),
+  ...suiteBaselines("wheel-faster", RIG_EVALUATION_VERSION),
 ]);
 
 /** Baseline lookup: recorded score of one scenario dimension. */
@@ -136,6 +149,7 @@ const DIMENSION_SCORES: Readonly<
   limitFailures: (result) => result.scores.limitFailures.score,
   semanticStructure: (result) => result.scores.semanticStructure.score,
   renderedPreviews: (result) => result.scores.renderedPreviews.score,
+  overlayPlayback: (result) => result.scores.overlayPlayback.score,
 };
 
 /**

@@ -69,6 +69,7 @@ export {
   type GeometryScenario,
   type PreviewSignal,
   type ScenarioId,
+  type ScenarioShape,
   type TaskCheck,
 } from "./scenarios.js";
 export {

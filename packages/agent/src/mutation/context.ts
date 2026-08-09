@@ -24,10 +24,26 @@ export interface MutationToolContext {
   readonly commandSequence: number;
 }
 
+/** Animation deltas a staging tool reports for the session budget ledger. */
+export type AnimationProposal = {
+  /** New tracks this command would add. */
+  readonly tracks?: number;
+  /** New keyframes this command would write. */
+  readonly keyframes?: number;
+  /** Clip duration in seconds this command would establish. */
+  readonly clipDurationSeconds?: number;
+};
+
 /** One constructed command plus its bounded voxel-change estimate. */
 export interface MutationPayload {
   readonly command: Command;
   readonly voxelEstimate: number;
+  /**
+   * Optional animation deltas (rigging/animation tools, plan S13.5): the
+   * loop reserves these against the session's animation budgets before
+   * staging, exactly like the voxel estimate.
+   */
+  readonly animation?: AnimationProposal;
 }
 
 /** Handler signature shared by every mutation tool. */
