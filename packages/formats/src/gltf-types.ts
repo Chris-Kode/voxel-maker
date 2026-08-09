@@ -3,10 +3,10 @@ import type { Quat, Vec3 } from "@voxel-maker/math";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 
 /**
- * Shared types for the static glTF 2.0 / GLB exporter (ADR-0011, plan
- * S16.1-S16.3, ticket #41). The exporter works directly on the frozen
- * document and the session volume read views; it never touches renderer
- * objects (plan S16.2 "renderer-independent mesh DTO").
+ * Shared types for the glTF 2.0 / GLB exporter (ADR-0011, plan
+ * S16.1-S16.4, tickets #41/#42). The exporter works directly on the
+ * frozen document and the session volume read views; it never touches
+ * renderer objects (plan S16.2 "renderer-independent mesh DTO").
  */
 
 /** glTF 2.0 asset version written by every export. */

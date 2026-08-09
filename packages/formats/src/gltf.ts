@@ -14,8 +14,9 @@ import {
 } from "./gltf-types.js";
 
 /**
- * Deterministic glTF 2.0 / GLB encoder (plan S16.3, ADR-0011, ticket #41).
- * The encoder turns the frozen export scene graph into stable bytes: the
+ * Deterministic glTF 2.0 / GLB encoder (plan S16.3-S16.4, ADR-0011,
+ * tickets #41/#42). The encoder turns the frozen export scene graph into
+ * stable bytes: the
  * JSON key order, accessor layout, buffer layout, and padding are fixed,
  * so the same document always produces the same file. `encodeGltfJson`
  * embeds the buffer as a base64 data URI (a single self-contained `.gltf`

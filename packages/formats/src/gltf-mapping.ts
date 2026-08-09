@@ -34,8 +34,8 @@ import {
 } from "./gltf-animation.js";
 
 /**
- * Document -> static glTF export mapping (plan S16.1-S16.3, ADR-0011,
- * ticket #41).
+ * Document -> glTF export mapping (plan S16.1-S16.4, ADR-0011, tickets
+ * #41/#42).
  *
  * The editor and glTF bases are both emitted as right-handed `+Y` up with
  * `+X` right; editor `+Z` forward is retained as positive glTF Z, so no
