@@ -8,12 +8,13 @@ import {
   buildRenameCommand,
   buildReparentCommand,
   deleteFeedback,
+  isAncestor,
   reparentFeedback,
+  type DeleteFeedback,
   type EditorStore,
   type ReparentFeedback,
   type ToolModifiers,
 } from "@voxel-maker/editor";
-import type { VoxelDocument } from "@voxel-maker/model";
 import {
   createPanelIds,
   executeTransaction,
@@ -111,15 +112,14 @@ export function HierarchyPanel({
 
   const createChild = (parentId: NodeId): void => {
     if (document.document === undefined) return;
-    const command = buildCreateChildCommand(
+    const created = buildCreateChildCommand(
       panelIds.nextCommandId(),
       document.document,
       parentId,
     );
-    const payload = command.payload as { nodeId: NodeId; parentId: NodeId };
-    if (commit([command], "Create node")) {
-      setExpanded((previous) => new Set(previous).add(payload.parentId));
-      editor.setSelection([{ kind: "node", nodeId: payload.nodeId }]);
+    if (commit([created.command], "Create node")) {
+      setExpanded((previous) => new Set(previous).add(parentId));
+      editor.setSelection([{ kind: "node", nodeId: created.nodeId }]);
     }
   };
 
@@ -162,11 +162,10 @@ export function HierarchyPanel({
       editor.setSelection(
         editorState.selection.filter((entry) => {
           if (entry.kind !== "node") return true;
-          return (
-            entry.nodeId !== nodeId &&
-            (document.document === undefined ||
-              !isDescendantOf(document.document, nodeId, entry.nodeId))
-          );
+          if (document.document === undefined) return true;
+          // Prune the deleted node and every descendant from the runtime
+          // selection (plan S7.2).
+          return !isAncestor(document.document, entry.nodeId, nodeId);
         }),
       );
     }
@@ -379,7 +378,36 @@ export function HierarchyPanel({
           ＋ Root child
         </button>
       </h2>
-      <div className="hierarchy-tree">
+      <div
+        className="hierarchy-tree"
+        onDragOver={(event) => {
+          // Allow the panel background to receive the drop so it can
+          // report a missing target instead of silently swallowing it.
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          if (dragging === undefined) return;
+          const dragged = dragging;
+          setDragging(undefined);
+          setDropFeedback(undefined);
+          if (document.document === undefined) return;
+          const feedback = reparentFeedback(
+            document.document,
+            dragged,
+            undefined,
+          );
+          if (!feedback.ok) {
+            editor.pushNotice(
+              "error",
+              feedback.reason === "missing-target"
+                ? "Drop the node onto a hierarchy row to reparent it"
+                : (REJECTION_LABELS[feedback.reason] ??
+                    "Cannot drop the node here"),
+            );
+          }
+        }}
+      >
         {renderNode(document.document.rootNodeId, 0)}
       </div>
     </section>
@@ -390,24 +418,9 @@ function modifiersFrom(event: React.MouseEvent): ToolModifiers {
   return { additive: event.shiftKey, toggle: event.ctrlKey || event.metaKey };
 }
 
-function isDescendantOf(
-  document: VoxelDocument,
-  ancestor: NodeId,
-  nodeId: NodeId,
-): boolean {
-  const seen = new Set<NodeId>();
-  let current: NodeId | undefined =
-    document.nodes[nodeId]?.parentId ?? undefined;
-  while (current !== undefined) {
-    if (current === ancestor) return true;
-    if (seen.has(current)) return false;
-    seen.add(current);
-    current = document.nodes[current]?.parentId ?? undefined;
-  }
-  return false;
-}
-
-function deleteReason(reason: string): string {
+function deleteReason(
+  reason: Extract<DeleteFeedback, { ok: false }>["reason"],
+): string {
   switch (reason) {
     case "root":
       return "The document root cannot be deleted";

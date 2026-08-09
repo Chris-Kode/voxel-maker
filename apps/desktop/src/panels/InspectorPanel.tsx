@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { volumeId, type NodeId } from "@voxel-maker/shared";
+import { volumeId } from "@voxel-maker/shared";
 import type { DocumentSession } from "@voxel-maker/session";
 import {
   buildSetComponentsCommand,
@@ -12,6 +12,7 @@ import {
   parseScaleInput,
   parseVec3Input,
   transformFieldValue,
+  transformRotationValue,
   type EditorStore,
   type TransformField,
 } from "@voxel-maker/editor";
@@ -124,39 +125,68 @@ export function InspectorPanel({
     }
   };
 
-  const setComponents = (components: readonly Component[]): void => {
-    if (single === undefined) return;
-    const command = buildSetComponentsCommand(
-      panelIds.nextCommandId(),
-      single.nodeId,
-      components,
-    );
-    const result = executeTransaction(
-      session,
-      panelIds,
-      [command],
-      "Edit components",
-    );
+  /**
+   * Commits one `node.setComponents` transaction applying `change` to
+   * every selected node (mixed multi-selection, plan S7.12): each node's
+   * component list transforms independently.
+   */
+  const applyComponentChange = (
+    change: (components: readonly Component[]) => readonly Component[],
+    label: string,
+  ): void => {
+    const commands = nodes.flatMap((node) => {
+      const components = change(node.components);
+      if (
+        components.length === node.components.length &&
+        components.every(
+          (component, index) => component === node.components[index],
+        )
+      ) {
+        return [];
+      }
+      return [
+        buildSetComponentsCommand(
+          panelIds.nextCommandId(),
+          node.nodeId,
+          components,
+        ),
+      ];
+    });
+    const result = executeTransaction(session, panelIds, commands, label);
     if (!result.ok) editor.pushNotice("error", result.message);
   };
 
   const addComponent = (component: Component): void => {
-    if (single === undefined) return;
-    if (
-      single.components.some((existing) => existing.kind === component.kind)
-    ) {
-      editor.pushNotice(
-        "warning",
-        `The node already has a ${component.kind} component`,
-      );
-      return;
-    }
-    setComponents([...single.components, component]);
+    let warned = false;
+    applyComponentChange((components) => {
+      if (components.some((existing) => existing.kind === component.kind)) {
+        if (!warned) {
+          warned = true;
+          editor.pushNotice(
+            "warning",
+            `Some selected nodes already have a ${component.kind} component; they were left unchanged`,
+          );
+        }
+        return components;
+      }
+      return [...components, component];
+    }, "Add component");
   };
 
-  const removeComponent = (index: number): void => {
-    if (single === undefined) return;
-    setComponents(single.components.filter((_, entry) => entry !== index));
+  const removeComponent = (kind: Component["kind"]): void => {
+    applyComponentChange(
+      (components) => components.filter((entry) => entry.kind !== kind),
+      "Remove component",
+    );
+  };
+
+  /** Replaces one component on every selected node that has it. */
+  const updateComponent = (kind: Component["kind"], patch: Component): void => {
+    applyComponentChange(
+      (components) =>
+        components.map((entry) => (entry.kind === kind ? patch : entry)),
+      "Edit component",
+    );
   };
 
   return (
@@ -187,11 +217,13 @@ export function InspectorPanel({
       <h3>Components</h3>
       {single === undefined ? (
         <p className="panel-empty">
-          Component edits apply to one node; select a single node.
+          Showing the first selected node; add/remove/update applies to all{" "}
+          {String(nodes.length)} selected nodes.
         </p>
-      ) : single.components.length === 0 ? (
+      ) : null}
+      {single !== undefined && single.components.length === 0 ? (
         <p className="panel-empty">No components.</p>
-      ) : (
+      ) : single !== undefined ? (
         <ul className="component-list">
           {single.components.map((component, index) => (
             <li
@@ -199,17 +231,21 @@ export function InspectorPanel({
               className="component-row"
             >
               <span className="component-kind">{component.kind}</span>
-              <span className="component-summary">
-                <ComponentSummary
-                  document={document.document as VoxelDocument}
-                  component={component}
-                />
-              </span>
+              <ComponentValueEditor
+                document={document.document as VoxelDocument}
+                component={component}
+                onUpdate={(patch) => {
+                  updateComponent(component.kind, patch);
+                }}
+                onError={(message) => {
+                  editor.pushNotice("error", message);
+                }}
+              />
               <button
                 type="button"
                 title="Remove component"
                 onClick={() => {
-                  removeComponent(index);
+                  removeComponent(component.kind);
                 }}
               >
                 ✕
@@ -217,70 +253,67 @@ export function InspectorPanel({
             </li>
           ))}
         </ul>
-      )}
-      {single !== undefined ? (
-        <div className="component-add">
-          <VoxelComponentAdd
-            document={document.document}
-            onAdd={(component) => {
-              addComponent(component);
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              addComponent({ kind: "joint", schemaVersion: 1 });
-            }}
-          >
-            ＋ Joint
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              addComponent({
-                kind: "pivot",
-                schemaVersion: 1,
-                pivot: [0, 0, 0],
-              });
-            }}
-          >
-            ＋ Pivot
-          </button>
-        </div>
-      ) : null}
-
-      <h3>Metadata</h3>
-      {single === undefined ? (
-        <p className="panel-empty">
-          Metadata edits apply to one node; select a single node.
-        </p>
       ) : (
-        <MetadataEditor
-          key={`${String(single.nodeId)}:${String(document.revision)}`}
+        <p className="panel-empty">No components.</p>
+      )}
+      <div className="component-add">
+        <VoxelComponentAdd
           document={document.document}
-          nodeId={single.nodeId}
-          onCommit={(text) => {
-            try {
-              const command = buildSetMetadataCommand(
-                panelIds.nextCommandId(),
-                single.nodeId,
-                text,
-              );
-              const result = executeTransaction(
-                session,
-                panelIds,
-                [command],
-                "Edit metadata",
-              );
-              if (!result.ok) editor.pushNotice("error", result.message);
-            } catch (error) {
-              const message =
-                error instanceof Error ? error.message : "Invalid metadata";
-              editor.pushNotice("error", message);
-            }
+          onAdd={(component) => {
+            addComponent(component);
           }}
         />
-      )}
+        <button
+          type="button"
+          onClick={() => {
+            addComponent({ kind: "joint", schemaVersion: 1 });
+          }}
+        >
+          ＋ Joint
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            addComponent({
+              kind: "pivot",
+              schemaVersion: 1,
+              pivot: [0, 0, 0],
+            });
+          }}
+        >
+          ＋ Pivot
+        </button>
+      </div>
+
+      <h3>Metadata</h3>
+      <MetadataEditor
+        key={`${nodes.map((node) => node.nodeId).join(",")}:${String(
+          document.revision,
+        )}`}
+        nodes={nodes}
+        onCommit={(text) => {
+          try {
+            const commands = nodes.map((node) =>
+              buildSetMetadataCommand(
+                panelIds.nextCommandId(),
+                node.nodeId,
+                text,
+              ),
+            );
+            const result = executeTransaction(
+              session,
+              panelIds,
+              commands,
+              "Edit metadata",
+            );
+            if (!result.ok) editor.pushNotice("error", result.message);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Invalid metadata";
+            editor.pushNotice("error", message);
+          }
+        }}
+      />
     </section>
   );
 }
@@ -299,12 +332,15 @@ function TransformFieldInput({
   readonly revision: number;
   onCommit: (text: string) => void;
 }): React.JSX.Element {
-  const resolved = transformFieldValue(transforms, field);
+  const rotation = field === "rotation";
+  const resolved = rotation
+    ? transformRotationValue(transforms)
+    : transformFieldValue(transforms, field);
   const initial =
     resolved.kind === "value"
-      ? field === "rotation"
-        ? formatRotationDegrees(resolved.value as unknown as Quat)
-        : formatVec3(resolved.value)
+      ? rotation
+        ? formatRotationDegrees(resolved.value as Quat)
+        : formatVec3(resolved.value as [number, number, number])
       : "";
   return (
     <label className="inspector-field">
@@ -333,24 +369,113 @@ function TransformFieldInput({
   );
 }
 
-function ComponentSummary({
+/**
+ * In-place component value editor (plan S7.12): pivot vectors and voxel
+ * volume ids are editable text; joint and constraint components are
+ * read-only summaries. Commits through `onUpdate` apply to every selected
+ * node that carries the component kind.
+ */
+function ComponentValueEditor({
   document,
   component,
+  onUpdate,
+  onError,
 }: {
   readonly document: VoxelDocument;
   readonly component: Component;
+  onUpdate: (patch: Component) => void;
+  onError: (message: string) => void;
 }): React.JSX.Element {
-  switch (component.kind) {
-    case "voxel": {
-      const volume = document.volumes[component.volumeId];
-      return <span>volume {volume?.volumeId ?? component.volumeId}</span>;
+  const [text, setText] = useState(initialValue(component));
+  const commit = (): void => {
+    try {
+      if (component.kind === "pivot") {
+        const pivot = parseVec3Input(text, "pivot");
+        onUpdate({ kind: "pivot", schemaVersion: 1, pivot });
+      } else if (component.kind === "voxel") {
+        const id = text.trim();
+        if (document.volumes[id as never] === undefined) {
+          onError("The volume does not exist");
+          return;
+        }
+        onUpdate({ kind: "voxel", schemaVersion: 1, volumeId: volumeId(id) });
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid component value";
+      onError(message);
     }
+  };
+  switch (component.kind) {
+    case "voxel":
+      return (
+        <input
+          className="component-value"
+          value={text}
+          list="inspector-volume-ids"
+          title="Volume id"
+          onChange={(event) => {
+            setText(event.target.value);
+          }}
+          onBlur={() => {
+            if (text !== component.volumeId) commit();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              (event.target as HTMLInputElement).blur();
+            }
+            if (event.key === "Escape") {
+              setText(component.volumeId);
+              (event.target as HTMLInputElement).blur();
+            }
+          }}
+          aria-label="Volume id"
+        />
+      );
     case "pivot":
-      return <span>pivot {formatVec3(component.pivot)}</span>;
+      return (
+        <input
+          className="component-value"
+          value={text}
+          title="Pivot x, y, z"
+          onChange={(event) => {
+            setText(event.target.value);
+          }}
+          onBlur={() => {
+            if (text !== formatVec3(component.pivot)) commit();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              (event.target as HTMLInputElement).blur();
+            }
+            if (event.key === "Escape") {
+              setText(formatVec3(component.pivot));
+              (event.target as HTMLInputElement).blur();
+            }
+          }}
+          aria-label="Pivot"
+        />
+      );
     case "joint":
-      return <span>joint</span>;
+      return <span className="component-summary">joint</span>;
     case "constraint":
-      return <span>{String(component.constraints.length)} constraint(s)</span>;
+      return (
+        <span className="component-summary">
+          {String(component.constraints.length)} constraint(s)
+        </span>
+      );
+  }
+}
+
+function initialValue(component: Component): string {
+  switch (component.kind) {
+    case "voxel":
+      return component.volumeId;
+    case "pivot":
+      return formatVec3(component.pivot);
+    case "joint":
+    case "constraint":
+      return "";
   }
 }
 
@@ -403,25 +528,35 @@ function VoxelComponentAdd({
 }
 
 function MetadataEditor({
-  document,
-  nodeId,
+  nodes,
   onCommit,
 }: {
-  readonly document: VoxelDocument;
-  readonly nodeId: NodeId;
+  readonly nodes: readonly SceneNode[];
   onCommit: (text: string) => void;
 }): React.JSX.Element {
-  const node = document.nodes[nodeId];
-  const initial =
-    node?.metadata === undefined ? "" : formatMetadata(node.metadata);
+  // Shared metadata when every selected node carries the identical
+  // record; otherwise the editor starts empty with a mixed placeholder.
+  const first = nodes[0]?.metadata;
+  const shared =
+    first !== undefined &&
+    nodes.every(
+      (node) =>
+        node.metadata !== undefined &&
+        formatMetadata(node.metadata) === formatMetadata(first),
+    );
+  const initial = shared ? formatMetadata(first as never) : "";
   const [text, setText] = useState(initial);
+  const placeholder =
+    nodes.length > 1 && !shared
+      ? "Mixed — edits apply to all selected nodes"
+      : "{} — JSON object; empty removes metadata";
   return (
     <textarea
       className="inspector-metadata"
       rows={6}
       spellCheck={false}
       value={text}
-      placeholder="{} — JSON object; empty removes metadata"
+      placeholder={placeholder}
       onChange={(event) => {
         setText(event.target.value);
       }}

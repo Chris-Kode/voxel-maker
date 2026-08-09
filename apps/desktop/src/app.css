@@ -448,3 +448,24 @@ body {
   font-size: 12px;
   color: var(--muted);
 }
+
+.gizmo-snap-increment {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gizmo-snap-increment input {
+  width: 56px;
+  background: #14161a;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.gizmo-snap-increment span {
+  color: var(--muted);
+  font-size: 12px;
+}

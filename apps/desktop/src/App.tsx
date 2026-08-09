@@ -62,6 +62,18 @@ const GIZMO_MODES = [
   { id: "scale", label: "Scale" },
 ] as const satisfies readonly { id: TransformToolMode; label: string }[];
 
+/** The current snap increment in UI units (degrees for rotation). */
+function snapIncrementFor(
+  mode: TransformToolMode,
+  tool: ReturnType<
+    typeof createDesktopComposition
+  >["viewport"]["transformTool"],
+): number {
+  if (mode === "rotate") return (tool.rotateSnap * 180) / Math.PI;
+  if (mode === "translate") return tool.translateSnap;
+  return tool.scaleSnap;
+}
+
 /** Subscribes to the runtime editor store for the shell chrome. */
 function useEditorStore(editor: EditorStore): EditorStoreSnapshot {
   const [snapshot, setSnapshot] = useState(() => snapshotEditorStore(editor));
@@ -250,6 +262,33 @@ export function App(): React.JSX.Element {
                 }}
               />
               Snap
+            </label>
+            <label className="gizmo-snap-increment">
+              <input
+                type="number"
+                min={0.01}
+                step={0.01}
+                value={snapIncrementFor(
+                  composition.viewport.transformTool.mode,
+                  composition.viewport.transformTool,
+                )}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (!Number.isFinite(value) || value <= 0) return;
+                  const tool = composition.viewport.transformTool;
+                  const mode = tool.mode;
+                  if (mode === "translate") tool.setTranslateSnap(value);
+                  if (mode === "rotate")
+                    tool.setRotateSnap((value * Math.PI) / 180);
+                  if (mode === "scale") tool.setScaleSnap(value);
+                }}
+                aria-label="Snap increment"
+              />
+              <span>
+                {composition.viewport.transformTool.mode === "rotate"
+                  ? "°"
+                  : ""}
+              </span>
             </label>
           </span>
         ) : null}

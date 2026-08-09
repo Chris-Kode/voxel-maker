@@ -1,5 +1,6 @@
 export {
   CommandBus,
+  type BeginGestureResult,
   type CommandBusHooks,
   type GestureHandle,
   type HistoryEntryInfo,

@@ -476,7 +476,15 @@ class ViewportControllerImpl implements ViewportController {
 
   refreshGizmo(): void {
     const store = this.#session.current?.store;
-    if (store === undefined) {
+    // The gizmo is a select-tool affordance: it only shows in node/voxel
+    // selection modes (region drags and the paint/shape tools own their
+    // own pointers), so a visible handle is always draggable.
+    const tool = this.#editor.activeTool;
+    if (
+      store === undefined ||
+      tool !== "select" ||
+      this.#editor.selectionMode === "region"
+    ) {
       this.#gizmo.update(
         undefined,
         this.#transform.mode,
@@ -595,9 +603,14 @@ class ViewportControllerImpl implements ViewportController {
         const current = session.current;
         if (current === undefined) return undefined;
         this.#transformSequence += 1;
-        const gesture = current.bus.beginGesture(
+        const opened = current.bus.beginGesture(
           `transform:${String(this.#transformSequence)}`,
         );
+        if (!opened.ok) {
+          editor.pushNotice("error", opened.error.message);
+          return undefined;
+        }
+        const gesture = opened.value;
         return {
           update: (commands, label) => {
             this.#transformSequence += 1;

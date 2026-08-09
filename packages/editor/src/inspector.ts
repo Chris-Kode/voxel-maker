@@ -6,6 +6,7 @@ import {
 import {
   eulerXYZToQuaternion,
   quaternionToEulerXYZ,
+  transformsEqual,
   type Quat,
   type Transform,
   type Vec3,
@@ -31,9 +32,12 @@ import type { Component, MetadataRecord } from "@voxel-maker/model";
 /** One editable transform field. */
 export type TransformField = "translation" | "rotation" | "scale" | "pivot";
 
+/** Vector-valued transform fields (rotation is quaternion-valued). */
+export type VectorTransformField = Exclude<TransformField, "rotation">;
+
 /** Result of resolving one field across a multi-selection. */
-export type FieldValue =
-  | { readonly kind: "value"; readonly value: Vec3 }
+export type FieldValue<T = Vec3 | Quat> =
+  | { readonly kind: "value"; readonly value: T }
   | { readonly kind: "mixed" };
 
 const NUMBER_PATTERN = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
@@ -111,34 +115,57 @@ export function formatRotationDegrees(rotation: Quat): string {
 }
 
 /**
- * Resolves one transform field across the selected nodes: when every node
- * shares the exact value the field shows it, otherwise the field reports
- * "mixed" and edits apply to every selected node (plan S7.12).
+ * Resolves a vector-valued transform field across the selected nodes: when
+ * every node shares the exact value the field shows it, otherwise the
+ * field reports "mixed" and edits apply to every selected node (plan
+ * S7.12).
  */
 export function transformFieldValue(
   transforms: readonly Transform[],
-  field: TransformField,
-): FieldValue {
+  field: VectorTransformField,
+): FieldValue<Vec3> {
   if (transforms.length === 0) return { kind: "mixed" };
-  const first = fieldValue(transforms[0] as Transform, field);
+  const first = vectorFieldValue(transforms[0] as Transform, field);
   for (const transform of transforms.slice(1)) {
-    const next = fieldValue(transform, field);
-    if (!vec3Equal(first, next)) return { kind: "mixed" };
+    if (!vec3Equal(first, vectorFieldValue(transform, field))) {
+      return { kind: "mixed" };
+    }
   }
   return { kind: "value", value: first };
 }
 
-function fieldValue(transform: Transform, field: TransformField): Vec3 {
+function vectorFieldValue(
+  transform: Transform,
+  field: VectorTransformField,
+): Vec3 {
   switch (field) {
     case "translation":
       return transform.translation;
-    case "rotation":
-      return quaternionToEulerXYZ(transform.rotation);
     case "scale":
       return transform.scale;
     case "pivot":
       return transform.pivot;
   }
+}
+
+/**
+ * Resolves the rotation field across the selected nodes as the canonical
+ * shared quaternion, or "mixed" (plan S7.12). Rotation values are
+ * quaternions, not Euler vectors, so callers format degrees themselves.
+ */
+export function transformRotationValue(
+  transforms: readonly Transform[],
+): FieldValue<Quat> {
+  if (transforms.length === 0) return { kind: "mixed" };
+  const first = transforms[0] as Transform;
+  for (const transform of transforms.slice(1)) {
+    const a = first.rotation;
+    const b = transform.rotation;
+    if (a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2] || a[3] !== b[3]) {
+      return { kind: "mixed" };
+    }
+  }
+  return { kind: "value", value: first.rotation };
 }
 
 const vec3Equal = (a: Vec3, b: Vec3): boolean =>
@@ -186,15 +213,6 @@ function applyField(
       return { ...transform, pivot: value as Vec3 };
   }
 }
-
-const transformsEqual = (a: Transform, b: Transform): boolean =>
-  vec3Equal(a.translation, b.translation) &&
-  vec3Equal(a.pivot, b.pivot) &&
-  a.rotation[0] === b.rotation[0] &&
-  a.rotation[1] === b.rotation[1] &&
-  a.rotation[2] === b.rotation[2] &&
-  a.rotation[3] === b.rotation[3] &&
-  vec3Equal(a.scale, b.scale);
 
 /** Builds a `node.setComponents` command (single selection; plan S7.12). */
 export function buildSetComponentsCommand(

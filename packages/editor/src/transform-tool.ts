@@ -13,6 +13,7 @@ import {
   quaternionMultiply,
   rotateVector,
   transformToMatrix,
+  transformsEqual,
   type Mat4,
   type Transform,
   type Vec3,
@@ -346,6 +347,9 @@ interface DragState {
   readonly planeNormal: Vec3;
   /** The world-space drag axis (first node's axis in local mode). */
   readonly axis: Vec3;
+  /** Space and snapping pinned at pointer-down (plan S7.8). */
+  readonly space: TransformSpace;
+  readonly snapping: boolean;
   readonly gesture: GestureHost;
   /** True after a failed update; further moves are no-ops. */
   failed: boolean;
@@ -503,6 +507,8 @@ class TransformToolImpl implements TransformTool {
       startPoint,
       planeNormal,
       axis,
+      space: this.#space,
+      snapping: this.#snapping,
       gesture,
       failed: false,
     };
@@ -659,12 +665,12 @@ class TransformToolImpl implements TransformTool {
     switch (drag.handle.mode) {
       case "translate": {
         const delta = dot(subtract(point, drag.startPoint), drag.axis);
-        const amount = this.#snapping
+        const amount = drag.snapping
           ? snapValue(delta, this.#translateSnap)
           : delta;
         if (amount === 0) return current;
         const direction =
-          this.#space === "world"
+          drag.space === "world"
             ? drag.axis
             : rotateVector(baseline.rotation, AXES[drag.handle.axis] as Vec3);
         return {
@@ -683,11 +689,11 @@ class TransformToolImpl implements TransformTool {
         const d1 = normalize(subtract(point, drag.targets.center));
         if (d0 === undefined || d1 === undefined) return undefined;
         const angle = Math.atan2(dot(cross(d0, d1), drag.axis), dot(d0, d1));
-        const amount = this.#snapping
+        const amount = drag.snapping
           ? snapValue(angle, this.#rotateSnap)
           : angle;
         if (Math.abs(amount) < 1e-12) return current;
-        if (this.#space === "world") {
+        if (drag.space === "world") {
           // W' = T(center) R T(-center) W(baseline), then resolve the
           // local transform under the baseline parent world (ADR-0001).
           const world = transformToMatrix(baseline);
@@ -723,12 +729,12 @@ class TransformToolImpl implements TransformTool {
       case "scale": {
         const delta = dot(subtract(point, drag.startPoint), drag.axis);
         const raw = 1 + delta / drag.targets.radius;
-        const snapped = this.#snapping
+        const snapped = drag.snapping
           ? 1 + snapValue(raw - 1, this.#scaleSnap)
           : raw;
         const factor = Math.max(snapped, MIN_SCALE_FACTOR);
         if (Math.abs(factor - 1) < 1e-12) return current;
-        if (this.#space === "local") {
+        if (drag.space === "local") {
           const next: [number, number, number] = [...baseline.scale];
           next[drag.handle.axis] = next[drag.handle.axis] * factor;
           return {
@@ -739,9 +745,10 @@ class TransformToolImpl implements TransformTool {
           };
         }
         // World mode: scale along the world axis expressed in the node's
-        // local frame.
+        // local frame (scale drags never change the rotation, so the
+        // baseline rotation is the current one).
         const localAxis = rotateVector(
-          quaternionConjugate(current.rotation),
+          quaternionConjugate(baseline.rotation),
           drag.axis,
         );
         return {
@@ -761,24 +768,6 @@ class TransformToolImpl implements TransformTool {
 
 function identityMatrix(): Mat4 {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-}
-
-function transformsEqual(a: Transform, b: Transform): boolean {
-  return (
-    a.translation[0] === b.translation[0] &&
-    a.translation[1] === b.translation[1] &&
-    a.translation[2] === b.translation[2] &&
-    a.pivot[0] === b.pivot[0] &&
-    a.pivot[1] === b.pivot[1] &&
-    a.pivot[2] === b.pivot[2] &&
-    a.rotation[0] === b.rotation[0] &&
-    a.rotation[1] === b.rotation[1] &&
-    a.rotation[2] === b.rotation[2] &&
-    a.rotation[3] === b.rotation[3] &&
-    a.scale[0] === b.scale[0] &&
-    a.scale[1] === b.scale[1] &&
-    a.scale[2] === b.scale[2]
-  );
 }
 
 /** World matrix rotated around `center` by `angle` about `axis`. */

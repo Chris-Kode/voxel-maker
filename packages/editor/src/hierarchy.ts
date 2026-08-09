@@ -140,27 +140,39 @@ export function defaultChildName(
   }
 }
 
+/** A create-child command plus the node id it will install. */
+export interface CreateChildCommand {
+  readonly command: Command<"node.create">;
+  readonly nodeId: NodeId;
+}
+
 /**
  * Builds a `node.create` command for a fresh child of `parentId` with the
  * default name, the identity transform, and no components; the child is
- * appended to the parent's ordered children.
+ * appended to the parent's ordered children. Returns the command together
+ * with the node id it installs so callers can select the new node without
+ * reverse-engineering the payload.
  */
 export function buildCreateChildCommand(
   id: CommandId,
   document: VoxelDocument,
   parentId: NodeId,
-): Command<"node.create"> {
-  return createNodeCommand(id, {
-    nodeId: idToNodeId(id),
-    name: defaultChildName(document, parentId),
-    parentId,
-    transform: {
-      translation: [0, 0, 0],
-      pivot: [0, 0, 0],
-      rotation: [0, 0, 0, 1],
-      scale: [1, 1, 1],
-    },
-  });
+): CreateChildCommand {
+  const nodeId = nodeIdFromCommandId(id);
+  return {
+    nodeId,
+    command: createNodeCommand(id, {
+      nodeId,
+      name: defaultChildName(document, parentId),
+      parentId,
+      transform: {
+        translation: [0, 0, 0],
+        pivot: [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      },
+    }),
+  };
 }
 
 /** Builds a `node.rename` command; an empty name removes the node name. */
@@ -205,6 +217,6 @@ export function buildReparentCommand(
 }
 
 /** Derives a deterministic node id from the command id (branded). */
-function idToNodeId(id: CommandId): NodeId {
+function nodeIdFromCommandId(id: CommandId): NodeId {
   return nodeId(`node:${id.replace(/^command:/u, "")}`);
 }

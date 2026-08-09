@@ -5,11 +5,7 @@ import {
   type CommandId,
   type NodeId,
 } from "@voxel-maker/shared";
-import {
-  eulerXYZToQuaternion,
-  quaternionToEulerXYZ,
-  type Transform,
-} from "@voxel-maker/math";
+import { eulerXYZToQuaternion, type Transform } from "@voxel-maker/math";
 import {
   buildSetComponentsCommand,
   buildSetMetadataCommand,
@@ -23,6 +19,7 @@ import {
   parseScaleInput,
   parseVec3Input,
   transformFieldValue,
+  transformRotationValue,
 } from "./inspector.js";
 
 const identity: Transform = {
@@ -112,16 +109,18 @@ describe("mixed multi-selection resolution (plan S7.12)", () => {
     expect(transformFieldValue([], "scale")).toEqual({ kind: "mixed" });
   });
 
-  it("compares rotation through the canonical Euler branch", () => {
+  it("resolves the rotation field as the shared canonical quaternion", () => {
     const q = eulerXYZToQuaternion([0, 0, 0.5]);
-    const field = transformFieldValue(
-      [
-        { ...identity, rotation: q },
-        { ...identity, rotation: q },
-      ],
-      "rotation",
-    );
-    expect(field).toEqual({ kind: "value", value: quaternionToEulerXYZ(q) });
+    const field = transformRotationValue([
+      { ...identity, rotation: q },
+      { ...identity, rotation: q },
+    ]);
+    expect(field).toEqual({ kind: "value", value: q });
+    const mixed = transformRotationValue([
+      { ...identity, rotation: q },
+      { ...identity, rotation: [0, 0, 0, 1] },
+    ]);
+    expect(mixed).toEqual({ kind: "mixed" });
   });
 });
 

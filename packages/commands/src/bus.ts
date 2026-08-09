@@ -9,6 +9,7 @@ import {
   type JsonValue,
   type MaterialId,
   type NodeId,
+  type Result,
   type TransactionId,
   type VolumeId,
 } from "@voxel-maker/shared";
@@ -90,6 +91,9 @@ interface HistoryEntry {
  * intervening commit, on undo/redo, on lifecycle replacement (a fresh bus
  * per install), or on failure.
  */
+/** Result of opening a coalescing gesture (plan S4.10). */
+export type BeginGestureResult = Result<GestureHandle, WorkspaceError>;
+
 export interface GestureHandle {
   /** The deterministic coalescing key supplied at `beginGesture`. */
   readonly key: string;
@@ -215,19 +219,22 @@ export class CommandBus {
    * Opens a coalescing gesture (plan S4.10). Returns a handle whose
    * `update` calls execute normal transactions but replace the unsealed
    * history entry, so the whole drag presents as one history entry.
-   * Throws when another gesture is already active on this bus.
+   * Rejects with `GESTURE_ACTIVE` when another gesture is already open
+   * on this bus.
    */
-  beginGesture(key: string): GestureHandle {
+  beginGesture(key: string): BeginGestureResult {
     if (this.#activeGestureKey !== undefined) {
-      throw new WorkspaceError({
-        family: "conflict",
-        code: "GESTURE_ACTIVE",
-        message: "Another coalescing gesture is already active",
-        context: { key: this.#activeGestureKey },
-      });
+      return err(
+        new WorkspaceError({
+          family: "conflict",
+          code: "GESTURE_ACTIVE",
+          message: "Another coalescing gesture is already active",
+          context: { key: this.#activeGestureKey },
+        }),
+      );
     }
     this.#activeGestureKey = key;
-    return new GestureHandleImpl(this, key);
+    return ok(new GestureHandleImpl(this, key));
   }
 
   /** Executes a batch of commands atomically as one transaction. */
@@ -753,7 +760,7 @@ export class CommandBus {
         transactionId: options.transactionId,
         revisionBefore: this.#store.revision,
         revisionAfter: this.#store.revision,
-        event: emptyCommittedEvent(this.#store.revision),
+        event: emptyCommittedEvent(this.#store.revision, options.transactionId),
         replayed: false,
       });
     }
@@ -901,11 +908,14 @@ function idSetEqual(
 }
 
 /** Empty commit event for a no-op gesture cancel (no semantic change). */
-function emptyCommittedEvent(revision: number): DocumentCommitted {
+function emptyCommittedEvent(
+  revision: number,
+  transactionId: TransactionId,
+): DocumentCommitted {
   return {
     revisionBefore: revision,
     revisionAfter: revision,
-    transactionId: "transaction:noop" as TransactionId,
+    transactionId,
     source: "system",
     commandIds: [],
     commandTypes: [],

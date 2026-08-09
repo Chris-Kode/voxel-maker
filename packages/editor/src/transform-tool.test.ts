@@ -229,9 +229,9 @@ function createHarness(selection: readonly SelectionEntry[]): Harness {
       return commandId(`command:gizmo:${String(sequence)}`);
     },
     beginGesture: (): GestureHost | undefined => {
-      const gesture: GestureHandle = bus.beginGesture(
-        `gizmo:${String((sequence += 1))}`,
-      );
+      const opened = bus.beginGesture(`gizmo:${String((sequence += 1))}`);
+      if (!opened.ok) return undefined;
+      const gesture: GestureHandle = opened.value;
       return {
         update: (commands: readonly Command[], label: string) => {
           const result = gesture.update(commands, { ...options(), label });
@@ -488,6 +488,25 @@ describe("scale drag (plan S7.8)", () => {
 });
 
 describe("drag lifecycle (plan S7.8/S4.10)", () => {
+  it("pins space and snapping at pointer-down", () => {
+    const { store, tool, setRay } = createHarness(nodeSelection(A));
+    tool.setSpace("world");
+    setRay(xPlaneRay(0));
+    expect(tool.pointerDown(X, 0, 0).ok).toBe(true);
+    // dx = 0.15 -> delta 0.45, snapped to 0.5.
+    setRay(xPlaneRay(0.15));
+    expect(tool.pointerMove(10, 10).ok).toBe(true);
+    // Toggling snapping and space mid-drag must not change the drag:
+    // the values are pinned at pointer-down.
+    tool.setSnapping(false);
+    tool.setSpace("local");
+    setRay(xPlaneRay(0.3));
+    expect(tool.pointerMove(20, 20).ok).toBe(true);
+    // delta 0.9 stays snapped to 1.0; live snapping would give 0.9.
+    expect(nodeTransform(store, A).translation).toEqual([1, 0, 0]);
+    expect(tool.pointerUp().ok).toBe(true);
+  });
+
   it("pointer cancel restores the exact pre-drag transforms and history", () => {
     const { bus, store, tool, setRay } = createHarness(nodeSelection(A, B));
     setRay(xPlaneRay(0));

@@ -48,8 +48,10 @@ export {
   parseScaleInput,
   parseVec3Input,
   transformFieldValue,
+  transformRotationValue,
   type FieldValue,
   type TransformField,
+  type VectorTransformField,
 } from "./inspector.js";
 export {
   buildCreateChildCommand,
@@ -60,6 +62,7 @@ export {
   deleteFeedback,
   isAncestor,
   reparentFeedback,
+  type CreateChildCommand,
   type DeleteFeedback,
   type ReparentFeedback,
   type ReparentRejectReason,

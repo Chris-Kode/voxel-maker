@@ -22,6 +22,7 @@ import {
   resolveLocalTransform,
   rotateVector,
   transformToMatrix,
+  transformsEqual,
   type Mat4,
   type Quat,
   type Transform,
@@ -356,6 +357,19 @@ describe("quaternion composition utilities", () => {
     expect(back[1]).toBeCloseTo(euler[1], 9);
     expect(back[2]).toBeCloseTo(euler[2], 9);
     expect(isNormalizedQuat(quaternion)).toBe(true);
+  });
+
+  it("compares transforms exactly", () => {
+    const a: Transform = {
+      translation: [1, 2, 3],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+    };
+    expect(transformsEqual(a, { ...a })).toBe(true);
+    expect(transformsEqual(a, { ...a, translation: [1, 2, 4] })).toBe(false);
+    expect(transformsEqual(a, { ...a, rotation: [0, 0, 1, 0] })).toBe(false);
+    expect(transformsEqual(a, { ...a, scale: [2, 1, 1] })).toBe(false);
   });
 
   it("extracts the principal Euler branch and handles gimbal lock", () => {

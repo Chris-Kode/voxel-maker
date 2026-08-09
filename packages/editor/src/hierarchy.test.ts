@@ -259,17 +259,18 @@ describe("hierarchy command construction", () => {
     const registry = new CommandRegistry();
     registerNodeCommands(registry);
     const bus = new CommandBus(store, registry, writeCapability);
-    const command = buildCreateChildCommand(
+    const created = buildCreateChildCommand(
       commandId("command:hier:create"),
       document,
       B,
     );
-    const result = bus.execute(command, txOptions(store.revision));
+    expect(created.nodeId).toBe(nodeId("node:hier:create"));
+    const result = bus.execute(created.command, txOptions(store.revision));
     expect(result.ok).toBe(true);
-    const created = store.getDocument().nodes[nodeId("node:hier:create")];
-    expect(created?.name).toBe("Node");
-    expect(created?.parentId).toBe(B);
-    expect(created?.transform).toEqual(identity);
+    const installed = store.getDocument().nodes[nodeId("node:hier:create")];
+    expect(installed?.name).toBe("Node");
+    expect(installed?.parentId).toBe(B);
+    expect(installed?.transform).toEqual(identity);
     const createdParent = store.getDocument().nodes[B];
     if (createdParent === undefined) throw new Error("missing parent");
     expect(createdParent.children).toContain(nodeId("node:hier:create"));

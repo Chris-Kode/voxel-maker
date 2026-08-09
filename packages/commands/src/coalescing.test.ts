@@ -7,7 +7,7 @@ import {
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import { createDocumentStore } from "@voxel-maker/document";
-import { CommandBus } from "./bus.js";
+import { CommandBus, type GestureHandle } from "./bus.js";
 import type { Command, TransactionOptions } from "./types.js";
 import { CommandRegistry } from "./registry.js";
 import {
@@ -114,10 +114,16 @@ const translationOf = (
   return record.transform.translation;
 };
 
+function begin(bus: CommandBus, key: string): GestureHandle {
+  const result = bus.beginGesture(key);
+  if (!result.ok) throw new Error(`beginGesture failed: ${result.error.code}`);
+  return result.value;
+}
+
 describe("CommandBus gesture coalescing (plan S4.10)", () => {
   it("presents a whole drag as one history entry with the gesture label", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
     expect(gesture.update([move(A, [2, 0, 0])], tx(1)).ok).toBe(true);
     expect(gesture.update([move(A, [2, 3, 0])], tx(2)).ok).toBe(true);
@@ -133,7 +139,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("undoes the whole drag to the pre-gesture state and redoes it", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
     expect(gesture.update([move(A, [2, 5, 0])], tx(1)).ok).toBe(true);
     gesture.end();
@@ -151,7 +157,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("cancel restores the exact pre-gesture state and leaves no history entry", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
     expect(gesture.update([move(A, [2, 3, 4])], tx(1)).ok).toBe(true);
     const cancel = gesture.cancel(tx(2));
@@ -166,7 +172,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("cancel with no updates is a no-op", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     const cancel = gesture.cancel(tx(0));
     expect(cancel.ok).toBe(true);
     expect(store.revision).toBe(0);
@@ -175,14 +181,14 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("an intervening commit seals the pending entry", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
     // A non-gesture commit between updates seals the first segment.
     const commit = bus.executeTransaction([move(B, [0, 2, 0])], tx(1));
     expect(commit.ok).toBe(true);
     expect(gesture.active).toBe(false);
     // The next gesture update starts a fresh segment.
-    const next = bus.beginGesture("drag:translate:a");
+    const next = begin(bus, "drag:translate:a");
     expect(next.update([move(A, [4, 0, 0])], tx(2)).ok).toBe(true);
     next.end();
 
@@ -194,7 +200,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("undo mid-gesture seals the pending entry before undoing it", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
     expect(gesture.update([move(A, [3, 0, 0])], tx(1)).ok).toBe(true);
     const undo = bus.undo(tx(2));
@@ -207,7 +213,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("an update touching a different resource seals and starts a new segment", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
     // Same command type but a different affected node: incompatible.
     expect(gesture.update([move(B, [0, 1, 0])], tx(1)).ok).toBe(true);
@@ -223,7 +229,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("a failed update seals the pending entry and keeps the error", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
     const bad: Command<
       typeof NODE_SET_TRANSFORM_COMMAND,
@@ -250,13 +256,15 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("rejects a second active gesture on the same bus", () => {
     const { bus } = createBus();
-    bus.beginGesture("drag:a");
-    expect(() => bus.beginGesture("drag:b")).toThrow(/gesture/u);
+    expect(bus.beginGesture("drag:a").ok).toBe(true);
+    const second = bus.beginGesture("drag:b");
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error.code).toBe("GESTURE_ACTIVE");
   });
 
   it("rejects updates and cancels after the gesture ended", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:a");
+    const gesture = begin(bus, "drag:translate:a");
     gesture.update([move(A, [1, 0, 0])], tx(0));
     gesture.end();
     const update = gesture.update([move(A, [2, 0, 0])], tx(1));
@@ -270,7 +278,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
 
   it("coalesces multi-command updates and cancel restores every node", () => {
     const { bus, store } = createBus();
-    const gesture = bus.beginGesture("drag:translate:ab");
+    const gesture = begin(bus, "drag:translate:ab");
     expect(
       gesture.update([move(A, [1, 0, 0]), move(B, [0, 1, 0])], tx(0)).ok,
     ).toBe(true);
@@ -290,7 +298,7 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
     expect(translationOf(store, B)).toEqual([0, 2, 0]);
 
     // A cancelled drag rolls both nodes back and leaves no entry.
-    const drag = bus.beginGesture("drag:translate:ab");
+    const drag = begin(bus, "drag:translate:ab");
     expect(
       drag.update([move(A, [5, 0, 0]), move(B, [0, 5, 0])], tx(4)).ok,
     ).toBe(true);

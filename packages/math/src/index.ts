@@ -576,6 +576,29 @@ function quaternionFromRotationMatrix(
 }
 
 /**
+ * Exact component-wise transform equality (canonical values compare equal).
+ * Shared by the gizmo, inspector, and command packages so drag/inspector
+ * no-op detection stays identical.
+ */
+export function transformsEqual(a: Transform, b: Transform): boolean {
+  return (
+    a.translation[0] === b.translation[0] &&
+    a.translation[1] === b.translation[1] &&
+    a.translation[2] === b.translation[2] &&
+    a.pivot[0] === b.pivot[0] &&
+    a.pivot[1] === b.pivot[1] &&
+    a.pivot[2] === b.pivot[2] &&
+    a.rotation[0] === b.rotation[0] &&
+    a.rotation[1] === b.rotation[1] &&
+    a.rotation[2] === b.rotation[2] &&
+    a.rotation[3] === b.rotation[3] &&
+    a.scale[0] === b.scale[0] &&
+    a.scale[1] === b.scale[1] &&
+    a.scale[2] === b.scale[2]
+  );
+}
+
+/**
  * Resolves the local transform that places a child under `parentWorld` while
  * preserving its world placement: `inverse(parentWorld) * world`, decomposed
  * with the given pivot (ADR-0001 derived-transform policy).
@@ -592,9 +615,11 @@ export function resolveLocalTransform(
 }
 
 /**
- * Multiplies two unit quaternions (Hamilton product, `a` applied first then
- * `b` when composing rotations: `q = b * a`). Used by the rotate gizmo and
- * Euler conversions (plan S7.8).
+ * Hamilton product of two unit quaternions. The result represents the
+ * composition that applies `b` first and then `a` (matrix order `A * B`);
+ * to apply `a` first and then `b`, call `quaternionMultiply(b, a)`. Used
+ * by the rotate gizmo (pre-multiplication applies a delta in the node's
+ * local frame) and Euler conversions (plan S7.8).
  */
 export function quaternionMultiply(
   a: readonly [number, number, number, number],
