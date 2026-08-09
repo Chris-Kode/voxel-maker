@@ -169,6 +169,23 @@ describe("valid manifests (AC1)", () => {
     }).toThrow();
   });
 
+  it("deep-freezes structural-check options (fixed checks, AC3)", () => {
+    const manifest = validateSkillManifest(validManifest(), SKILL_ENVIRONMENT);
+    const check = manifest.evaluation.structuralChecks[0] as {
+      readonly options: { readonly region?: object; readonly min?: number };
+    };
+    expect(Object.isFrozen(check.options)).toBe(true);
+    const options = check.options as { region?: object; min?: number };
+    expect(Object.isFrozen(options.region)).toBe(true);
+    // Mutating a nested option value must fail.
+    expect(() => {
+      (check.options as { min: number }).min = 999;
+    }).toThrow();
+    expect(() => {
+      (options.region as { min: number[] }).min[0] = 999;
+    }).toThrow();
+  });
+
   it("accepts baseline ratio defaults (unbounded sides)", () => {
     const manifest = validManifest();
     manifest.evaluation.visualBaselines = [

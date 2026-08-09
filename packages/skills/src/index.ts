@@ -123,6 +123,12 @@ export {
   KNOWN_TOOL_NAMES,
   SKILL_ENVIRONMENT,
 } from "./environment.js";
+export {
+  TOOL_CAPABILITIES,
+  requiredCapabilities,
+  skillUsableWith,
+  unauthorizedTools,
+} from "./capabilities.js";
 export { CREATION_TOOLS } from "./creation/define.js";
 export { FURNITURE_SKILL_MANIFEST } from "./creation/furniture.js";
 export { ARCHITECTURE_SKILL_MANIFEST } from "./creation/architecture.js";

@@ -425,6 +425,18 @@ function validateProvenance(value: unknown): SkillProvenance {
   return Object.freeze({ author, source, license, created });
 }
 
+/** Recursively freezes validated JSON options (no cycles after schema). */
+function deepFreezeJson(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreezeJson(item);
+    return Object.freeze(value);
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) deepFreezeJson(record[key]);
+  return Object.freeze(record);
+}
+
 function validateEvaluation(
   value: unknown,
   constraints: SkillConstraints,
@@ -502,7 +514,10 @@ function validateEvaluation(
     return Object.freeze({
       name: checkName,
       description: checkDescription,
-      options: entry.options,
+      // Deep-frozen so a validated manifest is truly immutable: the
+      // fixed checks (including their option values) can never change
+      // after registration (ticket #38 AC3).
+      options: deepFreezeJson(entry.options),
     });
   });
 

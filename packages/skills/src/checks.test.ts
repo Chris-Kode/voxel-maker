@@ -271,6 +271,35 @@ describe("symmetric-along-axis", () => {
     expect(results[0]?.passed).toBe(true);
   });
 
+  it("fails when a mirror twin falls outside the declared region", () => {
+    // Region [0,16) about x=8: the voxel at x=0 has its twin at x=16
+    // OUTSIDE the region. A same-material voxel placed at that outside
+    // position must not rescue the verdict — the check stays bounded by
+    // its declared region.
+    const { store } = commitBoxes([
+      { min: [0, 0, 0], max: [1, 2, 4] }, // in-region voxel at x=0
+      { min: [1, 0, 0], max: [8, 2, 4] }, // in-region left half
+      { min: [8, 0, 0], max: [16, 2, 4] }, // in-region right half
+      { min: [16, 0, 0], max: [17, 2, 4] }, // outside: would-be rescuer
+    ]);
+    const results = runStructuralChecks(
+      [
+        {
+          name: "symmetric-along-axis",
+          options: {
+            axis: "x",
+            plane: 8,
+            region: { min: [0, 0, 0], max: [16, 4, 8] },
+          },
+        },
+      ],
+      store,
+      CONTEXT,
+    );
+    expect(results[0]?.passed).toBe(false);
+    expect(results[0]?.evidence).toContain("asymmetric");
+  });
+
   it("fails for asymmetric occupancy", () => {
     const { store } = commitBoxes([
       { min: [1, 0, 0], max: [10, 2, 4] }, // left x in [1,10)

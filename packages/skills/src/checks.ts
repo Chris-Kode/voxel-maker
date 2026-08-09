@@ -520,6 +520,13 @@ function countSymmetryMismatches(
     if (seen.has(twinKey)) return;
     seen.add(twinKey);
     const a = store.getVoxel(volumeId, [x, y, z]);
+    // The verdict is bounded by the declared region: a twin outside the
+    // region is a mismatch even when the outside world happens to carry
+    // the same material (the region itself is asymmetric).
+    if (!insideRegion(twin, region)) {
+      mismatches += 1;
+      return;
+    }
     const b = store.getVoxel(volumeId, twin);
     if (a !== b) mismatches += 1;
   };
@@ -531,6 +538,18 @@ function countSymmetryMismatches(
     }
   }
   return mismatches;
+}
+
+/** True when the point lies inside the half-open scan region. */
+function insideRegion(point: Vec3i, region: IntAabb): boolean {
+  return (
+    point[0] >= region.min[0] &&
+    point[0] < region.max[0] &&
+    point[1] >= region.min[1] &&
+    point[1] < region.max[1] &&
+    point[2] >= region.min[2] &&
+    point[2] < region.max[2]
+  );
 }
 
 function mirrorTwin(point: Vec3i, axis: string, plane: number): Vec3i {
