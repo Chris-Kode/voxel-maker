@@ -1,0 +1,11 @@
+{
+  "volume:fixture:lossy:body": [
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "volume:fixture:lossy:empty": []
+}

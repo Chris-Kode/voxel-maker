@@ -95,3 +95,37 @@ export {
   type VoxVoxel,
   type VoxWarning,
 } from "./vox-types.js";
+
+export {
+  DEFAULT_GLTF_EXPORT_LIMITS,
+  GLTF_COMPONENT_FLOAT,
+  GLTF_COMPONENT_UNSIGNED_INT,
+  GLTF_ERROR_CODES,
+  GLTF_EXPORT_LOSSES,
+  GLTF_GENERATOR,
+  GLTF_JSON_VERSION,
+  GLTF_METERS_PER_VOXEL,
+  GLTF_MODE_TRIANGLES,
+  GLTF_TARGET_ARRAY_BUFFER,
+  GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
+  type GltfExportLimits,
+  type GltfExportLoss,
+  type GltfExportMetadata,
+  type GltfExportPreflight,
+  type GltfMaterialExport,
+  type GltfMeshData,
+  type GltfMeshExport,
+  type GltfMeshMaterialGroup,
+  type GltfNodeExport,
+  type GltfPivotHelperReport,
+  type GltfPrimitiveExport,
+  type GltfSceneGraph,
+  type GltfVolumeAccess,
+} from "./gltf-types.js";
+export { buildVolumeMesh } from "./gltf-mesh.js";
+export {
+  planGltfExport,
+  preflightGltfExport,
+  sanitizeGltfName,
+} from "./gltf-mapping.js";
+export { encodeGlb, encodeGltfJson, type GltfJsonEncoded } from "./gltf.js";
