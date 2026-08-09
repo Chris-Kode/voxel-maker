@@ -97,24 +97,3 @@ export const ROOF_GENERATOR: GeneratorDefinition<RoofParams> = {
 function ceilHalf(value: number): number {
   return Math.ceil(value / 2);
 }
-
-/** Independent roof voxel estimate helper (used by tests). */
-export function estimateRoofVoxels(params: RoofParams): number {
-  if (params.style === "flat") {
-    return params.width * params.thickness * params.depth;
-  }
-  const layerCount =
-    params.style === "pyramid"
-      ? Math.max(ceilHalf(params.width), ceilHalf(params.depth))
-      : ceilHalf(params.width);
-  let estimate = 0;
-  for (let layer = 0; layer < layerCount; layer += 1) {
-    const layerWidth = Math.max(1, params.width - 2 * layer);
-    const layerDepth =
-      params.style === "pyramid"
-        ? Math.max(1, params.depth - 2 * layer)
-        : params.depth;
-    estimate += layerWidth * layerDepth;
-  }
-  return estimate;
-}

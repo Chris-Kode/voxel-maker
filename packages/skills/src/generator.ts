@@ -166,7 +166,9 @@ export function unknownGenerator(name: string): never {
 /**
  * Validates raw params against a definition's contract and the generator's
  * semantic rules. Schema violations throw one stable error carrying every
- * schema message; semantic violations throw with their own path.
+ * schema message; semantic violations throw with their own path. The
+ * parsed params are deep-frozen, so a proposal can never observe later
+ * caller mutation of its own inputs.
  */
 export function parseGeneratorParams<P>(
   definition: GeneratorDefinition<P>,
@@ -193,7 +195,19 @@ export function parseGeneratorParams<P>(
     });
   }
   const params = definition.parse(value);
-  return Object.freeze({ ...params }) as P;
+  return deepFreeze(params) as P;
+}
+
+/** Recursively freezes validated JSON params (no cycles after validation). */
+function deepFreeze(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreeze(item);
+    return Object.freeze(value);
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) deepFreeze(record[key]);
+  return Object.freeze(record);
 }
 
 /** Validates the ambient generator context before any proposal work. */

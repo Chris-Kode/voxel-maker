@@ -1,5 +1,6 @@
 import { WorkspaceError } from "@voxel-maker/shared";
 import type { JsonSchema } from "@voxel-maker/agent";
+import { INVALID_GENERATOR_PARAMS_CODE } from "./generator.js";
 import type { IntAabb } from "./geometry.js";
 
 /**
@@ -63,7 +64,7 @@ export function invalidGeneratorParams(
 ): never {
   throw new WorkspaceError({
     family: "validation",
-    code: "INVALID_GENERATOR_PARAMS",
+    code: INVALID_GENERATOR_PARAMS_CODE,
     message,
     ...(path === undefined ? {} : { path }),
   });

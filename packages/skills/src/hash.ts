@@ -22,8 +22,3 @@ export function digestHex(value: string): string {
   }
   return hash.toString(16).padStart(16, "0");
 }
-
-/** Compact bounded identifier: `prefix:<hex>`; always non-empty and short. */
-export function digestId(prefix: string, value: string): string {
-  return `${prefix}:${digestHex(value)}`;
-}

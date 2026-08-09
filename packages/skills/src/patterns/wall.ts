@@ -2,7 +2,7 @@ import type { GeneratorDefinition, GeneratorContext } from "../generator.js";
 import { createCommandFactory } from "../generator.js";
 import type { Command } from "@voxel-maker/commands";
 import type { IntAabb, Vec3i } from "../geometry.js";
-import { boxFromMinSize, boxVolume } from "../geometry.js";
+import { boxFromMinSize } from "../geometry.js";
 import {
   REGION_SCHEMA,
   VEC3I_SCHEMA,
@@ -70,13 +70,3 @@ export const WALL_GENERATOR: GeneratorDefinition<WallParams> = {
     return { commands: proposed, bounds: wall };
   },
 };
-
-/** Wall estimate helper reused by tests: wall plus optional opening. */
-export function estimateWallVoxels(params: WallParams): number {
-  const wall = boxFromMinSize(params.min, params.size);
-  let estimate = boxVolume(wall);
-  if (params.opening !== undefined && params.opening !== null) {
-    estimate += boxVolume(params.opening);
-  }
-  return estimate;
-}
