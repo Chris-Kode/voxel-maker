@@ -83,12 +83,6 @@ function matchesOneOf(
 }
 
 /**
- * Validates a plain JSON value against a schema (draft-07 subset). Pushes a
- * stable, path-prefixed message per violation and returns true when the
- * value is valid. `value` is never mutated and nothing is allocated beyond
- * the error list; validation is deterministic and side-effect free.
- */
-/**
  * Hard nesting cap for schema validation (issue #44): tool arguments are
  * untrusted provider output, so a pathologically nested value must fail
  * validation instead of overflowing the stack. 64 levels is far above any
@@ -96,6 +90,12 @@ function matchesOneOf(
  */
 export const SCHEMA_MAX_DEPTH = 64;
 
+/**
+ * Validates a plain JSON value against a schema (draft-07 subset). Pushes a
+ * stable, path-prefixed message per violation and returns true when the
+ * value is valid. `value` is never mutated and nothing is allocated beyond
+ * the error list; validation is deterministic and side-effect free.
+ */
 export function validateValue(
   schema: JsonSchema,
   value: unknown,
