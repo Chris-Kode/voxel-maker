@@ -686,14 +686,19 @@ class AgentSessionImpl implements AgentSession {
       };
     }
     const policy = resolveRefinementPolicy(config.policy);
-    const baseline = this.#captureStagedEvidence(config, true);
+    // Local baseline of the pre-refinement staged state: used only for
+    // the promotion evaluation, never transmitted.
+    const baseline = this.#captureStagedEvidence(config, false);
     if (baseline.kind === "limit") {
       return { kind: "failed", result: this.#failedResult("limit", baseline.error) };
     }
     const seenHashes = new Set<string>([baseline.set.semanticHash]);
     let before = baseline.set;
     let beforeStructure = measureStructure(this.preview);
+    // Promotion baseline: the state at the START of the phase.
+    const initialStructure = beforeStructure;
     let iterations = 0;
+    let oscillationDetected = false;
     let evaluation: RefinementEvaluation | undefined;
     let stopped:
       | "no-corrections"
@@ -796,9 +801,18 @@ class AgentSessionImpl implements AgentSession {
         policy,
         oscillationDetected: seenHashes.has(after.set.semanticHash),
       });
-      const noCorrections = correctionsStaged === 0 && critique === undefined;
-      const oscillation = evaluation.oscillationDetected;
+      // A round that leaves the staged state byte-identical to its
+      // predecessor made no progress (no corrections, or no-op
+      // corrections): stop with no-corrections.
+      const noChange =
+        after.set.semanticHash === before.semanticHash;
+      // Oscillation is a RETURN to a state seen before the immediate
+      // predecessor (a no-op round is not oscillation).
+      const earlierHashes = new Set(seenHashes);
+      earlierHashes.delete(before.semanticHash);
+      const oscillation = earlierHashes.has(after.set.semanticHash);
       const regressed = evaluation.regressions.length > 0;
+      if (oscillation) oscillationDetected = true;
       this.#emit({
         kind: "refine",
         iteration: iterations,
@@ -806,8 +820,8 @@ class AgentSessionImpl implements AgentSession {
         critique,
         correctionsStaged,
         evaluation,
-        done: noCorrections || oscillation || regressed,
-        stopped: noCorrections
+        done: noChange || oscillation || regressed,
+        stopped: noChange
           ? "no-corrections"
           : oscillation
             ? "oscillation"
@@ -816,8 +830,8 @@ class AgentSessionImpl implements AgentSession {
               : undefined,
       });
       seenHashes.add(after.set.semanticHash);
-      if (noCorrections || oscillation || regressed) {
-        stopped = noCorrections
+      if (noChange || oscillation || regressed) {
+        stopped = noChange
           ? "no-corrections"
           : oscillation
             ? "oscillation"
@@ -837,10 +851,10 @@ class AgentSessionImpl implements AgentSession {
     }
     const finalStructure = measureStructure(this.preview);
     const finalEvaluation = evaluateRefinement({
-      baseline: { structure: beforeStructure, evidence: baseline.set },
+      baseline: { structure: initialStructure, evidence: baseline.set },
       refined: { structure: finalStructure, evidence: finalAfter.set },
       policy,
-      oscillationDetected: false,
+      oscillationDetected,
     });
     this.#emit({
       kind: "refine",

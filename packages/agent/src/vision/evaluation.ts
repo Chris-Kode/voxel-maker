@@ -47,8 +47,12 @@ export function imageSimilarity(
   }
   let changedPixels = 0;
   let totalDelta = 0;
-  for (let i = 0; i < expected; i += 1) {
-    const delta = Math.abs((before[i] as number) - (after[i] as number));
+  for (let i = 0; i < expected; i += 4) {
+    const delta =
+      Math.abs((before[i] as number) - (after[i] as number)) +
+      Math.abs((before[i + 1] as number) - (after[i + 1] as number)) +
+      Math.abs((before[i + 2] as number) - (after[i + 2] as number)) +
+      Math.abs((before[i + 3] as number) - (after[i + 3] as number));
     totalDelta += delta;
     if (delta !== 0) changedPixels += 1;
   }
