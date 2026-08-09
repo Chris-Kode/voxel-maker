@@ -228,8 +228,10 @@ describe("mutation tool surface (AC: registered commands, explicit ids, base rev
       expect(contract.version).toBeGreaterThanOrEqual(1);
     }
     // The mutation envelope version is recorded on every response.
-    expect(constructOk(makeMutator().mutator, "fillBox", VALID_ARGS.fillBox)
-      .contractVersion).toBe(MUTATION_CONTRACT_VERSION);
+    expect(
+      constructOk(makeMutator().mutator, "fillBox", VALID_ARGS.fillBox)
+        .contractVersion,
+    ).toBe(MUTATION_CONTRACT_VERSION);
     expect(authorizeTools(MUTATION_TOOL_CONTRACTS, ["inspect"])).toHaveLength(
       0,
     );
