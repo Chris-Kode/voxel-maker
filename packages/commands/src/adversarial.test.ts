@@ -9,10 +9,7 @@ import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import { createDocumentStore } from "@voxel-maker/document";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
-import {
-  DEFAULT_COMMAND_LIMITS,
-  type CommandLimits,
-} from "./types.js";
+import { DEFAULT_COMMAND_LIMITS, type CommandLimits } from "./types.js";
 import {
   parseJournalTransaction,
   type JournalTransactionLimits,
@@ -74,7 +71,12 @@ function createBus(limits?: CommandLimits): {
   const handle = createDocumentStore({ document: createDemoDocument() });
   const registry = new CommandRegistry();
   registerNodeCommands(registry);
-  const bus = new CommandBus(handle.store, registry, handle.writeCapability, limits);
+  const bus = new CommandBus(
+    handle.store,
+    registry,
+    handle.writeCapability,
+    limits,
+  );
   return { bus, store: handle.store, writeCapability: handle.writeCapability };
 }
 
@@ -123,7 +125,11 @@ describe("adversarial journal transaction parsing", () => {
   it("rejects unknown top-level fields, including prototype-like keys", () => {
     for (const field of ["__proto__", "constructor", "toString", "extra"]) {
       expectCode(
-        () => parseJournalTransaction(validTransaction({ [field]: 1 }), codecLimits),
+        () =>
+          parseJournalTransaction(
+            validTransaction({ [field]: 1 }),
+            codecLimits,
+          ),
         "UNKNOWN_JOURNAL_FIELD",
       );
     }
@@ -146,7 +152,10 @@ describe("adversarial journal transaction parsing", () => {
   it("rejects unsupported sources and oversized labels", () => {
     expectCode(
       () =>
-        parseJournalTransaction(validTransaction({ source: "shell" }), codecLimits),
+        parseJournalTransaction(
+          validTransaction({ source: "shell" }),
+          codecLimits,
+        ),
       "INVALID_JOURNAL_FIELD",
     );
     expectCode(
@@ -161,7 +170,11 @@ describe("adversarial journal transaction parsing", () => {
 
   it("rejects revision fields that do not advance by exactly one", () => {
     expectCode(
-      () => parseJournalTransaction(validTransaction({ revisionAfter: 5 }), codecLimits),
+      () =>
+        parseJournalTransaction(
+          validTransaction({ revisionAfter: 5 }),
+          codecLimits,
+        ),
       "INVALID_JOURNAL_FIELD",
     );
     expectCode(
@@ -194,13 +207,9 @@ describe("adversarial journal transaction parsing", () => {
     const withCommands = (commands: unknown[]): unknown =>
       validTransaction({ commands });
     expectCode(
-      () => parseJournalTransaction(validTransaction({ commands: "nope" }), codecLimits),
-      "INVALID_JOURNAL_FIELD",
-    );
-    expectCode(
       () =>
         parseJournalTransaction(
-          withCommands([{ id: "c:1", type: "node.setMetadata", schemaVersion: 1, payload: null }]),
+          validTransaction({ commands: "nope" }),
           codecLimits,
         ),
       "INVALID_JOURNAL_FIELD",
@@ -209,7 +218,28 @@ describe("adversarial journal transaction parsing", () => {
       () =>
         parseJournalTransaction(
           withCommands([
-            { id: "c:1", type: "node.setMetadata", schemaVersion: 1, payload: { a: 1 }, extra: 1 },
+            {
+              id: "c:1",
+              type: "node.setMetadata",
+              schemaVersion: 1,
+              payload: null,
+            },
+          ]),
+          codecLimits,
+        ),
+      "INVALID_JOURNAL_FIELD",
+    );
+    expectCode(
+      () =>
+        parseJournalTransaction(
+          withCommands([
+            {
+              id: "c:1",
+              type: "node.setMetadata",
+              schemaVersion: 1,
+              payload: { a: 1 },
+              extra: 1,
+            },
           ]),
           codecLimits,
         ),
@@ -218,16 +248,8 @@ describe("adversarial journal transaction parsing", () => {
     expectCode(
       () =>
         parseJournalTransaction(
-          withCommands([{ id: "c:1", type: "", schemaVersion: 1, payload: { a: 1 } }]),
-          codecLimits,
-        ),
-      "INVALID_JOURNAL_FIELD",
-    );
-    expectCode(
-      () =>
-        parseJournalTransaction(
           withCommands([
-            { id: "c:1", type: "node.setMetadata", schemaVersion: 1.5, payload: { a: 1 } },
+            { id: "c:1", type: "", schemaVersion: 1, payload: { a: 1 } },
           ]),
           codecLimits,
         ),
@@ -236,7 +258,29 @@ describe("adversarial journal transaction parsing", () => {
     expectCode(
       () =>
         parseJournalTransaction(
-          withCommands([{ id: 7, type: "node.setMetadata", schemaVersion: 1, payload: { a: 1 } }]),
+          withCommands([
+            {
+              id: "c:1",
+              type: "node.setMetadata",
+              schemaVersion: 1.5,
+              payload: { a: 1 },
+            },
+          ]),
+          codecLimits,
+        ),
+      "INVALID_JOURNAL_FIELD",
+    );
+    expectCode(
+      () =>
+        parseJournalTransaction(
+          withCommands([
+            {
+              id: 7,
+              type: "node.setMetadata",
+              schemaVersion: 1,
+              payload: { a: 1 },
+            },
+          ]),
           codecLimits,
         ),
       "INVALID_JOURNAL_FIELD",
@@ -251,7 +295,8 @@ describe("adversarial journal transaction parsing", () => {
       payload: { nodeId: "node:adversarial:root", metadata: { i } },
     }));
     expectCode(
-      () => parseJournalTransaction(validTransaction({ commands }), codecLimits),
+      () =>
+        parseJournalTransaction(validTransaction({ commands }), codecLimits),
       "TOO_MANY_COMMANDS",
     );
   });
@@ -266,7 +311,12 @@ describe("adversarial journal transaction parsing", () => {
         parseJournalTransaction(
           validTransaction({
             commands: [
-              { id: "c:1", type: "node.setMetadata", schemaVersion: 1, payload: bigPayload },
+              {
+                id: "c:1",
+                type: "node.setMetadata",
+                schemaVersion: 1,
+                payload: bigPayload,
+              },
             ],
           }),
           codecLimits,
@@ -277,10 +327,17 @@ describe("adversarial journal transaction parsing", () => {
       id: `command:adversarial:${String(i)}`,
       type: "node.setMetadata",
       schemaVersion: 1,
-      payload: { nodeId: "node:adversarial:root", metadata: { blob: "y".repeat(300_000) } },
+      payload: {
+        nodeId: "node:adversarial:root",
+        metadata: { blob: "y".repeat(300_000) },
+      },
     }));
     expectCode(
-      () => parseJournalTransaction(validTransaction({ commands: many }), codecLimits),
+      () =>
+        parseJournalTransaction(
+          validTransaction({ commands: many }),
+          codecLimits,
+        ),
       "TRANSACTION_TOO_LARGE",
     );
   });
@@ -300,7 +357,10 @@ describe("adversarial journal transaction parsing", () => {
                 id: "c:1",
                 type: "node.setMetadata",
                 schemaVersion: 1,
-                payload: { nodeId: "node:adversarial:root", metadata: { nested } },
+                payload: {
+                  nodeId: "node:adversarial:root",
+                  metadata: { nested },
+                },
               },
             ],
           }),
@@ -385,10 +445,13 @@ describe("adversarial command execution", () => {
     // document metadata depth limit (16), so the handler must reject it.
     let nested: unknown = { leaf: true };
     for (let i = 0; i < 20; i += 1) nested = { next: nested };
-    const command = setNodeMetadataCommand(commandId("command:adversarial:md"), {
-      nodeId: "node:adversarial:root" as never,
-      metadata: { nested: nested as JsonValue },
-    });
+    const command = setNodeMetadataCommand(
+      commandId("command:adversarial:md"),
+      {
+        nodeId: "node:adversarial:root" as never,
+        metadata: { nested: nested as JsonValue },
+      },
+    );
     const result = bus.execute(command, {
       transactionId: transactionId("transaction:adversarial:0001"),
       expectedRevision: before,
@@ -419,7 +482,10 @@ describe("adversarial command execution", () => {
 
     const stringCommand = setNodeMetadataCommand(
       commandId("command:adversarial:str"),
-      { nodeId: "node:adversarial:root" as never, metadata: { blob: "x".repeat(70_000) } },
+      {
+        nodeId: "node:adversarial:root" as never,
+        metadata: { blob: "x".repeat(70_000) },
+      },
     );
     const result2 = bus.execute(stringCommand, {
       transactionId: transactionId("transaction:adversarial:0002"),

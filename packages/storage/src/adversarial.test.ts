@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceError, canonicalJson, type JsonValue } from "@voxel-maker/shared";
+import {
+  WorkspaceError,
+  canonicalJson,
+  type JsonValue,
+} from "@voxel-maker/shared";
 import { crc32Hex } from "@voxel-maker/formats";
 import {
   decodeJournalFrames,
@@ -49,7 +53,11 @@ function randomBytes(rng: () => number, size: number): Uint8Array {
   return out;
 }
 
-function mutate(bytes: Uint8Array, rng: () => number, count: number): Uint8Array {
+function mutate(
+  bytes: Uint8Array,
+  rng: () => number,
+  count: number,
+): Uint8Array {
   const out = bytes.slice();
   const flips = 1 + Math.floor(rng() * count);
   for (let i = 0; i < flips; i += 1) {
@@ -122,7 +130,9 @@ const encoder = new TextEncoder();
  * adversarial tests can reach the identity/kind checks that run after the
  * checksum check (mirrors the production `encodeRecord`).
  */
-function forgeFrame(overrides: Readonly<Record<string, JsonValue>>): Uint8Array {
+function forgeFrame(
+  overrides: Readonly<Record<string, JsonValue>>,
+): Uint8Array {
   const rest: Record<string, JsonValue> = {
     kind: "frame",
     formatVersion: 1,
@@ -155,7 +165,9 @@ function decodeOrThrow(bytes: Uint8Array): DecodedJournal {
     if (!(error instanceof WorkspaceError)) {
       throw new Error(
         `decodeJournalFrames threw a non-structured error: ${
-          error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+          error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error)
         }`,
       );
     }
@@ -209,7 +221,9 @@ describe("fuzz: recovery journal decoding never crashes", () => {
     ]);
     for (let offset = 0; offset <= valid.byteLength; offset += 1) {
       const decoded = decodeOrThrow(valid.slice(0, offset));
-      const revisions = decoded.frames.map((entry) => entry.frame.revisionAfter);
+      const revisions = decoded.frames.map(
+        (entry) => entry.frame.revisionAfter,
+      );
       // Frames are a monotone prefix of [1..5].
       for (let i = 0; i < revisions.length; i += 1) {
         expect(revisions[i]).toBe(i + 1);
@@ -241,7 +255,11 @@ describe("adversarial journal decoding", () => {
     const valid = buildJournal(1);
     // Patch the second record's length prefix to 0x7fffffff.
     const forged = valid.slice();
-    const view = new DataView(forged.buffer, forged.byteOffset, forged.byteLength);
+    const view = new DataView(
+      forged.buffer,
+      forged.byteOffset,
+      forged.byteLength,
+    );
     const headerBytes = encodeJournalHeader(header()).byteLength;
     view.setUint32(headerBytes, 0x7fff_ffff, true);
     const decoded = decodeOrThrow(forged);
@@ -252,7 +270,11 @@ describe("adversarial journal decoding", () => {
   it("reports zero-length frames without looping", () => {
     const valid = buildJournal(1);
     const forged = valid.slice();
-    const view = new DataView(forged.buffer, forged.byteOffset, forged.byteLength);
+    const view = new DataView(
+      forged.buffer,
+      forged.byteOffset,
+      forged.byteLength,
+    );
     view.setUint32(encodeJournalHeader(header()).byteLength, 0, true);
     const decoded = decodeOrThrow(forged);
     expect(decoded.corruptTail?.reason).toBe("zero-length frame");
@@ -261,19 +283,27 @@ describe("adversarial journal decoding", () => {
   it("reports frame checksum corruption and keeps earlier frames", () => {
     const valid = buildJournal(3);
     const decoded = decodeOrThrow(valid);
-    const second = decoded.frames[1] as { readonly offset: number; readonly byteLength: number };
+    const second = decoded.frames[1] as {
+      readonly offset: number;
+      readonly byteLength: number;
+    };
     const forged = valid.slice();
     // Flip a byte inside the transaction payload string: the JSON stays
     // valid, so only the checksum can catch the tampering.
     const needle = new TextEncoder().encode('"payload":"');
-    const span = forged.subarray(second.offset, second.offset + second.byteLength);
+    const span = forged.subarray(
+      second.offset,
+      second.offset + second.byteLength,
+    );
     const at = findBytes(span, needle);
     expect(at).toBeGreaterThanOrEqual(0);
     // 'x' (0x78) -> 'y' (0x79): JSON stays valid ASCII, only the CRC breaks.
     forged[second.offset + at + needle.byteLength] =
       (forged[second.offset + at + needle.byteLength] ?? 0) ^ 0x01;
     const result = decodeOrThrow(forged);
-    expect(result.frames.map((entry) => entry.frame.revisionAfter)).toEqual([1]);
+    expect(result.frames.map((entry) => entry.frame.revisionAfter)).toEqual([
+      1,
+    ]);
     expect(result.corruptTail?.reason).toBe("frame checksum mismatch");
     // frameIndex counts records including the header (header=0, frame1=1).
     expect(result.corruptTail?.frameIndex).toBe(2);
@@ -281,12 +311,18 @@ describe("adversarial journal decoding", () => {
 
   it("reports a frame whose identity differs from the header", () => {
     const forged = new Uint8Array(
-      headerBytes().byteLength + forgeFrame({ recoverySessionId: "session:other:0001" }).byteLength,
+      headerBytes().byteLength +
+        forgeFrame({ recoverySessionId: "session:other:0001" }).byteLength,
     );
     forged.set(headerBytes(), 0);
-    forged.set(forgeFrame({ recoverySessionId: "session:other:0001" }), headerBytes().byteLength);
+    forged.set(
+      forgeFrame({ recoverySessionId: "session:other:0001" }),
+      headerBytes().byteLength,
+    );
     const result = decodeOrThrow(forged);
-    expect(result.corruptTail?.reason).toBe("frame identity or schema versions differ from the header");
+    expect(result.corruptTail?.reason).toBe(
+      "frame identity or schema versions differ from the header",
+    );
   });
 
   it("reports unknown frame kinds", () => {

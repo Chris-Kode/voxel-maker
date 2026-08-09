@@ -115,10 +115,7 @@ const PROTECTED_KEYS = new Set([
  * plus known secret patterns inside strings. Suitable for provider
  * payloads and diagnostics where keys may vary.
  */
-export function redactProviderPayload(
-  value: JsonValue,
-  depth = 0,
-): JsonValue {
+export function redactProviderPayload(value: JsonValue, depth = 0): JsonValue {
   if (depth > REDACT_MAX_DEPTH) throw redactDepthError();
   if (Array.isArray(value)) {
     return Object.freeze(

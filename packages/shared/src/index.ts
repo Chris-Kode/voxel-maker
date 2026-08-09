@@ -124,7 +124,10 @@ function cloneJson(value: JsonValue, depth = 0): JsonValue {
   const record = value as Readonly<Record<string, JsonValue>>;
   return Object.freeze(
     Object.fromEntries(
-      Object.entries(record).map(([key, item]) => [key, cloneJson(item, depth + 1)]),
+      Object.entries(record).map(([key, item]) => [
+        key,
+        cloneJson(item, depth + 1),
+      ]),
     ),
   );
 }

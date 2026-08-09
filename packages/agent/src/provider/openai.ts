@@ -499,7 +499,10 @@ export class OpenAIProvider implements ProviderAdapter {
                   name: "",
                   arguments: "",
                 };
-                if (toolCalls.size >= MAX_TOOL_CALLS_PER_STREAM && !toolCalls.has(part.index)) {
+                if (
+                  toolCalls.size >= MAX_TOOL_CALLS_PER_STREAM &&
+                  !toolCalls.has(part.index)
+                ) {
                   yield {
                     kind: "error",
                     error: streamLimitError(
@@ -510,7 +513,10 @@ export class OpenAIProvider implements ProviderAdapter {
                   return;
                 }
                 const added = part.function?.arguments ?? "";
-                if (current.arguments.length + added.length > MAX_TOOL_ARGUMENT_BYTES) {
+                if (
+                  current.arguments.length + added.length >
+                  MAX_TOOL_ARGUMENT_BYTES
+                ) {
                   yield {
                     kind: "error",
                     error: streamLimitError(

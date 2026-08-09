@@ -85,7 +85,9 @@ interface StructuredResult<T> {
   readonly value: T;
 }
 
-type StructuredOutcome<T> = StructuredResult<T> | { readonly ok: false; readonly error: WorkspaceError };
+type StructuredOutcome<T> =
+  | StructuredResult<T>
+  | { readonly ok: false; readonly error: WorkspaceError };
 
 /** Narrows a structured outcome to its error; throws when it succeeded. */
 function failure<T>(outcome: StructuredOutcome<T>): WorkspaceError {

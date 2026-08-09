@@ -105,7 +105,10 @@ export function validateValue(
 ): boolean {
   if (depth > SCHEMA_MAX_DEPTH) {
     errors.push(
-      errorAt(path, `value exceeds the maximum nesting depth of ${String(SCHEMA_MAX_DEPTH)}`),
+      errorAt(
+        path,
+        `value exceeds the maximum nesting depth of ${String(SCHEMA_MAX_DEPTH)}`,
+      ),
     );
     return false;
   }
@@ -176,7 +179,13 @@ export function validateValue(
     }
     if (schema.items !== undefined) {
       for (let index = 0; index < value.length; index += 1) {
-        validateValue(schema.items, value[index], [...path, index], errors, depth + 1);
+        validateValue(
+          schema.items,
+          value[index],
+          [...path, index],
+          errors,
+          depth + 1,
+        );
       }
     }
   }
@@ -197,7 +206,13 @@ export function validateValue(
       }
       const propertySchema = schema.properties?.[key];
       if (propertySchema !== undefined) {
-        validateValue(propertySchema, record[key], [...path, key], errors, depth + 1);
+        validateValue(
+          propertySchema,
+          record[key],
+          [...path, key],
+          errors,
+          depth + 1,
+        );
       }
     }
   }
