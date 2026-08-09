@@ -19,8 +19,11 @@ import type { DesktopComposition } from "../composition.js";
  * rubber-bands a region (region mode); right/middle-drag pans; wheel
  * zooms; and a click picks the nearest voxel — a plain click replaces the
  * selection, Shift adds, Ctrl/Cmd toggles, and clicking empty space
- * clears it. With the pencil/erase/paint/box/sphere/cylinder tools, a
- * primary-button gesture becomes a stroke or a shape drag: down starts
+ * clears it (region mode uses the full gesture lifecycle, so a click
+ * commits the one-voxel region entry; docs/editor/selection-and-shape-
+ * tools-v1.md). With the
+ * pencil/erase/paint/box/sphere/cylinder tools, a primary-button gesture
+ * becomes a stroke or a shape drag: down starts
  * it, moves update the transient preview, up commits one labeled history
  * entry, and a lost pointer cancels it. With the transform tool, a
  * move/copy drag previews the exact destination bounds and commits one
@@ -84,6 +87,9 @@ export function Viewport({
     // drag, or region select); a gizmo gesture routes to the transform
     // gizmo (plan S7.8); everything else orbits or pans.
     type GestureMode = "orbit" | "tool" | "region" | "gizmo";
+    /** Tool and region gestures share the tool lifecycle (ticket #48). */
+    const isToolGesture = (mode: GestureMode): boolean =>
+      mode === "tool" || mode === "region";
     let gesture:
       | {
           readonly mode: GestureMode;
@@ -163,7 +169,10 @@ export function Viewport({
         controller.gizmoPointerMove(x, y);
         return;
       }
-      if (gesture.mode === "tool") {
+      // Tool and region gestures both route through the active tool's
+      // lifecycle: the region drag previews and commits through the
+      // select tool (ticket #48), exactly like stroke/shape gestures.
+      if (isToolGesture(gesture.mode)) {
         const [x, y] = viewportPoint(event);
         controller.toolPointerMove(x, y);
         return;
@@ -190,7 +199,10 @@ export function Viewport({
       if (gesture === undefined) return;
       if (gesture.mode === "gizmo") {
         controller.gizmoPointerUp();
-      } else if (gesture.mode === "tool") {
+      } else if (isToolGesture(gesture.mode)) {
+        // A region release commits the region entry through the select
+        // tool (a plain click selects the one-voxel region), instead of
+        // falling through to the click-style voxel select (ticket #48).
         controller.toolPointerUp();
       } else if (gesture.button === 0 && !gesture.moved) {
         const [x, y] = viewportPoint(event);
@@ -203,9 +215,13 @@ export function Viewport({
     };
 
     const onPointerCancel = (): void => {
-      if (gesture?.mode === "gizmo") {
+      if (gesture === undefined) return;
+      if (gesture.mode === "gizmo") {
         controller.gizmoPointerCancel();
-      } else if (gesture?.mode === "tool") {
+      } else if (isToolGesture(gesture.mode)) {
+        // A lost pointer cancels the region drag exactly like any other
+        // tool gesture: no draft survives and no selection changes
+        // (ticket #48).
         controller.toolPointerCancel();
       }
       gesture = undefined;

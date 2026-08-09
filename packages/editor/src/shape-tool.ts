@@ -339,7 +339,8 @@ class ShapeToolImpl implements ShapeTool {
     this.#material = material;
     this.#params = this.#paramsFor(hit.voxel);
     this.#active = true;
-    this.#voxels = [...this.#boundedVoxels()];
+    const error = this.#preflightVoxels();
+    if (error !== undefined) return { ok: false, error };
     this.#editor.setDraft(this.draft);
     return { ok: true };
   }
@@ -352,19 +353,8 @@ class ShapeToolImpl implements ShapeTool {
     // are ignored (deterministic, no accidental cross-node fill).
     if (hit.volumeId !== this.#volumeId) return { ok: true };
     this.#params = this.#paramsFor(hit.voxel);
-    try {
-      // Fail before any commit and before any unbounded allocation: a
-      // shape that cannot fit the ADR-0009 budget or the volume's
-      // occupied-voxel limit cancels the gesture atomically, leaving the
-      // semantic state untouched.
-      this.#voxels = [...this.#boundedVoxels()];
-    } catch (error) {
-      if (error instanceof WorkspaceError) {
-        this.reset();
-        return { ok: false, error };
-      }
-      throw error;
-    }
+    const error = this.#preflightVoxels();
+    if (error !== undefined) return { ok: false, error };
     this.#editor.setDraft(this.draft);
     return { ok: true };
   }
@@ -443,6 +433,28 @@ class ShapeToolImpl implements ShapeTool {
       throw new Error("shape gesture has no volume limits");
     }
     return shapeParamsForDrag(this.kind, volumeId, anchor, voxel, limits);
+  }
+
+  /**
+   * Preflights the current shape params and publishes the bounded preview
+   * voxels. Fails before any commit and before any unbounded allocation:
+   * a shape that cannot fit the ADR-0009 budget or the volume's
+   * occupied-voxel limit cancels the gesture atomically (no draft, no
+   * params, no commit) and returns the structured error. Pointer-down
+   * and pointer-move share this path so the gesture can never be left
+   * half-started.
+   */
+  #preflightVoxels(): WorkspaceError | undefined {
+    try {
+      this.#voxels = [...this.#boundedVoxels()];
+    } catch (error) {
+      if (error instanceof WorkspaceError) {
+        this.reset();
+        return error;
+      }
+      throw error;
+    }
+    return undefined;
   }
 
   /**

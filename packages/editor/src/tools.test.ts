@@ -559,6 +559,66 @@ describe("shape tools", () => {
   });
 });
 
+/**
+ * A box tool over a fake read surface with `occupiedCount` occupied
+ * voxels and a 10-voxel occupied limit (ADR-0009): drives the tool's
+ * preflight through the real gesture path against a tiny limit.
+ */
+function createOccupiedLimitHarness(occupiedCount: number): {
+  readonly harness: Harness;
+  readonly box: ReturnType<typeof createShapeTool>;
+  readonly editor: ReturnType<typeof createEditorStore>;
+} {
+  const harness = createHarness();
+  const occupied = new Set<string>();
+  for (let x = 0; x < occupiedCount; x += 1) {
+    occupied.add(`${String(x)},0,0`);
+  }
+  const limits: VoxelVolumeLimits = {
+    ...DEFAULT_VOXEL_VOLUME_LIMITS,
+    maxOccupiedVoxels: 10,
+  };
+  const fakeView: VoxelVolumeReadView = {
+    volumeId: VOLUME,
+    limits,
+    getVoxel: (coordinate) =>
+      occupied.has(coordinate.join(",")) ? MATERIAL : (0 as never),
+    getChunk: () => undefined,
+    chunkCount: () => 0,
+    chunkCoordinates: () => [],
+    occupiedCount: () => occupied.size,
+    occupiedBounds: () => undefined,
+  };
+  const fakeStore: DocumentStoreRead = {
+    revision: 0,
+    limits: DEFAULT_DOCUMENT_LIMITS,
+    getDocument: () => harness.store.getDocument(),
+    getVolume: (volumeId) => (volumeId === VOLUME ? fakeView : undefined),
+    getVoxel: () => 0 as never,
+    subscribe: () => () => {},
+  };
+  const editor = createEditorStore();
+  editor.setActiveMaterial(MATERIAL);
+  const host: ToolHost = {
+    get store() {
+      return fakeStore;
+    },
+    maxGestureVoxels: 1_000_000,
+    pick: (clientX) => ({
+      nodeId: CHILD,
+      volumeId: VOLUME,
+      voxel: [clientX, 0, 0],
+    }),
+    nextCommandId: () => commandId("command:test:shape"),
+    commit: () => undefined,
+  };
+  return {
+    harness,
+    box: createShapeTool({ kind: "box", host, editor }),
+    editor,
+  };
+}
+
 describe("shape volume-limit preflight", () => {
   it("clamps shape extents to the volume extent limit", () => {
     const harness = createHarness();
@@ -611,52 +671,7 @@ describe("shape volume-limit preflight", () => {
   });
 
   it("reports the occupied-voxel limit before any commit", () => {
-    // A fake read surface with a tiny occupied-voxel limit drives the
-    // tool's preflight through the real gesture path.
-    const harness = createHarness();
-    const occupied = new Set<string>();
-    for (let x = 0; x < 8; x += 1) {
-      occupied.add(`${String(x)},0,0`);
-    }
-    const limits: VoxelVolumeLimits = {
-      ...DEFAULT_VOXEL_VOLUME_LIMITS,
-      maxOccupiedVoxels: 10,
-    };
-    const fakeView: VoxelVolumeReadView = {
-      volumeId: VOLUME,
-      limits,
-      getVoxel: (coordinate) =>
-        occupied.has(coordinate.join(",")) ? MATERIAL : (0 as never),
-      getChunk: () => undefined,
-      chunkCount: () => 0,
-      chunkCoordinates: () => [],
-      occupiedCount: () => occupied.size,
-      occupiedBounds: () => undefined,
-    };
-    const fakeStore: DocumentStoreRead = {
-      revision: 0,
-      limits: DEFAULT_DOCUMENT_LIMITS,
-      getDocument: () => harness.store.getDocument(),
-      getVolume: (volumeId) => (volumeId === VOLUME ? fakeView : undefined),
-      getVoxel: () => 0 as never,
-      subscribe: () => () => {},
-    };
-    const editor = createEditorStore();
-    editor.setActiveMaterial(MATERIAL);
-    const host: ToolHost = {
-      get store() {
-        return fakeStore;
-      },
-      maxGestureVoxels: 1_000_000,
-      pick: (clientX) => ({
-        nodeId: CHILD,
-        volumeId: VOLUME,
-        voxel: [clientX, 0, 0],
-      }),
-      nextCommandId: () => commandId("command:test:shape"),
-      commit: () => undefined,
-    };
-    const box = createShapeTool({ kind: "box", host, editor });
+    const { box, editor } = createOccupiedLimitHarness(8);
     // Down at (0,0,0): the first voxel is already occupied, so the
     // occupied count does not grow.
     expect(box.pointerDown(0, 0)).toEqual({ ok: true });
@@ -666,6 +681,22 @@ describe("shape volume-limit preflight", () => {
     if (!result.ok) expect(result.error.code).toBe("TOO_MANY_OCCUPIED_VOXELS");
     expect(box.active).toBe(false);
     expect(editor.draft).toBeUndefined();
+  });
+
+  it("reports the occupied-voxel limit through pointerDown atomically", () => {
+    // A volume already at its occupied-voxel limit: pointer-down on an
+    // empty voxel must report the same structured error as pointerMove
+    // (regression: pointerDown used to let the WorkspaceError escape the
+    // DOM handler, leaving the tool active with params and no draft).
+    const { harness, box, editor } = createOccupiedLimitHarness(10);
+    // Down at (10,0,0): one empty addition -> 10 + 1 = 11 > 10, so the
+    // gesture is rejected and cancelled before any preview or commit.
+    const result = box.pointerDown(10, 0);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("TOO_MANY_OCCUPIED_VOXELS");
+    expect(box.active).toBe(false);
+    expect(editor.draft).toBeUndefined();
+    expect(harness.bus.historySnapshot().past).toHaveLength(0);
   });
 });
 

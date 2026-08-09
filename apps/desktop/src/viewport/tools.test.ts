@@ -348,6 +348,67 @@ describe("desktop selection workflows", () => {
     expect(composition.editor.selection).toEqual([]);
     composition.dispose();
   });
+
+  it("resolves a region-mode miss even when the tool changes mid-gesture", async () => {
+    const composition = createDesktopComposition({
+      storage: new MemoryProjectStorage(),
+      picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
+    });
+    await openFixture(composition);
+    frameFront(composition);
+    composition.editor.setSelectionMode("region");
+    const viewport = composition.viewport;
+    // Down on empty space starts a region gesture with a pending miss;
+    // switching tools before the release must not strand that state on
+    // the select tool (regression: the miss was never pinned, so the up
+    // routed to the new tool and the next region drag resolved as a
+    // miss, clearing the selection instead of committing the region).
+    viewport.toolPointerDown(5, 5);
+    expect(viewport.toolActive).toBe(false);
+    composition.editor.setActiveTool("pencil");
+    viewport.toolPointerUp();
+    expect(viewport.toolActive).toBe(false);
+    // Back on select, a real region drag must commit normally.
+    composition.editor.setActiveTool("select");
+    const start = scanPick(composition, (hit) => hit.nodeId === CHILD);
+    if (start === undefined) {
+      throw new Error("box A must offer two pickable drag corners");
+    }
+    const startHit = start.hit;
+    const end = scanPick(
+      composition,
+      (hit) =>
+        hit.nodeId === CHILD &&
+        (hit.voxel[0] !== startHit.voxel[0] ||
+          hit.voxel[1] !== startHit.voxel[1]),
+    );
+    if (end === undefined) {
+      throw new Error("box A must offer two pickable drag corners");
+    }
+    viewport.toolPointerDown(start.x, start.y);
+    viewport.toolPointerMove(end.x, end.y);
+    viewport.toolPointerUp();
+    expect(composition.editor.selection).toEqual([
+      {
+        kind: "region",
+        volumeId: start.hit.volumeId,
+        region: {
+          min: [
+            Math.min(start.hit.voxel[0], end.hit.voxel[0]),
+            Math.min(start.hit.voxel[1], end.hit.voxel[1]),
+            Math.min(start.hit.voxel[2], end.hit.voxel[2]),
+          ],
+          max: [
+            Math.max(start.hit.voxel[0], end.hit.voxel[0]) + 1,
+            Math.max(start.hit.voxel[1], end.hit.voxel[1]) + 1,
+            Math.max(start.hit.voxel[2], end.hit.voxel[2]) + 1,
+          ],
+        },
+      },
+    ]);
+    composition.dispose();
+  });
 });
 
 describe("desktop tool workflows", () => {

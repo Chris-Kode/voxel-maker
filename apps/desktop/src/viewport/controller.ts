@@ -382,8 +382,17 @@ class ViewportControllerImpl implements ViewportController {
     const result = tool.pointerDown(clientX, clientY, modifiers);
     // Pin the starting tool for the whole gesture: a tool switch mid-
     // gesture must not leak the draft or let a later up commit a stale
-    // gesture through a different tool.
-    if (result.ok && tool.active) this.#gestureTool = tool;
+    // gesture through a different tool. The select tool owns the whole
+    // region gesture — including a miss on empty space, whose pending
+    // miss resolves at pointer-up — so it is pinned even when not
+    // active (ticket #48).
+    if (
+      result.ok &&
+      (tool.active ||
+        (tool.id === "select" && this.#editor.selectionMode === "region"))
+    ) {
+      this.#gestureTool = tool;
+    }
     if (
       result.ok &&
       !tool.active &&

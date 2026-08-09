@@ -36,6 +36,7 @@
     "@types/react-dom": "catalog:",
     "@types/three": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "happy-dom": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"
