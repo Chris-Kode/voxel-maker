@@ -1,6 +1,6 @@
 import type { AnimationId, JsonValue, TrackId } from "@voxel-maker/shared";
 import { boundedEmit } from "../budget.js";
-import type { ToolContract } from "../contract.js";
+import { outputSchema, type ToolContract } from "../contract.js";
 import {
   clampName,
   pageSlice,
@@ -32,10 +32,9 @@ export const INSPECT_CLIPS_CONTRACT: ToolContract = {
       pageSize: { type: "integer", minimum: 1 },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectClips",
+    {
       total: { type: "integer", minimum: 0 },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
@@ -53,15 +52,24 @@ export const INSPECT_CLIPS_CONTRACT: ToolContract = {
             trackCount: { type: "integer", minimum: 0 },
             keyframeCount: { type: "integer", minimum: 0 },
           },
-          required: ["animationId", "duration", "loop", "trackCount", "keyframeCount"],
+          required: [
+            "animationId",
+            "duration",
+            "loop",
+            "trackCount",
+            "keyframeCount",
+          ],
         },
       },
     },
-    required: ["total", "page", "pageSize", "hasMore", "clips"],
-  },
+    ["total", "page", "pageSize", "hasMore", "clips"],
+  ),
 };
 
-export function inspectClips(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectClips(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const record = args as Readonly<Record<string, JsonValue>>;
   const animations = Object.values(store.getDocument().animations);
@@ -81,7 +89,11 @@ export function inspectClips(ctx: ToolContext, args: JsonValue): Readonly<Record
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
   const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(budget, entries.slice(slice.start, slice.end), (entry) => entry);
+  const emitted = boundedEmit(
+    budget,
+    entries.slice(slice.start, slice.end),
+    (entry) => entry,
+  );
   return {
     total: slice.total,
     page: slice.page,
@@ -102,15 +114,17 @@ export const INSPECT_TRACKS_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      animationId: { type: "string", description: "Restrict to one clip (default: every clip)" },
+      animationId: {
+        type: "string",
+        description: "Restrict to one clip (default: every clip)",
+      },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectTracks",
+    {
       total: { type: "integer", minimum: 0 },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
@@ -124,31 +138,56 @@ export const INSPECT_TRACKS_CONTRACT: ToolContract = {
             trackId: { type: "string" },
             animationId: { type: "string" },
             targetNodeId: { type: "string" },
-            interpolation: { type: "string", enum: ["step", "linear", "smoothstep"] },
+            interpolation: {
+              type: "string",
+              enum: ["step", "linear", "smoothstep"],
+            },
             keyframeCount: { type: "integer", minimum: 0 },
-            channels: { type: "array", items: { type: "string", enum: ["translation", "rotation", "scale"] } },
+            channels: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["translation", "rotation", "scale"],
+              },
+            },
           },
-          required: ["trackId", "animationId", "targetNodeId", "interpolation", "keyframeCount", "channels"],
+          required: [
+            "trackId",
+            "animationId",
+            "targetNodeId",
+            "interpolation",
+            "keyframeCount",
+            "channels",
+          ],
         },
       },
     },
-    required: ["total", "page", "pageSize", "hasMore", "tracks"],
-  },
+    ["total", "page", "pageSize", "hasMore", "tracks"],
+  ),
 };
 
-export function inspectTracks(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectTracks(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
   const animations =
     record.animationId === undefined
       ? Object.values(document.animations)
-      : [requireAnimation(document, record.animationId as string as AnimationId)];
+      : [
+          requireAnimation(
+            document,
+            record.animationId as string as AnimationId,
+          ),
+        ];
   const entries: JsonValue[] = [];
   for (const animation of animations) {
     for (const track of animation.tracks) {
       const channels = new Set<string>();
-      for (const keyframe of track.keyframes) channels.add(keyframe.property.channel);
+      for (const keyframe of track.keyframes)
+        channels.add(keyframe.property.channel);
       entries.push({
         trackId: track.trackId,
         animationId: animation.animationId,
@@ -162,7 +201,11 @@ export function inspectTracks(ctx: ToolContext, args: JsonValue): Readonly<Recor
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
   const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(budget, entries.slice(slice.start, slice.end), (entry) => entry);
+  const emitted = boundedEmit(
+    budget,
+    entries.slice(slice.start, slice.end),
+    (entry) => entry,
+  );
   return {
     total: slice.total,
     page: slice.page,
@@ -189,10 +232,9 @@ export const INSPECT_KEYFRAMES_CONTRACT: ToolContract = {
     },
     required: ["trackId"],
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectKeyframes",
+    {
       trackId: { type: "string" },
       animationId: { type: "string" },
       targetNodeId: { type: "string" },
@@ -209,22 +251,46 @@ export const INSPECT_KEYFRAMES_CONTRACT: ToolContract = {
           properties: {
             keyframeId: { type: "string" },
             time: { type: "number", minimum: 0 },
-            channel: { type: "string", enum: ["translation", "rotation", "scale"] },
-            value: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 4 },
+            channel: {
+              type: "string",
+              enum: ["translation", "rotation", "scale"],
+            },
+            value: {
+              type: "array",
+              items: { type: "number" },
+              minItems: 3,
+              maxItems: 4,
+            },
           },
           required: ["keyframeId", "time", "channel", "value"],
         },
       },
     },
-    required: ["trackId", "animationId", "targetNodeId", "interpolation", "total", "page", "pageSize", "hasMore", "keyframes"],
-  },
+    [
+      "trackId",
+      "animationId",
+      "targetNodeId",
+      "interpolation",
+      "total",
+      "page",
+      "pageSize",
+      "hasMore",
+      "keyframes",
+    ],
+  ),
 };
 
-export function inspectKeyframes(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectKeyframes(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
-  const { animationId, track } = requireTrack(document, record.trackId as string as TrackId);
+  const { animationId, track } = requireTrack(
+    document,
+    record.trackId as string as TrackId,
+  );
   const entries = track.keyframes.map((keyframe) => ({
     keyframeId: keyframe.keyframeId,
     time: keyframe.time,
@@ -234,7 +300,11 @@ export function inspectKeyframes(ctx: ToolContext, args: JsonValue): Readonly<Re
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
   const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(budget, entries.slice(slice.start, slice.end), (entry) => entry);
+  const emitted = boundedEmit(
+    budget,
+    entries.slice(slice.start, slice.end),
+    (entry) => entry,
+  );
   return {
     trackId: track.trackId,
     animationId,

@@ -11,7 +11,7 @@ import {
 } from "./contract.js";
 import { resolveInspectionLimits, type InspectionLimits } from "./limits.js";
 import type { EditorContextPort } from "./port.js";
-import { schemaErrors } from "./schema.js";
+import { schemaErrorDetails } from "./schema.js";
 import {
   authorizeTools,
   contractByName,
@@ -28,7 +28,11 @@ import { inspectMaterials } from "./tools/materials.js";
 import { inspectBounds, queryVoxels } from "./tools/voxels.js";
 import { raycast } from "./tools/raycast.js";
 import { inspectRigging } from "./tools/rigging.js";
-import { inspectClips, inspectKeyframes, inspectTracks } from "./tools/animation.js";
+import {
+  inspectClips,
+  inspectKeyframes,
+  inspectTracks,
+} from "./tools/animation.js";
 import { searchNodes } from "./tools/search.js";
 import { measureDistance } from "./tools/distance.js";
 
@@ -160,13 +164,19 @@ export function createInspector(options: InspectorOptions): Inspector {
       if (args === null || typeof args !== "object" || Array.isArray(args)) {
         invalidArgument("tool arguments must be an object");
       }
-      const errors = schemaErrors(contract.inputSchema, args);
-      if (errors.length > 0) {
+      const details = schemaErrorDetails(contract.inputSchema, args);
+      if (details.length > 0) {
         throw new WorkspaceError({
           family: "validation",
           code: "INVALID_ARGUMENT",
-          message: `Invalid arguments for ${name}: ${errors.join("; ")}`,
-          context: { tool: name, errors },
+          message: `Invalid arguments for ${name}: ${details
+            .map((detail) => detail.message)
+            .join("; ")}`,
+          ...(details[0] === undefined ? {} : { path: details[0].path }),
+          context: {
+            tool: name,
+            errors: details.map((detail) => detail.message),
+          },
         });
       }
       const budget = new ResponseBudget(limits.maxResponseBytes);
@@ -188,7 +198,10 @@ export function createInspector(options: InspectorOptions): Inspector {
           message: `No handler registered for ${name}`,
         });
       }
-      const payload = handler({ store: options.store, limits, port: options.port, budget }, args);
+      const payload = handler(
+        { store: options.store, limits, port: options.port, budget },
+        args,
+      );
       const value = {
         tool: name,
         contractVersion: INSPECTION_CONTRACT_VERSION,

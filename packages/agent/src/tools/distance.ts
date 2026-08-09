@@ -1,6 +1,10 @@
 import type { JsonValue, NodeId } from "@voxel-maker/shared";
 import type { Vec3 } from "@voxel-maker/math";
-import { invalidArgument, type ToolContract } from "../contract.js";
+import {
+  invalidArgument,
+  outputSchema,
+  type ToolContract,
+} from "../contract.js";
 import { requireNode } from "./helpers.js";
 import { nodeWorldPosition } from "./hierarchy.js";
 import type { ToolContext } from "./context.js";
@@ -23,21 +27,35 @@ export const MEASURE_DISTANCE_CONTRACT: ToolContract = {
     additionalProperties: false,
     properties: {
       fromNodeId: { type: "string" },
-      fromPoint: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+      fromPoint: {
+        type: "array",
+        items: { type: "number" },
+        minItems: 3,
+        maxItems: 3,
+      },
       toNodeId: { type: "string" },
-      toPoint: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+      toPoint: {
+        type: "array",
+        items: { type: "number" },
+        minItems: 3,
+        maxItems: 3,
+      },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "measureDistance",
+    {
       from: {
         type: "object",
         additionalProperties: false,
         properties: {
           nodeId: { type: "string" },
-          point: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+          point: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 3,
+            maxItems: 3,
+          },
         },
       },
       to: {
@@ -45,13 +63,18 @@ export const MEASURE_DISTANCE_CONTRACT: ToolContract = {
         additionalProperties: false,
         properties: {
           nodeId: { type: "string" },
-          point: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+          point: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 3,
+            maxItems: 3,
+          },
         },
       },
       distance: { type: "number", minimum: 0 },
     },
-    required: ["from", "to", "distance"],
-  },
+    ["from", "to", "distance"],
+  ),
 };
 
 type Endpoint = { readonly nodeId: NodeId } | { readonly point: Vec3 };
@@ -82,7 +105,10 @@ function resolveEndpoint(
   const point = pointValue as Vec3;
   for (let axis = 0; axis < 3; axis += 1) {
     if (!Number.isFinite(point[axis])) {
-      invalidArgument(`${pointKey} must contain finite numbers`, [pointKey, axis]);
+      invalidArgument(`${pointKey} must contain finite numbers`, [
+        pointKey,
+        axis,
+      ]);
     }
   }
   return { point };
@@ -93,12 +119,17 @@ function endpointJson(endpoint: Endpoint): Readonly<Record<string, JsonValue>> {
   return { point: [...endpoint.point] };
 }
 
-export function measureDistance(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function measureDistance(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const record = args as Readonly<Record<string, JsonValue>>;
   const from = resolveEndpoint(ctx, record, "from");
   const to = resolveEndpoint(ctx, record, "to");
-  const fromPosition = "nodeId" in from ? nodeWorldPosition(ctx, from.nodeId) : from.point;
-  const toPosition = "nodeId" in to ? nodeWorldPosition(ctx, to.nodeId) : to.point;
+  const fromPosition =
+    "nodeId" in from ? nodeWorldPosition(ctx, from.nodeId) : from.point;
+  const toPosition =
+    "nodeId" in to ? nodeWorldPosition(ctx, to.nodeId) : to.point;
   const dx = toPosition[0] - fromPosition[0];
   const dy = toPosition[1] - fromPosition[1];
   const dz = toPosition[2] - fromPosition[2];

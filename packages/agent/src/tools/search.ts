@@ -1,7 +1,16 @@
 import type { JsonValue } from "@voxel-maker/shared";
 import { boundedEmit } from "../budget.js";
-import { invalidArgument, type ToolContract } from "../contract.js";
-import { clampName, pageSlice, resolvePage, resolvePageSize } from "./helpers.js";
+import {
+  invalidArgument,
+  outputSchema,
+  type ToolContract,
+} from "../contract.js";
+import {
+  clampName,
+  pageSlice,
+  resolvePage,
+  resolvePageSize,
+} from "./helpers.js";
 import type { ToolContext } from "./context.js";
 
 /**
@@ -21,16 +30,19 @@ export const SEARCH_NODES_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      query: { type: "string", minLength: 1, description: "Case-insensitive name substring" },
+      query: {
+        type: "string",
+        minLength: 1,
+        description: "Case-insensitive name substring",
+      },
       tag: { type: "string", minLength: 1, description: "Exact metadata tag" },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "searchNodes",
+    {
       total: { type: "integer", minimum: 0 },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
@@ -48,8 +60,8 @@ export const SEARCH_NODES_CONTRACT: ToolContract = {
         },
       },
     },
-    required: ["total", "page", "pageSize", "hasMore", "matches"],
-  },
+    ["total", "page", "pageSize", "hasMore", "matches"],
+  ),
 };
 
 function metadataContainsTag(
@@ -70,7 +82,10 @@ function metadataContainsTag(
   return false;
 }
 
-export function searchNodes(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function searchNodes(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
@@ -79,7 +94,8 @@ export function searchNodes(ctx: ToolContext, args: JsonValue): Readonly<Record<
   if (query === undefined && tag === undefined) {
     invalidArgument("at least one of query or tag is required");
   }
-  const queryText = query === undefined ? undefined : (query as string).toLowerCase();
+  const queryText =
+    query === undefined ? undefined : (query as string).toLowerCase();
   const tagText = tag === undefined ? undefined : (tag as string);
   const matches: JsonValue[] = [];
   for (const node of Object.values(document.nodes)) {
@@ -89,18 +105,27 @@ export function searchNodes(ctx: ToolContext, args: JsonValue): Readonly<Record<
       node.name.toLowerCase().includes(queryText);
     const tagMatches =
       tagText !== undefined &&
-      metadataContainsTag(node.metadata as Readonly<Record<string, unknown>>, tagText);
+      metadataContainsTag(
+        node.metadata as Readonly<Record<string, unknown>>,
+        tagText,
+      );
     if (nameMatches || tagMatches) {
       matches.push({
         nodeId: node.nodeId,
-        ...(node.name === undefined ? {} : { name: clampName(node.name, limits) }),
+        ...(node.name === undefined
+          ? {}
+          : { name: clampName(node.name, limits) }),
       });
     }
   }
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
   const slice = pageSlice(matches.length, page, pageSize);
-  const emitted = boundedEmit(budget, matches.slice(slice.start, slice.end), (entry) => entry);
+  const emitted = boundedEmit(
+    budget,
+    matches.slice(slice.start, slice.end),
+    (entry) => entry,
+  );
   return {
     total: slice.total,
     page: slice.page,

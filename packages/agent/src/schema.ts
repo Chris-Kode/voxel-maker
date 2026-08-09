@@ -55,7 +55,9 @@ function errorAt(
 function formatPath(path: readonly (string | number)[]): string {
   if (path.length === 0) return "$";
   return `$${path
-    .map((part) => (typeof part === "number" ? `[${String(part)}]` : `.${part}`))
+    .map((part) =>
+      typeof part === "number" ? `[${String(part)}]` : `.${part}`,
+    )
     .join("")}`;
 }
 
@@ -96,11 +98,7 @@ export function validateValue(
     return matchesOneOf(schema, value, path, errors);
   }
   const valueType =
-    value === null
-      ? "null"
-      : Array.isArray(value)
-        ? "array"
-        : typeof value;
+    value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
   if (type === "integer") {
     if (typeof value !== "number" || !Number.isInteger(value)) {
       errors.push(errorAt(path, "expected an integer"));
@@ -126,7 +124,10 @@ export function validateValue(
   if (typeof value === "string") {
     if (schema.minLength !== undefined && value.length < schema.minLength) {
       errors.push(
-        errorAt(path, `must be at least ${String(schema.minLength)} characters`),
+        errorAt(
+          path,
+          `must be at least ${String(schema.minLength)} characters`,
+        ),
       );
     }
     if (schema.maxLength !== undefined && value.length > schema.maxLength) {
@@ -187,15 +188,32 @@ export function validateValue(
   return errors.length === 0;
 }
 
+/** One structured validation error with its JSON path. */
+export interface SchemaErrorDetail {
+  readonly path: readonly (string | number)[];
+  readonly message: string;
+}
+
+/** Structured validation errors (paths are JSON-pointer-ish segments). */
+export function schemaErrorDetails(
+  schema: JsonSchema,
+  value: unknown,
+): readonly SchemaErrorDetail[] {
+  const errors: SchemaError[] = [];
+  validateValue(schema, value, [], errors);
+  return errors.map((error) => ({
+    path: error[PROPERTY_PATH],
+    message: error.message,
+  }));
+}
+
 /** Formatted, stable validation errors (e.g. `$.region.min: expected an integer`). */
 export function schemaErrors(
   schema: JsonSchema,
   value: unknown,
 ): readonly string[] {
-  const errors: SchemaError[] = [];
-  validateValue(schema, value, [], errors);
-  return errors.map(
-    (error) => `${formatPath(error[PROPERTY_PATH])}: ${error.message}`,
+  return schemaErrorDetails(schema, value).map(
+    (error) => `${formatPath(error.path)}: ${error.message}`,
   );
 }
 

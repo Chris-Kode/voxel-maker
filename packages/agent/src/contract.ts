@@ -21,7 +21,13 @@ export type ToolCapability = "inspect" | "mutate";
 
 /** Stable, user-safe error data serialized for failed tool calls. */
 export type ToolError = {
-  readonly family: "validation" | "conflict" | "limit" | "io" | "compatibility" | "internal";
+  readonly family:
+    | "validation"
+    | "conflict"
+    | "limit"
+    | "io"
+    | "compatibility"
+    | "internal";
   readonly code: string;
   readonly message: string;
   readonly path?: readonly (string | number)[];
@@ -98,7 +104,10 @@ export function outputSchema(
 export const INVALID_ARGUMENT_CODE = "INVALID_ARGUMENT";
 
 /** Throws the stable malformed-argument error for a tool call. */
-export function invalidArgument(message: string, path?: readonly (string | number)[]): never {
+export function invalidArgument(
+  message: string,
+  path?: readonly (string | number)[],
+): never {
   throw new WorkspaceError({
     family: "validation",
     code: INVALID_ARGUMENT_CODE,

@@ -1,6 +1,6 @@
 import type { JsonValue } from "@voxel-maker/shared";
 import { boundedEmit } from "../budget.js";
-import type { ToolContract } from "../contract.js";
+import { outputSchema, type ToolContract } from "../contract.js";
 import { clampName } from "./helpers.js";
 import type { ToolContext } from "./context.js";
 import { selectionSummary } from "./selection.js";
@@ -18,14 +18,14 @@ export const INSPECT_SUMMARY_CONTRACT: ToolContract = {
     properties: {
       includeSelection: {
         type: "boolean",
-        description: "Include the injected editor selection when available (default true)",
+        description:
+          "Include the injected editor selection when available (default true)",
       },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectSummary",
+    {
       document: {
         type: "object",
         additionalProperties: false,
@@ -69,7 +69,25 @@ export const INSPECT_SUMMARY_CONTRACT: ToolContract = {
           properties: {
             volumeId: { type: "string" },
             name: { type: "string" },
-            occupiedBounds: { type: "object", additionalProperties: false, properties: { min: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 }, max: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 } }, required: ["min", "max"] },
+            occupiedBounds: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                min: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
+                max: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
+              },
+              required: ["min", "max"],
+            },
             occupiedCount: { type: "integer", minimum: 0 },
             chunkCount: { type: "integer", minimum: 0 },
           },
@@ -87,11 +105,14 @@ export const INSPECT_SUMMARY_CONTRACT: ToolContract = {
         required: ["available", "entries", "pruned"],
       },
     },
-    required: ["document", "counts", "volumes", "selection"],
-  },
+    ["document", "counts", "volumes", "selection"],
+  ),
 };
 
-function buildSummary(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+function buildSummary(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const document = store.getDocument();
   const includeSelection =
@@ -151,6 +172,9 @@ function buildSummary(ctx: ToolContext, args: JsonValue): Readonly<Record<string
   };
 }
 
-export function inspectSummary(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectSummary(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   return buildSummary(ctx, args);
 }

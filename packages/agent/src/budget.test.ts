@@ -35,7 +35,10 @@ describe("ResponseBudget", () => {
 
 describe("clampString", () => {
   it("keeps short strings untouched", () => {
-    expect(clampString("hello", 8)).toEqual({ value: "hello", truncated: false });
+    expect(clampString("hello", 8)).toEqual({
+      value: "hello",
+      truncated: false,
+    });
   });
 
   it("clamps long strings on a character boundary", () => {
@@ -61,17 +64,19 @@ describe("boundedEmit", () => {
 
   it("skips undefined emissions without consuming budget", () => {
     const budget = new ResponseBudget(10);
-    const { list, truncated } = boundedEmit(
-      budget,
-      ["a", "b"],
-      (item) => (item === "a" ? undefined : item),
+    const { list, truncated } = boundedEmit(budget, ["a", "b"], (item) =>
+      item === "a" ? undefined : item,
     );
     expect(list).toEqual(["b"]);
     expect(truncated).toBe(false);
   });
 
   it("is deterministic for identical inputs", () => {
-    const first = boundedEmit(new ResponseBudget(30), [1, 2, 3, 4, 5, 6], (i) => i);
+    const first = boundedEmit(
+      new ResponseBudget(30),
+      [1, 2, 3, 4, 5, 6],
+      (i) => i,
+    );
     const second = boundedEmit(
       new ResponseBudget(30),
       [1, 2, 3, 4, 5, 6],

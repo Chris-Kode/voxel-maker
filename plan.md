@@ -138,7 +138,7 @@ shared, math, model, document, voxel, rigging, animation <- commands
 shared, math, model, document, voxel, rigging, animation <- renderer
 shared, model, document, voxel, commands, rigging, animation <- editor
 shared, math, model, document, voxel, rigging, animation <- formats
-shared, model, document, voxel, commands, rigging, animation <- agent
+shared, math, model, document, voxel, commands, rigging, animation <- agent
 agent tool contracts + generic generators <- skills
 editor, renderer, formats, agent, skills <- apps/desktop
 ```

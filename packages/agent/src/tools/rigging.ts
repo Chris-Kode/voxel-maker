@@ -1,6 +1,6 @@
 import type { JsonValue, NodeId } from "@voxel-maker/shared";
 import { boundedEmit } from "../budget.js";
-import type { ToolContract } from "../contract.js";
+import { outputSchema, type ToolContract } from "../contract.js";
 import {
   clampName,
   pageSlice,
@@ -27,15 +27,17 @@ export const INSPECT_RIGGING_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      nodeId: { type: "string", description: "Restrict to one node (default: every rigged node)" },
+      nodeId: {
+        type: "string",
+        description: "Restrict to one node (default: every rigged node)",
+      },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectRigging",
+    {
       total: { type: "integer", minimum: 0 },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
@@ -48,7 +50,12 @@ export const INSPECT_RIGGING_CONTRACT: ToolContract = {
           properties: {
             nodeId: { type: "string" },
             name: { type: "string" },
-            pivot: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+            pivot: {
+              type: "array",
+              items: { type: "number" },
+              minItems: 3,
+              maxItems: 3,
+            },
             hasJoint: { type: "boolean" },
             constraints: {
               type: "array",
@@ -62,8 +69,18 @@ export const INSPECT_RIGGING_CONTRACT: ToolContract = {
                     type: "object",
                     additionalProperties: false,
                     properties: {
-                      min: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
-                      max: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+                      min: {
+                        type: "array",
+                        items: { type: "number" },
+                        minItems: 3,
+                        maxItems: 3,
+                      },
+                      max: {
+                        type: "array",
+                        items: { type: "number" },
+                        minItems: 3,
+                        maxItems: 3,
+                      },
                     },
                     required: ["min", "max"],
                   },
@@ -76,14 +93,11 @@ export const INSPECT_RIGGING_CONTRACT: ToolContract = {
         },
       },
     },
-    required: ["total", "page", "pageSize", "hasMore", "nodes"],
-  },
+    ["total", "page", "pageSize", "hasMore", "nodes"],
+  ),
 };
 
-function rigEntry(
-  ctx: ToolContext,
-  nodeId: NodeId,
-): JsonValue | undefined {
+function rigEntry(ctx: ToolContext, nodeId: NodeId): JsonValue | undefined {
   const document = ctx.store.getDocument();
   const node = requireNode(document, nodeId);
   let pivot: readonly [number, number, number] | undefined;
@@ -97,7 +111,10 @@ function rigEntry(
         constraints.push({
           componentId: constraint.componentId,
           type: constraint.type,
-          limits: { min: [...constraint.limits.min], max: [...constraint.limits.max] },
+          limits: {
+            min: [...constraint.limits.min],
+            max: [...constraint.limits.max],
+          },
         });
       }
     }
@@ -107,14 +124,19 @@ function rigEntry(
   }
   return {
     nodeId: node.nodeId,
-    ...(node.name === undefined ? {} : { name: clampName(node.name, ctx.limits) }),
+    ...(node.name === undefined
+      ? {}
+      : { name: clampName(node.name, ctx.limits) }),
     ...(pivot === undefined ? {} : { pivot: [...pivot] }),
     hasJoint,
     constraints,
   };
 }
 
-export function inspectRigging(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectRigging(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
@@ -130,7 +152,11 @@ export function inspectRigging(ctx: ToolContext, args: JsonValue): Readonly<Reco
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
   const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(budget, entries.slice(slice.start, slice.end), (entry) => entry);
+  const emitted = boundedEmit(
+    budget,
+    entries.slice(slice.start, slice.end),
+    (entry) => entry,
+  );
   return {
     total: slice.total,
     page: slice.page,

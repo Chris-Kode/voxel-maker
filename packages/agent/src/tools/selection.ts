@@ -1,5 +1,5 @@
 import type { JsonValue, NodeId, VolumeId } from "@voxel-maker/shared";
-import type { ToolContract } from "../contract.js";
+import { outputSchema, type ToolContract } from "../contract.js";
 import type { EditorSelectionSnapshot } from "../port.js";
 import type { ToolContext } from "./context.js";
 
@@ -23,9 +23,7 @@ export interface NormalizedSelection {
 }
 
 /** Prunes port selection entries whose node or volume is gone. */
-export function normalizeSelection(
-  ctx: ToolContext,
-): NormalizedSelection {
+export function normalizeSelection(ctx: ToolContext): NormalizedSelection {
   const document = ctx.store.getDocument();
   const port = ctx.port;
   if (port === undefined) return { available: false, entries: [], pruned: [] };
@@ -50,12 +48,18 @@ export function normalizeSelection(
 }
 
 /** JSON-safe selection entry for responses. */
-export function selectionEntryJson(entry: EditorSelectionSnapshot): Readonly<Record<string, JsonValue>> {
+export function selectionEntryJson(
+  entry: EditorSelectionSnapshot,
+): Readonly<Record<string, JsonValue>> {
   switch (entry.kind) {
     case "node":
       return { kind: "node", nodeId: entry.nodeId };
     case "voxel":
-      return { kind: "voxel", volumeId: entry.volumeId, voxel: [...entry.voxel] };
+      return {
+        kind: "voxel",
+        volumeId: entry.volumeId,
+        voxel: [...entry.voxel],
+      };
     case "region":
       return {
         kind: "region",
@@ -72,10 +76,7 @@ export function selectionSummary(
 ): Readonly<Record<string, JsonValue>> {
   if (!include) return { available: false, entries: [], pruned: 0 };
   const normalized = normalizeSelection(ctx);
-  const limited = normalized.entries.slice(
-    0,
-    ctx.limits.maxSelectionEntries,
-  );
+  const limited = normalized.entries.slice(0, ctx.limits.maxSelectionEntries);
   return {
     available: normalized.available,
     entries: limited.map(selectionEntryJson),
@@ -95,10 +96,9 @@ export const GET_SELECTION_CONTRACT: ToolContract = {
     additionalProperties: false,
     properties: {},
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "getSelection",
+    {
       available: { type: "boolean" },
       entries: {
         type: "array",
@@ -109,13 +109,28 @@ export const GET_SELECTION_CONTRACT: ToolContract = {
             kind: { type: "string", enum: ["node", "voxel", "region"] },
             nodeId: { type: "string" },
             volumeId: { type: "string" },
-            voxel: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+            voxel: {
+              type: "array",
+              items: { type: "integer" },
+              minItems: 3,
+              maxItems: 3,
+            },
             region: {
               type: "object",
               additionalProperties: false,
               properties: {
-                min: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
-                max: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+                min: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
+                max: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
               },
               required: ["min", "max"],
             },
@@ -129,7 +144,10 @@ export const GET_SELECTION_CONTRACT: ToolContract = {
           type: "object",
           additionalProperties: false,
           properties: {
-            reason: { type: "string", enum: ["missing-node", "missing-volume"] },
+            reason: {
+              type: "string",
+              enum: ["missing-node", "missing-volume"],
+            },
             nodeId: { type: "string" },
             volumeId: { type: "string" },
           },
@@ -137,12 +155,15 @@ export const GET_SELECTION_CONTRACT: ToolContract = {
         },
       },
     },
-    required: ["available", "entries", "pruned"],
-  },
+    ["available", "entries", "pruned"],
+  ),
 };
 
 /** `getSelection` handler. */
-export function getSelection(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function getSelection(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   void args;
   const normalized = normalizeSelection(ctx);
   return {

@@ -1,6 +1,10 @@
 import type { JsonValue, VolumeId } from "@voxel-maker/shared";
 import type { Vec3, Vec3i } from "@voxel-maker/math";
-import { invalidArgument, type ToolContract } from "../contract.js";
+import {
+  invalidArgument,
+  outputSchema,
+  type ToolContract,
+} from "../contract.js";
 import { requireVolume, requireVolumeView } from "./helpers.js";
 import type { ToolContext } from "./context.js";
 
@@ -36,10 +40,18 @@ export const RAYCAST_CONTRACT: ToolContract = {
         items: { type: "number" },
         minItems: 3,
         maxItems: 3,
-        description: "Nonzero ray direction [x, y, z]; distance is measured along it",
+        description:
+          "Nonzero ray direction [x, y, z]; distance is measured along it",
       },
-      volumeId: { type: "string", description: "Restrict to one volume (default: every volume)" },
-      maxSteps: { type: "integer", minimum: 1, description: "Traversal step cap (default 4096)" },
+      volumeId: {
+        type: "string",
+        description: "Restrict to one volume (default: every volume)",
+      },
+      maxSteps: {
+        type: "integer",
+        minimum: 1,
+        description: "Traversal step cap (default 4096)",
+      },
       maxDistance: {
         type: "number",
         minimum: 0,
@@ -48,21 +60,25 @@ export const RAYCAST_CONTRACT: ToolContract = {
     },
     required: ["origin", "direction"],
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "raycast",
+    {
       hit: { type: "boolean" },
       volumeId: { type: "string" },
-      coordinate: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+      coordinate: {
+        type: "array",
+        items: { type: "integer" },
+        minItems: 3,
+        maxItems: 3,
+      },
       material: { type: "integer", minimum: 0 },
       distance: { type: "number", minimum: 0 },
       steps: { type: "integer", minimum: 0 },
       stepLimit: { type: "boolean" },
       searchedVolumes: { type: "array", items: { type: "string" } },
     },
-    required: ["hit", "steps", "stepLimit", "searchedVolumes"],
-  },
+    ["hit", "steps", "stepLimit", "searchedVolumes"],
+  ),
 };
 
 interface RayHit {
@@ -80,7 +96,11 @@ function firstHitInVolume(
   direction: Vec3,
   maxSteps: number,
   maxDistance: number | undefined,
-): { readonly hit: RayHit | undefined; readonly steps: number; readonly stepLimit: boolean } {
+): {
+  readonly hit: RayHit | undefined;
+  readonly steps: number;
+  readonly stepLimit: boolean;
+} {
   const { store } = ctx;
   const view = requireVolumeView(store, volumeId);
   let voxel: Vec3i = [
@@ -101,22 +121,26 @@ function firstHitInVolume(
   let tMax: Vec3 = [
     direction[0] === 0
       ? Infinity
-      : ((step[0] > 0 ? voxel[0] + 1 - origin[0] : origin[0] - voxel[0]) /
-          Math.abs(direction[0])),
+      : (step[0] > 0 ? voxel[0] + 1 - origin[0] : origin[0] - voxel[0]) /
+        Math.abs(direction[0]),
     direction[1] === 0
       ? Infinity
-      : ((step[1] > 0 ? voxel[1] + 1 - origin[1] : origin[1] - voxel[1]) /
-          Math.abs(direction[1])),
+      : (step[1] > 0 ? voxel[1] + 1 - origin[1] : origin[1] - voxel[1]) /
+        Math.abs(direction[1]),
     direction[2] === 0
       ? Infinity
-      : ((step[2] > 0 ? voxel[2] + 1 - origin[2] : origin[2] - voxel[2]) /
-          Math.abs(direction[2])),
+      : (step[2] > 0 ? voxel[2] + 1 - origin[2] : origin[2] - voxel[2]) /
+        Math.abs(direction[2]),
   ];
   let t = 0;
   for (let count = 0; count < maxSteps; count += 1) {
     const material = view.getVoxel(voxel);
     if (material !== 0 && (maxDistance === undefined || t <= maxDistance)) {
-      return { hit: { volumeId, coordinate: [...voxel], material, distance: t }, steps: count + 1, stepLimit: false };
+      return {
+        hit: { volumeId, coordinate: [...voxel], material, distance: t },
+        steps: count + 1,
+        stepLimit: false,
+      };
     }
     if (tMax[0] <= tMax[1] && tMax[0] <= tMax[2]) {
       if (tMax[0] === Infinity) break;
@@ -137,7 +161,10 @@ function firstHitInVolume(
   return { hit: undefined, steps: maxSteps, stepLimit: true };
 }
 
-export function raycast(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function raycast(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
@@ -156,13 +183,14 @@ export function raycast(ctx: ToolContext, args: JsonValue): Readonly<Record<stri
       ? ctx.limits.maxRaySteps
       : (maxStepsInput as number);
   if (maxSteps > ctx.limits.maxRaySteps) {
-    invalidArgument(
-      `maxSteps must be <= ${String(ctx.limits.maxRaySteps)}`,
-      ["maxSteps"],
-    );
+    invalidArgument(`maxSteps must be <= ${String(ctx.limits.maxRaySteps)}`, [
+      "maxSteps",
+    ]);
   }
   const maxDistance =
-    record.maxDistance === undefined ? undefined : (record.maxDistance as number);
+    record.maxDistance === undefined
+      ? undefined
+      : (record.maxDistance as number);
 
   const volumeIds =
     record.volumeId === undefined

@@ -62,7 +62,10 @@ export function requireAnimation(
 export function requireTrack(
   document: VoxelDocument,
   trackId: TrackId,
-): { readonly animationId: AnimationId; readonly track: AnimationDescriptor["tracks"][number] } {
+): {
+  readonly animationId: AnimationId;
+  readonly track: AnimationDescriptor["tracks"][number];
+} {
   for (const animation of Object.values(document.animations)) {
     for (const track of animation.tracks) {
       if (track.trackId === trackId) {
@@ -98,7 +101,9 @@ export function clampName(name: string, limits: InspectionLimits): string {
 }
 
 /** True when `value` is an integer array of exactly three numbers. */
-export function isVec3i(value: JsonValue): value is readonly [number, number, number] {
+export function isVec3i(
+  value: JsonValue,
+): value is readonly [number, number, number] {
   return (
     Array.isArray(value) &&
     value.length === 3 &&
@@ -123,8 +128,15 @@ export function requireRegion(value: JsonValue, path: string): IntAabb {
   const record = value as Readonly<Record<string, JsonValue>>;
   const min = record.min;
   const max = record.max;
-  if (min === undefined || max === undefined || !isVec3i(min) || !isVec3i(max)) {
-    invalidArgument(`${path} must use integer [x, y, z] min/max arrays`, [path]);
+  if (
+    min === undefined ||
+    max === undefined ||
+    !isVec3i(min) ||
+    !isVec3i(max)
+  ) {
+    invalidArgument(`${path} must use integer [x, y, z] min/max arrays`, [
+      path,
+    ]);
   }
   for (const axis of [0, 1, 2] as const) {
     if ((min as Vec3i)[axis] > (max as Vec3i)[axis]) {
@@ -179,10 +191,9 @@ export function resolvePageSize(
     invalidArgument("pageSize must be a positive integer", ["pageSize"]);
   }
   if (pageSize > limits.maxPageSize) {
-    invalidArgument(
-      `pageSize must be <= ${String(limits.maxPageSize)}`,
-      ["pageSize"],
-    );
+    invalidArgument(`pageSize must be <= ${String(limits.maxPageSize)}`, [
+      "pageSize",
+    ]);
   }
   return pageSize;
 }

@@ -70,6 +70,7 @@ const allowedDependencies = {
   storage: ["shared", "math", "model", "document", "voxel", "formats"],
   agent: [
     "shared",
+    "math",
     "model",
     "document",
     "voxel",

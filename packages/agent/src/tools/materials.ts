@@ -1,7 +1,12 @@
 import type { JsonValue } from "@voxel-maker/shared";
 import { boundedEmit } from "../budget.js";
-import type { ToolContract } from "../contract.js";
-import { clampName, pageSlice, resolvePage, resolvePageSize } from "./helpers.js";
+import { outputSchema, type ToolContract } from "../contract.js";
+import {
+  clampName,
+  pageSlice,
+  resolvePage,
+  resolvePageSize,
+} from "./helpers.js";
 import type { ToolContext } from "./context.js";
 
 /**
@@ -20,14 +25,21 @@ export const INSPECT_MATERIALS_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      page: { type: "integer", minimum: 1, description: "1-based page (default 1)" },
-      pageSize: { type: "integer", minimum: 1, description: "Items per page (default 50, max 500)" },
+      page: {
+        type: "integer",
+        minimum: 1,
+        description: "1-based page (default 1)",
+      },
+      pageSize: {
+        type: "integer",
+        minimum: 1,
+        description: "Items per page (default 50, max 500)",
+      },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectMaterials",
+    {
       total: { type: "integer", minimum: 0 },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
@@ -46,15 +58,26 @@ export const INSPECT_MATERIALS_CONTRACT: ToolContract = {
             metallic: { type: "number" },
             emissive: { type: "number" },
           },
-          required: ["materialId", "name", "color", "opacity", "roughness", "metallic", "emissive"],
+          required: [
+            "materialId",
+            "name",
+            "color",
+            "opacity",
+            "roughness",
+            "metallic",
+            "emissive",
+          ],
         },
       },
     },
-    required: ["total", "page", "pageSize", "hasMore", "materials"],
-  },
+    ["total", "page", "pageSize", "hasMore", "materials"],
+  ),
 };
 
-export function inspectMaterials(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectMaterials(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const record = args as Readonly<Record<string, JsonValue>>;
   const pageSize = resolvePageSize(record, limits);
@@ -63,15 +86,19 @@ export function inspectMaterials(ctx: ToolContext, args: JsonValue): Readonly<Re
     (a, b) => a.materialId - b.materialId,
   );
   const slice = pageSlice(materials.length, page, pageSize);
-  const emitted = boundedEmit(budget, materials.slice(slice.start, slice.end), (material) => ({
-    materialId: material.materialId,
-    name: clampName(material.name, limits),
-    color: material.color,
-    opacity: material.opacity,
-    roughness: material.roughness,
-    metallic: material.metallic,
-    emissive: material.emissive,
-  }));
+  const emitted = boundedEmit(
+    budget,
+    materials.slice(slice.start, slice.end),
+    (material) => ({
+      materialId: material.materialId,
+      name: clampName(material.name, limits),
+      color: material.color,
+      opacity: material.opacity,
+      roughness: material.roughness,
+      metallic: material.metallic,
+      emissive: material.emissive,
+    }),
+  );
   return {
     total: slice.total,
     page: slice.page,
@@ -80,4 +107,3 @@ export function inspectMaterials(ctx: ToolContext, args: JsonValue): Readonly<Re
     materials: emitted.list,
   };
 }
-

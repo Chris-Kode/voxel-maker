@@ -65,9 +65,9 @@ describe("validateValue (draft-07 subset)", () => {
 
   it("rejects array items and length violations", () => {
     expect(isValidValue(objectSchema, { name: "n", items: [1] })).toBe(false);
-    expect(isValidValue(objectSchema, { name: "n", items: ["a", "b", "c"] })).toBe(
-      false,
-    );
+    expect(
+      isValidValue(objectSchema, { name: "n", items: ["a", "b", "c"] }),
+    ).toBe(false);
   });
 
   it("reports nested array element paths", () => {
@@ -84,7 +84,9 @@ describe("validateValue (draft-07 subset)", () => {
 
   it("rejects NaN and infinities for numbers", () => {
     expect(isValidValue(objectSchema, { name: "n", ratio: NaN })).toBe(false);
-    expect(isValidValue(objectSchema, { name: "n", ratio: Infinity })).toBe(false);
+    expect(isValidValue(objectSchema, { name: "n", ratio: Infinity })).toBe(
+      false,
+    );
   });
 
   it("accepts null for null-typed schemas", () => {

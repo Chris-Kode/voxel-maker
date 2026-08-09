@@ -2,7 +2,11 @@ import type { Component } from "@voxel-maker/model";
 import type { JsonValue, NodeId } from "@voxel-maker/shared";
 import { worldTransformMatrix } from "@voxel-maker/document";
 import { applyMatrix, decomposeMatrix, type Mat4 } from "@voxel-maker/math";
-import { invalidArgument, type ToolContract } from "../contract.js";
+import {
+  invalidArgument,
+  outputSchema,
+  type ToolContract,
+} from "../contract.js";
 import { clampName, requireNode } from "./helpers.js";
 import type { ToolContext } from "./context.js";
 
@@ -47,7 +51,10 @@ export const INSPECT_HIERARCHY_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      rootNodeId: { type: "string", description: "Root of the subtree (default: document root)" },
+      rootNodeId: {
+        type: "string",
+        description: "Root of the subtree (default: document root)",
+      },
       maxDepth: {
         type: "integer",
         minimum: 0,
@@ -55,10 +62,9 @@ export const INSPECT_HIERARCHY_CONTRACT: ToolContract = {
       },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectHierarchy",
+    {
       rootNodeId: { type: "string" },
       maxDepth: { type: "integer", minimum: 0 },
       nodeCount: { type: "integer", minimum: 0 },
@@ -79,8 +85,8 @@ export const INSPECT_HIERARCHY_CONTRACT: ToolContract = {
         ],
       },
     },
-    required: ["rootNodeId", "maxDepth", "nodeCount", "root"],
-  },
+    ["rootNodeId", "maxDepth", "nodeCount", "root"],
+  ),
 };
 
 /** Builds one tree node, stopping when the budget or depth runs out. */
@@ -117,7 +123,10 @@ function buildTreeNode(
   return entry;
 }
 
-export function inspectHierarchy(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectHierarchy(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
@@ -130,10 +139,9 @@ export function inspectHierarchy(ctx: ToolContext, args: JsonValue): Readonly<Re
       ? limits.defaultHierarchyDepth
       : (record.maxDepth as number);
   if (requestedDepth > limits.maxHierarchyDepth) {
-    invalidArgument(
-      `maxDepth must be <= ${String(limits.maxHierarchyDepth)}`,
-      ["maxDepth"],
-    );
+    invalidArgument(`maxDepth must be <= ${String(limits.maxHierarchyDepth)}`, [
+      "maxDepth",
+    ]);
   }
   const root = requireNode(document, rootId);
   const stats = { nodeCount: 0 };
@@ -168,15 +176,15 @@ export const INSPECT_NODE_CONTRACT: ToolContract = {
       nodeId: { type: "string" },
       includeWorldTransform: {
         type: "boolean",
-        description: "Also decompose and return the world transform (default true)",
+        description:
+          "Also decompose and return the world transform (default true)",
       },
     },
     required: ["nodeId"],
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectNode",
+    {
       nodeId: { type: "string" },
       name: { type: "string" },
       parentId: { anyOf: [{ type: "string" }, { type: "null" }] },
@@ -185,10 +193,30 @@ export const INSPECT_NODE_CONTRACT: ToolContract = {
         type: "object",
         additionalProperties: false,
         properties: {
-          translation: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
-          pivot: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
-          rotation: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
-          scale: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+          translation: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 3,
+            maxItems: 3,
+          },
+          pivot: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 3,
+            maxItems: 3,
+          },
+          rotation: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 4,
+            maxItems: 4,
+          },
+          scale: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 3,
+            maxItems: 3,
+          },
         },
         required: ["translation", "pivot", "rotation", "scale"],
       },
@@ -196,9 +224,24 @@ export const INSPECT_NODE_CONTRACT: ToolContract = {
         type: "object",
         additionalProperties: false,
         properties: {
-          translation: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
-          rotation: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
-          scale: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+          translation: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 3,
+            maxItems: 3,
+          },
+          rotation: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 4,
+            maxItems: 4,
+          },
+          scale: {
+            type: "array",
+            items: { type: "number" },
+            minItems: 3,
+            maxItems: 3,
+          },
         },
         required: ["translation", "rotation", "scale"],
       },
@@ -210,17 +253,13 @@ export const INSPECT_NODE_CONTRACT: ToolContract = {
         required: ["keys"],
       },
     },
-    required: [
-      "nodeId",
-      "children",
-      "transform",
-      "components",
-      "metadata",
-    ],
-  },
+    ["nodeId", "children", "transform", "components", "metadata"],
+  ),
 };
 
-function componentJson(component: Component): Readonly<Record<string, JsonValue>> {
+function componentJson(
+  component: Component,
+): Readonly<Record<string, JsonValue>> {
   switch (component.kind) {
     case "voxel":
       return { kind: "voxel", volumeId: component.volumeId };
@@ -234,13 +273,19 @@ function componentJson(component: Component): Readonly<Record<string, JsonValue>
         constraints: component.constraints.map((constraint) => ({
           componentId: constraint.componentId,
           type: constraint.type,
-          limits: { min: [...constraint.limits.min], max: [...constraint.limits.max] },
+          limits: {
+            min: [...constraint.limits.min],
+            max: [...constraint.limits.max],
+          },
         })),
       };
   }
 }
 
-export function inspectNode(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectNode(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;

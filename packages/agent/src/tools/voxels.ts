@@ -1,7 +1,11 @@
 import type { JsonValue, VolumeId } from "@voxel-maker/shared";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
 import { boundedEmit } from "../budget.js";
-import { invalidArgument, type ToolContract } from "../contract.js";
+import {
+  invalidArgument,
+  outputSchema,
+  type ToolContract,
+} from "../contract.js";
 import {
   clampName,
   pageSlice,
@@ -37,8 +41,18 @@ export const QUERY_VOXELS_CONTRACT: ToolContract = {
         type: "object",
         additionalProperties: false,
         properties: {
-          min: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
-          max: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+          min: {
+            type: "array",
+            items: { type: "integer" },
+            minItems: 3,
+            maxItems: 3,
+          },
+          max: {
+            type: "array",
+            items: { type: "integer" },
+            minItems: 3,
+            maxItems: 3,
+          },
         },
         required: ["min", "max"],
       },
@@ -47,15 +61,15 @@ export const QUERY_VOXELS_CONTRACT: ToolContract = {
       maxVoxels: {
         type: "integer",
         minimum: 1,
-        description: "Collection cap for one query (default and max are the configured budget)",
+        description:
+          "Collection cap for one query (default and max are the configured budget)",
       },
     },
     required: ["volumeId"],
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "queryVoxels",
+    {
       volumeId: { type: "string" },
       region: {
         anyOf: [
@@ -63,8 +77,18 @@ export const QUERY_VOXELS_CONTRACT: ToolContract = {
             type: "object",
             additionalProperties: false,
             properties: {
-              min: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
-              max: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+              min: {
+                type: "array",
+                items: { type: "integer" },
+                minItems: 3,
+                maxItems: 3,
+              },
+              max: {
+                type: "array",
+                items: { type: "integer" },
+                minItems: 3,
+                maxItems: 3,
+              },
             },
             required: ["min", "max"],
           },
@@ -82,15 +106,29 @@ export const QUERY_VOXELS_CONTRACT: ToolContract = {
           type: "object",
           additionalProperties: false,
           properties: {
-            coordinate: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+            coordinate: {
+              type: "array",
+              items: { type: "integer" },
+              minItems: 3,
+              maxItems: 3,
+            },
             material: { type: "integer", minimum: 0 },
           },
           required: ["coordinate", "material"],
         },
       },
     },
-    required: ["volumeId", "region", "total", "scanTruncated", "page", "pageSize", "hasMore", "voxels"],
-  },
+    [
+      "volumeId",
+      "region",
+      "total",
+      "scanTruncated",
+      "page",
+      "pageSize",
+      "hasMore",
+      "voxels",
+    ],
+  ),
 };
 
 const CHUNK_EDGE = 16;
@@ -104,7 +142,10 @@ function collectRegionVoxels(
   volumeId: VolumeId,
   region: IntAabb,
   maxVoxels: number,
-): { readonly entries: readonly { coordinate: Vec3i; material: number }[]; readonly scanTruncated: boolean } {
+): {
+  readonly entries: readonly { coordinate: Vec3i; material: number }[];
+  readonly scanTruncated: boolean;
+} {
   const { store, limits } = ctx;
   const view = requireVolumeView(store, volumeId);
   const entries: { coordinate: Vec3i; material: number }[] = [];
@@ -163,7 +204,10 @@ function collectRegionVoxels(
   return { entries, scanTruncated };
 }
 
-export function queryVoxels(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function queryVoxels(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
@@ -195,10 +239,14 @@ export function queryVoxels(ctx: ToolContext, args: JsonValue): Readonly<Record<
     maxVoxels,
   );
   const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(ctx.budget, entries.slice(slice.start, slice.end), (entry) => ({
-    coordinate: [...entry.coordinate],
-    material: entry.material,
-  }));
+  const emitted = boundedEmit(
+    ctx.budget,
+    entries.slice(slice.start, slice.end),
+    (entry) => ({
+      coordinate: [...entry.coordinate],
+      material: entry.material,
+    }),
+  );
   return {
     volumeId,
     region: { min: [...region.min], max: [...region.max] },
@@ -218,7 +266,11 @@ function resolveMaxVoxels(
 ): number {
   const maxVoxels = record.maxVoxels;
   if (maxVoxels === undefined) return limits.maxVoxelsPerQuery;
-  if (typeof maxVoxels !== "number" || !Number.isInteger(maxVoxels) || maxVoxels < 1) {
+  if (
+    typeof maxVoxels !== "number" ||
+    !Number.isInteger(maxVoxels) ||
+    maxVoxels < 1
+  ) {
     invalidArgument("maxVoxels must be a positive integer", ["maxVoxels"]);
   }
   if (maxVoxels > limits.maxVoxelsPerQuery) {
@@ -241,13 +293,15 @@ export const INSPECT_BOUNDS_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      volumeId: { type: "string", description: "Restrict to one volume (default: all volumes)" },
+      volumeId: {
+        type: "string",
+        description: "Restrict to one volume (default: all volumes)",
+      },
     },
   },
-  outputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
+  outputSchema: outputSchema(
+    "inspectBounds",
+    {
       volumes: {
         type: "array",
         items: {
@@ -260,8 +314,18 @@ export const INSPECT_BOUNDS_CONTRACT: ToolContract = {
               type: "object",
               additionalProperties: false,
               properties: {
-                min: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
-                max: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+                min: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
+                max: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
               },
               required: ["min", "max"],
             },
@@ -269,8 +333,18 @@ export const INSPECT_BOUNDS_CONTRACT: ToolContract = {
               type: "object",
               additionalProperties: false,
               properties: {
-                min: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
-                max: { type: "array", items: { type: "integer" }, minItems: 3, maxItems: 3 },
+                min: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
+                max: {
+                  type: "array",
+                  items: { type: "integer" },
+                  minItems: 3,
+                  maxItems: 3,
+                },
               },
               required: ["min", "max"],
             },
@@ -282,11 +356,14 @@ export const INSPECT_BOUNDS_CONTRACT: ToolContract = {
         },
       },
     },
-    required: ["volumes"],
-  },
+    ["volumes"],
+  ),
 };
 
-export function inspectBounds(ctx: ToolContext, args: JsonValue): Readonly<Record<string, JsonValue>> {
+export function inspectBounds(
+  ctx: ToolContext,
+  args: JsonValue,
+): Readonly<Record<string, JsonValue>> {
   const { store, limits, budget } = ctx;
   const document = store.getDocument();
   const record = args as Readonly<Record<string, JsonValue>>;
@@ -301,7 +378,8 @@ export function inspectBounds(ctx: ToolContext, args: JsonValue): Readonly<Recor
     const owners = Object.values(document.nodes)
       .filter((node) =>
         node.components.some(
-          (component) => component.kind === "voxel" && component.volumeId === volumeId,
+          (component) =>
+            component.kind === "voxel" && component.volumeId === volumeId,
         ),
       )
       .map((node) => node.nodeId);
@@ -312,10 +390,17 @@ export function inspectBounds(ctx: ToolContext, args: JsonValue): Readonly<Recor
         : { name: clampName(descriptor.name, limits) }),
       ...(descriptor.bounds === undefined
         ? {}
-        : { declaredBounds: { min: [...descriptor.bounds.min], max: [...descriptor.bounds.max] } }),
+        : {
+            declaredBounds: {
+              min: [...descriptor.bounds.min],
+              max: [...descriptor.bounds.max],
+            },
+          }),
       ...(occupied === undefined
         ? {}
-        : { occupiedBounds: { min: [...occupied.min], max: [...occupied.max] } }),
+        : {
+            occupiedBounds: { min: [...occupied.min], max: [...occupied.max] },
+          }),
       occupiedCount: view?.occupiedCount() ?? 0,
       chunkCount: view?.chunkCount() ?? 0,
       ownerNodeIds: owners,
