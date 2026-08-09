@@ -393,6 +393,9 @@ importers:
       '@voxel-maker/document':
         specifier: workspace:*
         version: link:../document
+      '@voxel-maker/math':
+        specifier: workspace:*
+        version: link:../math
       '@voxel-maker/model':
         specifier: workspace:*
         version: link:../model

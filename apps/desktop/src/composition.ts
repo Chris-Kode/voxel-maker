@@ -15,6 +15,7 @@ import {
 } from "@voxel-maker/editor";
 import { createDraftOverlay, type DraftOverlay } from "./viewport/draft.js";
 import {
+  registerArticulationCommands,
   registerBatchCommands,
   registerMaterialCommands,
   registerNodeCommands,
@@ -156,6 +157,7 @@ const REGISTER_COMMANDS = [
   registerBatchCommands,
   registerRegionCommands,
   registerNodeCommands,
+  registerArticulationCommands,
   registerMaterialCommands,
 ] as const;
 

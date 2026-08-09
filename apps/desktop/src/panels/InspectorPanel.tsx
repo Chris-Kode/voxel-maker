@@ -2,8 +2,12 @@ import { useState } from "react";
 import { volumeId } from "@voxel-maker/shared";
 import type { DocumentSession } from "@voxel-maker/session";
 import {
+  buildAddJointCommand,
+  buildRemoveJointCommand,
+  buildRemovePivotCommand,
   buildSetComponentsCommand,
   buildSetMetadataCommand,
+  buildSetPivotCommand,
   buildSetTransformFieldCommands,
   formatMetadata,
   formatRotationDegrees,
@@ -157,6 +161,38 @@ export function InspectorPanel({
   };
 
   const addComponent = (component: Component): void => {
+    if (component.kind === "pivot" || component.kind === "joint") {
+      // Singleton articulation components use the per-discriminant
+      // lifecycle commands (plan S9.3, ticket #26): one command per
+      // selected node that does not already carry the component.
+      const missing = nodes.filter(
+        (node) =>
+          !node.components.some((entry) => entry.kind === component.kind),
+      );
+      if (missing.length < nodes.length) {
+        editor.pushNotice(
+          "warning",
+          `Some selected nodes already have a ${component.kind} component; they were left unchanged`,
+        );
+      }
+      const commands = missing.map((node) =>
+        component.kind === "pivot"
+          ? buildSetPivotCommand(
+              panelIds.nextCommandId(),
+              node.nodeId,
+              component.pivot,
+            )
+          : buildAddJointCommand(panelIds.nextCommandId(), node.nodeId),
+      );
+      const result = executeTransaction(
+        session,
+        panelIds,
+        commands,
+        "Add component",
+      );
+      if (!result.ok) editor.pushNotice("error", result.message);
+      return;
+    }
     let warned = false;
     applyComponentChange((components) => {
       if (components.some((existing) => existing.kind === component.kind)) {
@@ -174,6 +210,21 @@ export function InspectorPanel({
   };
 
   const removeComponent = (kind: Component["kind"]): void => {
+    if (kind === "pivot" || kind === "joint") {
+      const commands = nodes.map((node) =>
+        kind === "pivot"
+          ? buildRemovePivotCommand(panelIds.nextCommandId(), node.nodeId)
+          : buildRemoveJointCommand(panelIds.nextCommandId(), node.nodeId),
+      );
+      const result = executeTransaction(
+        session,
+        panelIds,
+        commands,
+        "Remove component",
+      );
+      if (!result.ok) editor.pushNotice("error", result.message);
+      return;
+    }
     applyComponentChange(
       (components) => components.filter((entry) => entry.kind !== kind),
       "Remove component",
@@ -182,6 +233,27 @@ export function InspectorPanel({
 
   /** Replaces one component on every selected node that has it. */
   const updateComponent = (kind: Component["kind"], patch: Component): void => {
+    if (kind === "pivot" && patch.kind === "pivot") {
+      const commands = nodes
+        .filter((node) =>
+          node.components.some((entry) => entry.kind === "pivot"),
+        )
+        .map((node) =>
+          buildSetPivotCommand(
+            panelIds.nextCommandId(),
+            node.nodeId,
+            patch.pivot,
+          ),
+        );
+      const result = executeTransaction(
+        session,
+        panelIds,
+        commands,
+        "Edit component",
+      );
+      if (!result.ok) editor.pushNotice("error", result.message);
+      return;
+    }
     applyComponentChange(
       (components) =>
         components.map((entry) => (entry.kind === kind ? patch : entry)),

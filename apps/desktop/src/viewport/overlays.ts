@@ -30,9 +30,13 @@ import {
  *   boxes, depth-tested, never depth-writing.
  * - Pivots: orange cross markers at each selected node's world-space
  *   transform pivot, always drawn on top.
+ * - Joints (plan S9.8, ticket #26): violet ring markers at the world-space
+ *   pivot of each selected node carrying a joint annotation, always drawn
+ *   on top. A joint annotates a node in the single transform hierarchy; it
+ *   never introduces a skeleton graph.
  */
 
-export type OverlayKey = "grid" | "axes" | "bounds" | "pivots";
+export type OverlayKey = "grid" | "axes" | "bounds" | "pivots" | "joints";
 
 export type OverlayVisibility = Readonly<Record<OverlayKey, boolean>>;
 
@@ -42,12 +46,14 @@ export const DEFAULT_OVERLAY_VISIBILITY: OverlayVisibility = {
   axes: true,
   bounds: true,
   pivots: true,
+  joints: true,
 };
 
 const GRID_SIZE = 100;
 const GRID_DIVISIONS = 100;
 const AXIS_LENGTH = 10;
 const PIVOT_MARKER_LENGTH = 0.5;
+const JOINT_MARKER_RADIUS = 0.35;
 
 const AXIS_COLORS: readonly [number, number, number] = [
   0xff3b30, 0x34c759, 0x007aff,
@@ -89,6 +95,7 @@ class OverlayManagerImpl implements OverlayManager {
   readonly #axes: THREE.Group;
   readonly #boundsGroup: THREE.Group;
   readonly #pivotsGroup: THREE.Group;
+  readonly #jointsGroup: THREE.Group;
   #contentBox: BoxProjection | undefined;
   #selectionBox: BoxProjection | undefined;
   #regionDraftBox: BoxProjection | undefined;
@@ -132,6 +139,8 @@ class OverlayManagerImpl implements OverlayManager {
     scene.add(this.#boundsGroup);
     this.#pivotsGroup = new THREE.Group();
     scene.add(this.#pivotsGroup);
+    this.#jointsGroup = new THREE.Group();
+    scene.add(this.#jointsGroup);
     this.applyVisibility();
   }
 
@@ -158,6 +167,7 @@ class OverlayManagerImpl implements OverlayManager {
   ): void {
     this.#rebuildBounds(store, selection, regionDraft, transformPreview);
     this.#rebuildPivots(store, selection);
+    this.#rebuildJoints(store, selection);
   }
 
   dispose(): void {
@@ -165,6 +175,7 @@ class OverlayManagerImpl implements OverlayManager {
     this.#disposeGroup(this.#axes);
     this.#disposeGroup(this.#boundsGroup);
     this.#disposeGroup(this.#pivotsGroup);
+    this.#disposeGroup(this.#jointsGroup);
   }
 
   applyVisibility(): void {
@@ -178,6 +189,8 @@ class OverlayManagerImpl implements OverlayManager {
         this.#transformPreviewBoxes.length > 0);
     this.#pivotsGroup.visible =
       this.#visibility.pivots && this.#pivotsGroup.children.length > 0;
+    this.#jointsGroup.visible =
+      this.#visibility.joints && this.#jointsGroup.children.length > 0;
   }
 
   #createBox(
@@ -356,6 +369,70 @@ class OverlayManagerImpl implements OverlayManager {
       this.#pivotsGroup.add(this.#createPivotMarker(pivot));
     }
     this.applyVisibility();
+  }
+
+  /**
+   * Rebuilds the joint markers: a violet ring at the world-space pivot of
+   * every selected node carrying a joint annotation (plan S9.8, ticket
+   * #26). Like every overlay these are runtime projections, rebuilt
+   * wholesale and disposed exactly once.
+   */
+  #rebuildJoints(
+    store: DocumentStoreRead | undefined,
+    selection: readonly SelectionEntry[],
+  ): void {
+    for (const child of [...this.#jointsGroup.children]) {
+      this.#jointsGroup.remove(child);
+      child.traverse(disposeGeometry);
+      child.traverse(disposeMaterials);
+    }
+    const nodeIds = selection
+      .filter((entry) => entry.kind === "node")
+      .map((entry) => entry.nodeId);
+    if (store === undefined || nodeIds.length === 0) {
+      this.applyVisibility();
+      return;
+    }
+    const matrices = nodeWorldMatrices(store);
+    const document = store.getDocument();
+    for (const nodeId of nodeIds) {
+      const node = document.nodes[nodeId];
+      const world = matrices.get(nodeId);
+      if (node === undefined || world === undefined) continue;
+      if (!node.components.some((component) => component.kind === "joint")) {
+        continue;
+      }
+      const pivot: Vec3 = applyMatrix(world, node.transform.pivot);
+      this.#jointsGroup.add(this.#createJointMarker(pivot));
+    }
+    this.applyVisibility();
+  }
+
+  #createJointMarker(pivot: Vec3): THREE.LineLoop {
+    const points: THREE.Vector3[] = [];
+    const segments = 24;
+    for (let index = 0; index < segments; index += 1) {
+      const angle = (index / segments) * Math.PI * 2;
+      points.push(
+        new THREE.Vector3(
+          Math.cos(angle) * JOINT_MARKER_RADIUS,
+          0,
+          Math.sin(angle) * JOINT_MARKER_RADIUS,
+        ),
+      );
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({
+      color: 0xbf5af2,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const ring = new THREE.LineLoop(geometry, material);
+    ring.position.set(pivot[0], pivot[1], pivot[2]);
+    ring.renderOrder = 3;
+    return ring;
   }
 
   #createPivotMarker(pivot: Vec3): THREE.Group {

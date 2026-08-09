@@ -42,8 +42,12 @@ export {
   type ShapeToolOptions,
 } from "./shape-tool.js";
 export {
+  buildAddJointCommand,
+  buildRemoveJointCommand,
+  buildRemovePivotCommand,
   buildSetComponentsCommand,
   buildSetMetadataCommand,
+  buildSetPivotCommand,
   buildSetTransformFieldCommands,
   formatMetadata,
   formatNumber,
