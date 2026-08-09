@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Template: sign and notarize the macOS release artifacts (issue #46,
 # plan S17.10). Run AFTER `pnpm release:package` on macOS and BEFORE
-# publishing the artifact set. Signs the copied artifacts in
-# release/artifacts/<version>/ in place, then regenerates checksums so
-# SHASUMS256.txt covers the signed bytes.
+# publishing the artifact set.
+#
+# The automation in release-package.mjs already signs the .app and rebuilds
+# the DMG when APPLE_SIGNING_IDENTITY is set; this template covers the
+# notarization step (which needs the interactive keychain profile) and the
+# manual fallback path. It signs the bundle outputs in place, then refreshes
+# the published artifact copies and checksums - without rebuilding, so the
+# notarized bytes are exactly what gets published.
 #
 # Usage:
 #   APPLE_SIGNING_IDENTITY="Developer ID Application: Name (TEAMID)" \
@@ -21,27 +26,37 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${1:-0.1.0}"
+BUNDLE="$ROOT/apps/desktop/src-tauri/target/release/bundle"
 ARTIFACTS="$ROOT/release/artifacts/$VERSION"
+APP_BUNDLE="$BUNDLE/macos/Voxel Maker.app"
+ARCH="$(uname -m | sed 's/x86_64/x64/;s/arm64/arm64/')"
+DMG_NAME="Voxel Maker_${VERSION}_${ARCH}.dmg"
+DMG_PATH="$BUNDLE/dmg/$DMG_NAME"
+ZIP_PATH="$BUNDLE/dmg/Voxel Maker.app.zip"
 
-[ -d "$ARTIFACTS" ] || { echo "artifact set missing: $ARTIFACTS"; exit 1; }
+[ -d "$BUNDLE/macos" ] || { echo "bundle missing; run pnpm release:package first"; exit 1; }
+mkdir -p "$ARTIFACTS"
 
-# Sign .app bundles (directories).
-shopt -s nullglob
-for app in "$ARTIFACTS"/*.app; do
-  codesign --deep --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$app"
-  codesign --verify --deep --strict "$app"
-  echo "signed $app"
-done
+# 1. Sign the app bundle (deep) and verify.
+codesign --deep --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$APP_BUNDLE"
+codesign --verify --deep --strict "$APP_BUNDLE"
+echo "signed $APP_BUNDLE"
 
-# Sign and notarize installers (dmg/pkg).
-for installer in "$ARTIFACTS"/*.dmg "$ARTIFACTS"/*.pkg; do
-  [ -e "$installer" ] || continue
-  xcrun notarytool submit "$installer" \
-    --keychain-profile "$APPLE_NOTARY_KEYCHAIN_PROFILE" --wait
-  xcrun stapler staple "$installer" || true
-  echo "notarized $installer"
-done
+# 2. Rebuild the DMG from the signed bundle (headless-safe).
+"$BUNDLE/dmg/bundle_dmg.sh" --skip-jenkins --volname "Voxel Maker" \
+  "$DMG_NAME" "$BUNDLE/macos"
 
-# Regenerate checksums over the signed bytes.
+# 3. Notarize and staple the DMG.
+xcrun notarytool submit "$DMG_PATH" \
+  --keychain-profile "$APPLE_NOTARY_KEYCHAIN_PROFILE" --wait
+xcrun stapler staple "$DMG_PATH" || true
+echo "notarized $DMG_PATH"
+
+# 4. Rebuild the zipped app artifact from the signed bundle.
+ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+
+# 5. Refresh the published copies (no rebuild) and checksums.
+cp -f "$DMG_PATH" "$ARTIFACTS/"
+cp -f "$ZIP_PATH" "$ARTIFACTS/"
 node "$ROOT/scripts/release-checksums.mjs" "$ARTIFACTS"
-echo "done — verify with pnpm release:verify-checksums"
+echo "done - verify with pnpm release:verify-checksums"

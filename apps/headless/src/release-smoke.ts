@@ -66,12 +66,15 @@ import {
 } from "@voxel-maker/animation";
 import { importVox, exportVox, exportGltf } from "@voxel-maker/interchange";
 import {
+  DEFAULT_AGENT_BUDGETS,
+  buildSessionDiagnostics,
   createInspector,
   createMutator,
   createPreviewSession,
   consentCovers,
   consentRequiredError,
 } from "@voxel-maker/agent";
+import type { MutationResult } from "@voxel-maker/agent";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,6 +89,14 @@ import type { DocumentStore, DocumentStoreRead } from "@voxel-maker/document";
 import type { VoxelWriteCapability } from "@voxel-maker/voxel";
 
 const SMOKE_VERSION = "release-smoke-v1";
+
+/**
+ * The release app version the smoke qualifies. The packaged artifact is
+ * self-contained, so the constant is compiled in; the in-repo test asserts
+ * it stays equal to the root manifest version, so a version bump without
+ * updating this gate fails CI.
+ */
+export const RELEASE_APP_VERSION = "0.1.0";
 
 const identity = {
   translation: [0, 0, 0],
@@ -178,6 +189,29 @@ function createSmokeRegistry(): CommandRegistry {
   return registry;
 }
 
+/**
+ * The mutation output envelope (MUTATION_CONTRACT_VERSION): the mutator
+ * returns `value` as JsonValue by contract, so this helper narrows the
+ * documented shape in one place. The smoke then stages the constructed
+ * command through the preview session like the agent loop does.
+ */
+interface ConstructedCommandValue {
+  readonly command: {
+    readonly id: string;
+    readonly type: string;
+    readonly schemaVersion: number;
+    readonly payload: unknown;
+  };
+}
+
+function commandFromProposal(proposal: MutationResult): Command {
+  if (!proposal.ok) {
+    throw new Error(`release smoke ai proposal failed: ${proposal.error.code}`);
+  }
+  return (proposal.value as unknown as ConstructedCommandValue)
+    .command as Command;
+}
+
 /** Immutable volume read views of every document volume (throws when missing). */
 function volumeViews(
   store: DocumentStoreRead,
@@ -214,7 +248,7 @@ function liveHarness(): LiveHarness {
  * A transform-free single-volume document for the lossless VOX round trip
  * (ADR-0011: non-identity transforms block VOX export by default).
  */
-function createImportSourceHarness(port: NodeProjectStorage): LiveHarness {
+function createImportSourceHarness(): LiveHarness {
   const document = createDocument({
     documentId: documentId("document:smoke:vox-source"),
     metadata: { title: "vox round trip source", tags: ["smoke"] },
@@ -309,7 +343,6 @@ function createImportSourceHarness(port: NodeProjectStorage): LiveHarness {
       `release smoke vox source accent rejected: ${result.error.code}`,
     );
   }
-  void port;
   return { document, store, writeCapability, registry, bus };
 }
 
@@ -713,7 +746,7 @@ export async function runReleaseSmoke(): Promise<string> {
     // export is lossless (ADR-0011: transforms are a VOX loss and block by
     // default); the round trip then imports through one transaction.
     const importHarness = liveHarness();
-    const voxExportHarness = createImportSourceHarness(port);
+    const voxExportHarness = createImportSourceHarness();
     const voxBytes = await exportVox({
       document: voxExportHarness.document,
       getVolume: (id) => voxExportHarness.store.getVolume(id),
@@ -748,8 +781,7 @@ export async function runReleaseSmoke(): Promise<string> {
     // ---- export: glTF binary plus VOX through the atomic storage port ----
     const exportHarness = liveHarness();
     const exportSerial = { value: 0 };
-    let exportRevision = 0;
-    exportRevision = run(
+    run(
       exportHarness,
       "fillBox export body",
       fillBoxCommand(commandId("command:smoke:export:fill"), {
@@ -757,10 +789,9 @@ export async function runReleaseSmoke(): Promise<string> {
         region: { min: [-4, 0, -4], max: [5, 9, 5] },
         material: materialId(1),
       }),
-      exportRevision,
+      0,
       exportSerial,
     );
-    void exportRevision;
     const gltfOutcome = await exportGltf({
       document: exportHarness.store.getDocument(),
       getVolume: (id) => exportHarness.store.getVolume(id),
@@ -807,56 +838,40 @@ export async function runReleaseSmoke(): Promise<string> {
     // additionally proves a run without consent fails closed.
     const inspector = createInspector({ store: harness.store });
     const summary = inspector.inspect("inspectSummary", {});
+    const mutator = createMutator({
+      store: harness.store,
+      registry: harness.registry,
+    });
+    const propose = (commandIdText: string) =>
+      commandFromProposal(
+        mutator.construct("fillBox", {
+          commandId: commandIdText,
+          volumeId: BODY_VOLUME,
+          region: { min: [0, 0, 0], max: [1, 1, 1] },
+          material: 2,
+        }),
+      );
+    // Discard path: staging must be side-effect free.
     const preview = createPreviewSession({
       live: harness.store,
       applyBus: harness.bus,
       registry: harness.registry,
     });
     const voxelBefore = harness.store.getVoxel(BODY_VOLUME, [0, 0, 0]);
-    const mutator = createMutator({
-      store: harness.store,
-      registry: harness.registry,
-      session: preview,
-    });
-    const proposal = mutator.construct("fillBox", {
-      commandId: "command:smoke:ai:proposal",
-      volumeId: BODY_VOLUME,
-      region: { min: [0, 0, 0], max: [1, 1, 1] },
-      material: 2,
-    });
-    if (!proposal.ok) {
-      throw new Error(
-        `release smoke ai proposal failed: ${proposal.error.code}`,
-      );
-    }
-    const staged = preview.stage(
-      (proposal.value as unknown as { readonly command: Command }).command,
-    );
+    const staged = preview.stage(propose("command:smoke:ai:proposal"));
     if (!staged.ok) {
       throw new Error(`release smoke ai stage failed: ${staged.error.code}`);
     }
     const diff = preview.diff();
     preview.discard();
     const voxelAfterDiscard = harness.store.getVoxel(BODY_VOLUME, [0, 0, 0]);
+    // Apply path: one optimistic transaction, then undo restores state.
     const preview2 = createPreviewSession({
       live: harness.store,
       applyBus: harness.bus,
       registry: harness.registry,
     });
-    const proposal2 = mutator.construct("fillBox", {
-      commandId: "command:smoke:ai:proposal2",
-      volumeId: BODY_VOLUME,
-      region: { min: [0, 0, 0], max: [1, 1, 1] },
-      material: 2,
-    });
-    if (!proposal2.ok) {
-      throw new Error(
-        `release smoke ai proposal2 failed: ${proposal2.error.code}`,
-      );
-    }
-    const staged2 = preview2.stage(
-      (proposal2.value as unknown as { readonly command: Command }).command,
-    );
+    const staged2 = preview2.stage(propose("command:smoke:ai:proposal2"));
     if (!staged2.ok) {
       throw new Error(`release smoke ai stage2 failed: ${staged2.error.code}`);
     }
@@ -872,6 +887,33 @@ export async function runReleaseSmoke(): Promise<string> {
       source: "ui",
     });
     const voxelAfterUndo = harness.store.getVoxel(BODY_VOLUME, [0, 0, 0]);
+    // Diagnostics export smoke (plan §13, S17.9): the sanitized report
+    // builder must redact secrets/paths/URLs even when prompts are
+    // explicitly opted in, and never leak the raw secret.
+    const fakeSecret = "sk-release-smoke-secret-0123456789";
+    const diagnostics = buildSessionDiagnostics({
+      providerId: "openai",
+      model: "gpt-5",
+      result: {
+        ok: false,
+        state: "error",
+        reason: "provider",
+        error: Object.assign(new Error("release smoke fake provider failure"), {
+          code: "PROVIDER_UNCONFIGURED",
+        }),
+      },
+      messages: [
+        {
+          role: "user",
+          content: `refine the model with key ${fakeSecret} at /Users/release-smoke/project and https://example.com/leak`,
+        },
+      ],
+      budgets: DEFAULT_AGENT_BUDGETS,
+      createdAt: 1_700_000_000_000,
+      includePrompts: true,
+      secrets: [fakeSecret],
+    });
+    const diagnosticsJson = JSON.stringify(diagnostics);
     const ai = {
       inspectorSummary: summary.ok,
       stagedCommandCount: diff.ok ? diff.value.stagedCommandCount : -1,
@@ -894,11 +936,20 @@ export async function runReleaseSmoke(): Promise<string> {
         1,
       ),
       providerTransmissions: 0,
+      diagnostics: {
+        outcomeOk: diagnostics.outcome.ok,
+        errorCode: diagnostics.outcome.errorCode ?? null,
+        promptRedacted: !diagnosticsJson.includes(fakeSecret),
+        markerPresent: diagnosticsJson.includes("[REDACTED]"),
+        noRawPath: !diagnosticsJson.includes("/Users/release-smoke"),
+        noRawUrl: !diagnosticsJson.includes("https://example.com/leak"),
+        stagedCommands: diagnostics.staged?.commands ?? -1,
+      },
     };
 
     return canonicalJson({
       version: SMOKE_VERSION,
-      appVersion: "0.1.0",
+      appVersion: RELEASE_APP_VERSION,
       environment: {
         platform: process.platform,
         arch: process.arch,

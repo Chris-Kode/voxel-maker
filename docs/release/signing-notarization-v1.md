@@ -11,33 +11,35 @@ exact procedure is below.
 
 ### macOS (Developer ID + notarization)
 
+The packaging automation signs in the correct order: `pnpm release:package`
+signs the freshly built `.app` bundle first and then rebuilds the DMG from
+the signed bundle (headless-safe `--skip-jenkins`), so the DMG embeds the
+signed app and the published checksums cover signed bytes end to end.
+
 1. Obtain an Apple Developer ID Application certificate and install it
    into the keychain (`security import`).
-2. Build: `pnpm release:package` (runs `pnpm tauri build`).
-3. Sign the app bundle and the DMG:
+2. Build and sign: `APPLE_SIGNING_IDENTITY="Developer ID Application: <Team> (TEAMID)" pnpm release:package`.
+3. Notarize and staple (interactive keychain profile), then refresh the
+   published copies and checksums — exactly one command:
 
    ```sh
-   codesign --deep --force --options runtime      --sign "Developer ID Application: <Team> (TEAMID)" \
-     apps/desktop/src-tauri/target/release/bundle/macos/Voxel\ Maker.app
-   codesign --verify --deep --strict \
-     apps/desktop/src-tauri/target/release/bundle/macos/Voxel\ Maker.app
+   APPLE_SIGNING_IDENTITY="Developer ID Application: <Team> (TEAMID)" \
+   APPLE_NOTARY_KEYCHAIN_PROFILE="voxel-maker-notary" \
+   scripts/release-sign-macos.sh
    ```
 
-4. Notarize and staple:
+   The script signs the bundle, rebuilds the DMG, submits to
+   `notarytool --wait`, staples, re-zips the app, refreshes
+   `release/artifacts/<version>/` and regenerates `SHASUMS256.txt` —
+   without rebuilding, so the notarized bytes are exactly what is
+   published.
 
-   ```sh
-   xcrun notarytool submit \
-     apps/desktop/src-tauri/target/release/bundle/dmg/VoxelMaker_0.1.0_<arch>.dmg \
-     --keychain-profile voxel-maker-notary --wait
-   xcrun stapler staple \
-     apps/desktop/src-tauri/target/release/bundle/dmg/VoxelMaker_0.1.0_<arch>.dmg
-   ```
+4. Verify: `pnpm release:verify-checksums`.
 
-5. Re-generate checksums after signing (`pnpm release:checksums`).
-
-A template script `scripts/release-sign-macos.sh` is provided; the CI
-workflow can carry `APPLE_SIGNING_IDENTITY`, `APPLE_NOTARY_KEYCHAIN_PROFILE`
-secrets and run it (see `.github/workflows/release.yml`).
+The CI workflow carries `APPLE_SIGNING_IDENTITY`,
+`APPLE_NOTARY_KEYCHAIN_PROFILE`, `APPLE_ID`, `APPLE_PASSWORD`, and
+`APPLE_TEAM_ID` secrets for the tag/nightly runs (see
+`.github/workflows/release.yml`).
 
 ### Windows (Authenticode)
 

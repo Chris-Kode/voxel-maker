@@ -74,7 +74,9 @@ evidence checklist.
   transmission.
 - [ ] Offline: disconnect the network; the whole manual workflow still
   works.
-- [ ] Diagnostics export produces a redacted JSON file.
+- [ ] Diagnostics export produces a redacted JSON file (the smoke's
+  `aiOffline.diagnostics` fields assert prompt redaction, no raw paths,
+  no raw URLs, and structured error codes).
 
 The headless probe `voxel-maker-smoke` (shipped in every artifact set)
 covers the same journey deterministically on any platform:

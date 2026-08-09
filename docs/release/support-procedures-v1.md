@@ -99,7 +99,9 @@ rotate keys if needed.
 ## Smoke-tested evidence
 
 - `voxel-maker-smoke` (release smoke) exercises create/edit/rig/animate/
-  save/recover/import/export/AI-offline end to end on every check run.
+  save/recover/import/export/AI-offline and the sanitized diagnostics
+  report (including prompt opt-in redaction) end to end on every check
+  run.
 - `voxel-maker-recovery` exercises crash replay, corrupt-tail reporting,
   compaction, save-as, degraded durability.
 - Desktop tests cover the recovery prompt and dirty-close flows

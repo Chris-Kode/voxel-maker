@@ -1,5 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runReleaseSmoke } from "./release-smoke.js";
+import { RELEASE_APP_VERSION, runReleaseSmoke } from "./release-smoke.js";
 
 /**
  * Release smoke assertions (issue #46, S17.8/S17.14): the packaged-app
@@ -87,6 +89,15 @@ interface SmokeReport {
     readonly consentRequiredCode: string;
     readonly consentCoversMismatched: boolean;
     readonly providerTransmissions: number;
+    readonly diagnostics: {
+      readonly outcomeOk: boolean;
+      readonly errorCode: string | null;
+      readonly promptRedacted: boolean;
+      readonly markerPresent: boolean;
+      readonly noRawPath: boolean;
+      readonly noRawUrl: boolean;
+      readonly stagedCommands: number;
+    };
   };
   readonly offline: {
     readonly networkAccess: string;
@@ -95,10 +106,20 @@ interface SmokeReport {
 }
 
 describe("release smoke", () => {
+  it("keeps the compiled release version aligned with the root manifest", async () => {
+    const rootManifest = JSON.parse(
+      await readFile(
+        join(import.meta.dirname, "..", "..", "..", "package.json"),
+        "utf8",
+      ),
+    ) as { version: string };
+    expect(RELEASE_APP_VERSION).toBe(rootManifest.version);
+  });
+
   it("passes the full create/edit/rig/animate/save/recover/import/export/AI journey", async () => {
     const report = JSON.parse(await runReleaseSmoke()) as SmokeReport;
     expect(report.version).toBe("release-smoke-v1");
-    expect(report.appVersion).toBe("0.1.0");
+    expect(report.appVersion).toBe(RELEASE_APP_VERSION);
 
     // create
     expect(report.created.valid).toBe(true);
@@ -171,6 +192,16 @@ describe("release smoke", () => {
     expect(report.aiOffline.consentRequiredCode).toBe("CONSENT_REQUIRED");
     expect(report.aiOffline.consentCoversMismatched).toBe(false);
     expect(report.aiOffline.providerTransmissions).toBe(0);
+
+    // Diagnostics export: sanitized report, prompt opt-in still redacted.
+    expect(report.aiOffline.diagnostics.outcomeOk).toBe(false);
+    expect(report.aiOffline.diagnostics.errorCode).toBe(
+      "PROVIDER_UNCONFIGURED",
+    );
+    expect(report.aiOffline.diagnostics.promptRedacted).toBe(true);
+    expect(report.aiOffline.diagnostics.markerPresent).toBe(true);
+    expect(report.aiOffline.diagnostics.noRawPath).toBe(true);
+    expect(report.aiOffline.diagnostics.noRawUrl).toBe(true);
 
     // offline manual use: no network and no provider adapter involved
     expect(report.offline.networkAccess).toBe("none");

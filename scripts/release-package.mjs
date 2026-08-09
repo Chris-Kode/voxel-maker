@@ -158,12 +158,15 @@ try {
   );
 }
 
-// macOS DMG fallback: tauri's create-dmg script runs an AppleScript
-// "make Finder pretty" step that times out in headless/CI sessions and
-// aborts the bundle. The .app bundle is already produced at that point,
-// so rebuild the DMG with --skip-jenkins (no Finder cosmetics), which is
-// exactly what CI needs. The fallback is only used when no .dmg exists.
-if (platform === "darwin" && !bundle.ok) {
+// macOS bundle finalization (plan S17.10): tauri's create-dmg step runs
+// an AppleScript "make Finder pretty" step that times out in headless/CI
+// sessions, and the DMG must embed the *signed* app. On macOS the package
+// flow therefore always (1) signs the freshly built .app bundle when a
+// signing identity is configured, (2) rebuilds the DMG from the bundle
+// with --skip-jenkins (headless-safe), and (3) continues; the .app zip
+// artifact is produced from the signed bundle during collection, so the
+// published checksums cover signed bytes end to end.
+if (platform === "darwin") {
   const appBundle = join(
     desktopDirectory,
     "src-tauri",
@@ -173,31 +176,56 @@ if (platform === "darwin" && !bundle.ok) {
     "macos",
     "Voxel Maker.app",
   );
-  dmgDir = join(
-    desktopDirectory,
-    "src-tauri",
-    "target",
-    "release",
-    "bundle",
-    "dmg",
-  );
-  const dmgName = `Voxel Maker_${version}_${arch}.dmg`;
-  // Stale raw images from failed attempts break hdiutil attach; remove them.
-  for (const root of [join(dmgDir, "..", "macos"), dmgDir]) {
-    try {
-      for (const entry of await readdir(root)) {
-        if (entry.startsWith("rw."))
-          await rm(join(root, entry), { force: true });
+  if (existsSync(appBundle)) {
+    if (process.env.APPLE_SIGNING_IDENTITY) {
+      const sign = spawnSync(
+        "codesign",
+        [
+          "--deep",
+          "--force",
+          "--options",
+          "runtime",
+          "--sign",
+          process.env.APPLE_SIGNING_IDENTITY,
+          appBundle,
+        ],
+        { stdio: "inherit" },
+      );
+      if (sign.status === 0) {
+        spawnSync("codesign", ["--verify", "--deep", "--strict", appBundle], {
+          stdio: "inherit",
+        });
+        console.log("[release-package] macOS app bundle signed");
+      } else {
+        console.error(
+          "[release-package] codesign failed; publishing unsigned artifacts",
+        );
       }
-    } catch {
-      // directory may not exist yet
     }
-  }
-  if (existsSync(appBundle) && !existsSync(join(dmgDir, dmgName))) {
+    dmgDir = join(
+      desktopDirectory,
+      "src-tauri",
+      "target",
+      "release",
+      "bundle",
+      "dmg",
+    );
+    const dmgName = `Voxel Maker_${version}_${arch}.dmg`;
+    // Stale raw images from failed attempts break hdiutil attach; remove them.
+    for (const root of [join(dmgDir, "..", "macos"), dmgDir]) {
+      try {
+        for (const entry of await readdir(root)) {
+          if (entry.startsWith("rw."))
+            await rm(join(root, entry), { force: true });
+        }
+      } catch {
+        // directory may not exist yet
+      }
+    }
     const script = join(dmgDir, "bundle_dmg.sh");
     if (existsSync(script)) {
       console.log(
-        "[release-package] retrying DMG bundling with --skip-jenkins (headless-safe)",
+        "[release-package] rebuilding DMG with --skip-jenkins (headless-safe)",
       );
       const dmg = spawnSync(
         "bash",
@@ -214,55 +242,15 @@ if (platform === "darwin" && !bundle.ok) {
       if (dmg.status === 0) {
         bundle.ok = true;
         bundle.reason = null;
-        bundle.artifacts = (await collectArtifacts()).map(
-          (artifact) => artifact.name,
+        bundle.artifacts = (await collectArtifacts()).map((artifact) =>
+          artifact.directory === true ? `${artifact.name}.zip` : artifact.name,
         );
-        console.log("[release-package] DMG fallback succeeded");
+        console.log("[release-package] DMG rebuild succeeded");
       } else {
         console.error(
-          `[release-package] DMG fallback failed (status ${dmg.status}); publishing without a DMG`,
+          `[release-package] DMG rebuild failed (status ${dmg.status}); publishing without a DMG`,
         );
       }
-    }
-  }
-}
-
-// macOS signing hook (plan S17.10): when the maintainer's signing
-// identity is configured, sign the freshly built .app bundle before the
-// artifacts are copied, so the published checksums cover signed bytes.
-if (platform === "darwin" && process.env.APPLE_SIGNING_IDENTITY) {
-  const appBundle = join(
-    desktopDirectory,
-    "src-tauri",
-    "target",
-    "release",
-    "bundle",
-    "macos",
-    "Voxel Maker.app",
-  );
-  if (existsSync(appBundle)) {
-    const sign = spawnSync(
-      "codesign",
-      [
-        "--deep",
-        "--force",
-        "--options",
-        "runtime",
-        "--sign",
-        process.env.APPLE_SIGNING_IDENTITY,
-        appBundle,
-      ],
-      { stdio: "inherit" },
-    );
-    if (sign.status === 0) {
-      spawnSync("codesign", ["--verify", "--deep", "--strict", appBundle], {
-        stdio: "inherit",
-      });
-      console.log("[release-package] macOS app bundle signed");
-    } else {
-      console.error(
-        "[release-package] codesign failed; publishing unsigned artifacts",
-      );
     }
   }
 }

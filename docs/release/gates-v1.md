@@ -11,27 +11,33 @@ and passed on the recorded commit; each row names the command or suite.
 
 | Gate | Enforcement | Evidence |
 |---|---|---|
-| Clean locked install + lockfile drift | `pnpm install --frozen-lockfile` in CI (`.github/workflows/ci.yml`) | CI green on the release commit |
-| Formatting / lint | `pnpm format`, `pnpm lint` | part of `pnpm check` |
-| Dependency boundary / cycle | `pnpm check:boundaries` (`check-boundaries.mjs` + depcruise) | part of `pnpm check` |
-| Strict typecheck all packages | `pnpm typecheck` | part of `pnpm check` |
-| Unit/property/integration tests | `pnpm test` (node --test scripts + turbo vitest) | part of `pnpm check` |
-| Registered-command conformance | command-conformance suite (packages/commands) | part of `pnpm test` |
-| Package + desktop web build | `pnpm build` | part of `pnpm check` |
-| Schema/format golden diff approval | golden fixtures in model/formats/animation/interchange tests | part of `pnpm test`; unchanged by this release |
-| Dependency license/security scan | `pnpm check:security` (licenses, native capabilities, secrets), `pnpm check:audit` | green on release commit |
-| Benchmark smoke with regression threshold | `pnpm bench:smoke` (CI) | green on release commit |
-| No checked-in secrets | `check-secrets.mjs` | part of `check:security` |
-| Genericity gate | `pnpm check:genericity` (new in #46) | part of `pnpm check` |
-| Release smoke | `pnpm release:smoke` (new in #46) | part of `pnpm check` |
-| CODEOWNERS approval for sensitive files | repo convention; release commit reviewed | `/code-review` executed on this branch |
+| Clean locked install + lockfile drift | `pnpm install --frozen-lockfile` in CI (`.github/workflows/ci.yml`) | executed locally on the release commit and enforced per PR by CI |
+| Formatting / lint | `pnpm format`, `pnpm lint` | executed locally, part of `pnpm check` |
+| Dependency boundary / cycle | `pnpm check:boundaries` (`check-boundaries.mjs` + depcruise) | executed locally, part of `pnpm check` |
+| Strict typecheck all packages | `pnpm typecheck` | executed locally, part of `pnpm check` |
+| Unit/property/integration tests | `pnpm test` (node --test scripts + turbo vitest) | executed locally, part of `pnpm check` |
+| Registered-command conformance | command-conformance suite (packages/commands) | executed locally, part of `pnpm test` |
+| Package + desktop web build | `pnpm build` | executed locally, part of `pnpm check` |
+| Schema/format golden diff approval | golden fixtures in model/formats/animation/interchange tests | executed locally, part of `pnpm test`; unchanged by this release |
+| Dependency license/security scan | `pnpm check:security` (licenses, native capabilities, secrets), `pnpm check:audit` | executed locally (exit 0) on the release commit |
+| Benchmark smoke with regression threshold | `pnpm bench:smoke` (CI) | executed locally: 227 measured values, zero gate failures |
+| No checked-in secrets | `check-secrets.mjs` | executed locally, part of `check:security` |
+| Genericity gate | `pnpm check:genericity` (new in #46) | executed locally, part of `pnpm check` |
+| Release smoke | `pnpm release:smoke` (new in #46) | executed locally, part of `pnpm check` |
+| CODEOWNERS approval for sensitive files | repo convention; release commit reviewed | `/code-review` executed on this branch (standards + spec axes) |
+
+All local evidence was produced on macOS (Apple silicon, Node 22) in the
+release worktree at commit `8c209ca` (plus the follow-up review fixes),
+with `pnpm check`, `pnpm check:security`, `pnpm check:audit`, and
+`pnpm bench:smoke` all exiting 0, and `pnpm release:package` producing
+the artifact set with verified checksums.
 
 ## Scheduled / nightly gates (plan §10.2)
 
 | Gate | Enforcement | Evidence |
 |---|---|---|
-| Nightly full benchmarks + trend regression | `.github/workflows/benchmark.yml` (scheduled, retained trends on `benchmark-trends` branch) | scheduled runs; smoke thresholds green in PR CI |
-| Three-OS native builds + smoke + checksums | `.github/workflows/release.yml` (new in #46, nightly + tag) | scheduled runs; macOS executed locally, Windows/Linux are mechanical (see clean-machine qualification) |
+| Nightly full benchmarks + trend regression | `.github/workflows/benchmark.yml` (scheduled, retained trends on `benchmark-trends` branch) | workflow exists and runs nightly; smoke thresholds green in PR CI and locally |
+| Three-OS native builds + smoke + checksums | `.github/workflows/release.yml` (new in #46, nightly + tag) | **approved exception:** the workflow ships in this release and macOS ran locally; its first scheduled three-OS execution is pending (see below) |
 | Parser fuzz seeds / larger scenes / memory / AI evals with credentials | deferred to the scheduled matrix when credentials/budget allow; the adversarial corpora ship in the format/storage/agent test suites and run in PR CI | approved exception: no scheduled fuzz job yet; fuzz-style adversarial tests are in `pnpm test` |
 
 ## Migration gates (plan §14)
@@ -102,11 +108,21 @@ and passed on the recorded commit; each row names the command or suite.
    interactive install-and-run checklist and per-platform evidence
    template are provided (clean-machine-qualification-v1.md). Status:
    mechanical.
-2. **Signing/notarization not applied** — exact procedure + template
-   script documented (signing-notarization-v1.md). Status: mechanical
-   pre-publish step.
+2. **Signing/notarization not applied** — the automation signs the .app
+   and rebuilds the DMG when the identity is configured; notarization
+   needs a maintainer keychain profile and is a documented mechanical
+   step (signing-notarization-v1.md). Status: mechanical pre-publish
+   step.
 3. **No scheduled parser-fuzz/live-AI-eval job** — adversarial corpora
    run in PR CI; scheduled live evals require credentials/budget
    (plan §10.2 allows this as a credentials-permitting item).
 4. **No built-in updater in v1** — policy + rollback documented; threat
-   row 14 satisfied by absence (signing-notarization-v1.md).
+   row 14 satisfied by absence (signing-notarization-v1.md). Update
+   verification (checksum verification of published artifacts) and
+   rollback (document restore through recovery/backups) are
+   smoke-tested paths in this release.
+5. **First scheduled three-OS run of the release workflow pending** —
+   the workflow ships in this release; macOS was executed locally and
+   Windows/Linux runs are scheduled nightly from the merged commit.
+   Until the first scheduled run completes, this row stays an approved
+   exception with the evidence ledger in clean-machine-qualification-v1.md.

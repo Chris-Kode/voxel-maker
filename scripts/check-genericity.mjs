@@ -40,9 +40,46 @@ const NINE_DEMONSTRATIONS = [
   { name: "abstract", tokens: ["abstract"] },
 ];
 
+/**
+ * The single asset-category vocabulary of this gate. It drives both
+ * directions: demonstration tokens are the evidence layer's category
+ * names, and the forbidden pattern is derived from the same list so the
+ * engine scan and the demonstration coverage can never drift apart.
+ */
+const CATEGORY_TOKENS = [
+  "architecture",
+  "furniture",
+  "vehicle",
+  "vegetation",
+  "humanoid",
+  "quadruped",
+  "flying-creature",
+  "mechanical-linkage",
+  "mechanical",
+  "abstract",
+  "house",
+  "wheel",
+  "tree",
+  "plant",
+  "bird",
+  "character",
+  "chest",
+  "linked-arm",
+  "robot",
+  "door",
+  "car",
+  "building",
+  "fish",
+  "creature",
+  "animal",
+  "wing",
+];
+
 /** Asset-category identifiers that must never appear in the engine. */
-const FORBIDDEN_DOMAIN_NAMES =
-  /(house|vehicle|humanoid|furniture|creature|character|animal|plant|door|wheel|robot|wing|chest|tree|fish|bird|car|building|quadruped|architecture|vegetation|mechanical-linkage)/iu;
+const FORBIDDEN_DOMAIN_NAMES = new RegExp(
+  `(${CATEGORY_TOKENS.join("|")})`,
+  "iu",
+);
 
 /** Engine packages: everything below the skills/evaluation layer. */
 const ENGINE_PACKAGES = [
@@ -82,8 +119,10 @@ const exportNamePattern =
   /export\s+(?:const|function|class|type|interface|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)/gu;
 
 /** A category literal assigned to kind/category/type discriminators. */
-const kindLiteralPattern =
-  /(?:kind|category|type)\s*[:=]\s*["']([a-z-]*(?:house|vehicle|humanoid|furniture|creature|character|animal|plant|door|wheel|robot|wing|chest|tree|fish|bird|car|building|quadruped|architecture|vegetation|mechanical)[a-z-]*)["']/giu;
+const kindLiteralPattern = new RegExp(
+  `(?:kind|category|type)\\s*[:=]\\s*["']([a-z-]*(?:${CATEGORY_TOKENS.join("|")})[a-z-]*)["']`,
+  "giu",
+);
 
 function isFixtureModule(path) {
   return /\/fixtures\.ts$/u.test(path) || /\/fixtures\//u.test(path);
