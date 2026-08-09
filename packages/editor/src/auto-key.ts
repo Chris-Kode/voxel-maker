@@ -7,9 +7,13 @@ import {
   NODE_SET_TRANSFORM_COMMAND,
   setKeyframeCommand,
   type Command,
+  type SetNodeTransformPayload,
 } from "@voxel-maker/commands";
-import type { AnimationDescriptor, TrackProperty } from "@voxel-maker/model";
-import type { SetNodeTransformPayload } from "@voxel-maker/commands";
+import type {
+  AnimationDescriptor,
+  TrackProperty,
+  VoxelDocument,
+} from "@voxel-maker/model";
 
 /**
  * Auto-key command construction (plan S10.12, ticket #29): the pure
@@ -41,22 +45,61 @@ export interface AutoKeyOptions {
   readonly time: number;
   /** Allocates a fresh keyframe id per track for newly created keys. */
   readonly nextKeyframeId: (trackId: TrackId) => KeyframeId;
+  /**
+   * The document BEFORE the transform transaction commits. When given,
+   * channels whose value the transaction did not change are skipped, so
+   * a translate drag never pins rotation/scale keys the user did not
+   * touch (auto-key keys intent, not the whole pose).
+   */
+  readonly document?: VoxelDocument;
+  /**
+   * Resolves the channel of a track that has no keyframes yet (the
+   * timeline remembers the channel chosen at track creation). Without
+   * it, fresh tracks are skipped: their channel is not established.
+   */
+  readonly channelFor?: (trackId: TrackId) => TrackChannel | undefined;
 }
+
+/** The animatable transform channels (plan S10.1). */
+export type TrackChannel = "translation" | "rotation" | "scale";
 
 interface TransformEdit {
   readonly nodeId: NodeId;
   readonly command: Command;
 }
 
-/** Builds the typed property for a track channel from a transform. */
-function channelProperty(
-  channel: "translation" | "rotation" | "scale",
-  transform: SetNodeTransformPayload["transform"],
+/** Builds the typed track property for a channel/value pair. */
+export function buildChannelProperty(
+  channel: TrackChannel,
+  value: readonly number[],
 ): TrackProperty {
-  const value = [...channelValue(transform, channel)] as unknown as
-    | readonly [number, number, number]
-    | readonly [number, number, number, number];
-  return { channel, value } as TrackProperty;
+  if (channel === "rotation") {
+    return {
+      channel,
+      value: [...value] as unknown as [number, number, number, number],
+    };
+  }
+  return {
+    channel,
+    value: [...value] as unknown as [number, number, number],
+  };
+}
+
+/** Compares two channel values with rotation sign tolerance (q ≡ −q). */
+function channelValuesEqual(
+  left: readonly number[],
+  right: readonly number[],
+): boolean {
+  if (left.length !== right.length) return false;
+  let equal = true;
+  let negated = true;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index] as number;
+    const b = right[index] as number;
+    if (a !== b) equal = false;
+    if (a !== -b) negated = false;
+  }
+  return equal || negated;
 }
 
 /** Extracts the channel value of a transform for a track channel. */
@@ -77,7 +120,7 @@ export function buildAutoKeyCommands(
   commands: readonly Command[],
   options: AutoKeyOptions,
 ): readonly Command[] {
-  const { clip, nextKeyframeId } = options;
+  const { clip, nextKeyframeId, channelFor, document } = options;
   const time = Math.min(Math.max(options.time, 0), clip.duration);
 
   // Last edit wins per node: a coalesced drag commits one transform per
@@ -95,21 +138,44 @@ export function buildAutoKeyCommands(
 
   const keyCommands: Command[] = [];
   for (const { nodeId } of edits.values()) {
+    const edit = edits.get(nodeId);
+    if (edit === undefined) continue;
+    const payload = edit.command.payload as SetNodeTransformPayload;
     for (const track of clip.tracks) {
       if (track.targetNodeId !== nodeId) continue;
       const first = track.keyframes[0];
-      if (first === undefined) continue; // channel not established
-      const edit = edits.get(nodeId);
-      if (edit === undefined) continue;
-      const payload = edit.command.payload as SetNodeTransformPayload;
+      const channel = first?.property.channel ?? channelFor?.(track.trackId);
+      if (channel === undefined) continue; // channel not established
+      // Auto-key keys intent: a channel whose value the transaction left
+      // unchanged must not gain a control point (that would change the
+      // interpolation shape for a property the user never touched).
+      if (document !== undefined) {
+        const before = document.nodes[nodeId]?.transform;
+        if (
+          before !== undefined &&
+          channelValuesEqual(
+            channelValue(before, channel),
+            channelValue(payload.transform, channel),
+          )
+        ) {
+          continue;
+        }
+      }
       const parked = track.keyframes.find((keyframe) => keyframe.time === time);
+      // One allocation per key: the command id derives from the keyframe
+      // id, so the allocator is never called twice for the same key.
+      const keyframeIdValue =
+        parked?.keyframeId ?? nextKeyframeId(track.trackId);
       keyCommands.push(
-        setKeyframeCommand(keyframeCommandId(nextKeyframeId(track.trackId)), {
+        setKeyframeCommand(keyframeCommandId(keyframeIdValue), {
           animationId: clip.animationId,
           trackId: track.trackId,
-          keyframeId: parked?.keyframeId ?? nextKeyframeId(track.trackId),
+          keyframeId: keyframeIdValue,
           time: parked?.time ?? time,
-          property: channelProperty(first.property.channel, payload.transform),
+          property: buildChannelProperty(
+            channel,
+            channelValue(payload.transform, channel),
+          ),
         }),
       );
     }

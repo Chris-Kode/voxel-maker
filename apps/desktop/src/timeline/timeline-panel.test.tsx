@@ -357,6 +357,30 @@ describe("timeline panel", () => {
     mounted.unmount();
   });
 
+  it("removes a track through its row button", () => {
+    const mounted = mountPanel(true);
+    const { composition } = mounted;
+    act(() => {
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL, ARM], "rotation"),
+      ).toBeUndefined();
+    });
+    expect(composition.timeline.state.tracks).toHaveLength(2);
+    const remove = mounted.panel.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove track for Wheel"]',
+    );
+    if (remove === null) throw new Error("no remove-track button");
+    act(() => {
+      remove.click();
+    });
+    expect(composition.timeline.state.tracks).toHaveLength(1);
+    expect(composition.timeline.state.tracks[0]?.nodeName).toBe("Arm");
+    mounted.unmount();
+  });
+
   it("toggles auto-key mode with a clear pressed indication", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;

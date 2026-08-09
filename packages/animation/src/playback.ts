@@ -69,7 +69,7 @@ export interface PlaybackController {
    * (evaluation is a pure projection of the current snapshot). Loading a
    * clip rewinds the transport to zero and keeps the stopped/paused state.
    */
-  load(document: VoxelDocument, clip: AnimationDescriptor | null): void;
+  load(document: VoxelDocument | null, clip: AnimationDescriptor | null): void;
   /**
    * Refreshes the document snapshot without rewinding or changing
    * transport state. The timeline controller calls it after every commit

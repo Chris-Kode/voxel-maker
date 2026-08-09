@@ -491,6 +491,29 @@ describe("timeline controller", () => {
     timeline.dispose();
   });
 
+  it("prunes the clip selection when the clip vanishes via undo", () => {
+    const session = makeSession();
+    const timeline = controller(session);
+    openFixture(timeline, session);
+    timeline.createClip("spin", 2, "loop");
+    expect(state(timeline).selectedClipId).toBeDefined();
+    // Undo the create-clip transaction: the clip disappears from the
+    // document, so the runtime selection must follow (ARCHITECTURE.md
+    // "Editor interaction" selection pruning).
+    expect(timeline.undo()).toBeUndefined();
+    const s = state(timeline);
+    expect(s.selectedClipId).toBeUndefined();
+    expect(s.selectedClip).toBeUndefined();
+    expect(s.selectedTrackIds).toEqual([]);
+    expect(s.selectedKeyframeIds).toEqual([]);
+    // Redo restores the clip but NOT the selection (selection is runtime
+    // state; it never resurrects itself from history).
+    expect(timeline.redo()).toBeUndefined();
+    expect(state(timeline).clips).toHaveLength(1);
+    expect(state(timeline).selectedClipId).toBeUndefined();
+    timeline.dispose();
+  });
+
   it("refreshes the playback snapshot after document commits", () => {
     const session = makeSession();
     const timeline = controller(session);

@@ -890,6 +890,20 @@ body {
   width: 62px;
 }
 
+.timeline-track-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.timeline-track-remove:hover {
+  color: var(--error, #e06c75);
+}
+
 .timeline-lanes {
   position: relative;
   flex: 1;

@@ -27,7 +27,12 @@ export {
   type TimelineStore,
   type TimelineStoreSnapshot,
 } from "./timeline.js";
-export { buildAutoKeyCommands, type AutoKeyOptions } from "./auto-key.js";
+export {
+  buildAutoKeyCommands,
+  buildChannelProperty,
+  type AutoKeyOptions,
+  type TrackChannel,
+} from "./auto-key.js";
 export {
   countMaterialUsage,
   defaultNewMaterialPayload,

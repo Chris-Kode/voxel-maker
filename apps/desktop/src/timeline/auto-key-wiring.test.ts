@@ -208,6 +208,20 @@ describe("auto-key transform wiring", () => {
     ).toBeUndefined();
     timeline.scrub(0.5);
 
+    // A rotation track for the same node with a parked key: a translate
+    // drag must NOT gain a rotation control point (auto-key keys only the
+    // channels the edit changed).
+    expect(timeline.addTracks([CHILD], "rotation")).toBeUndefined();
+    const rotationTrackId = timeline.state.tracks[1]?.track.trackId;
+    if (rotationTrackId === undefined)
+      throw new Error("missing rotation track");
+    expect(
+      timeline.setKeyframe(rotationTrackId, 0, {
+        channel: "rotation",
+        value: [0, 0, 0, 1],
+      }),
+    ).toBeUndefined();
+
     // Manual mode: the drag touches only base state.
     const before =
       composition.session.current?.store.getDocument().nodes[CHILD]?.transform
@@ -232,6 +246,13 @@ describe("auto-key transform wiring", () => {
     const clip = timeline.state.selectedClip;
     if (clip === undefined) throw new Error("clip missing");
     expect(clip.tracks[0]?.keyframes).toHaveLength(2);
+    // The rotation track gained NO key at the playhead: the drag changed
+    // translation only, so auto-key left the rotation interpolation alone.
+    const rotationTrack = clip.tracks[1];
+    expect(rotationTrack?.keyframes).toHaveLength(1);
+    expect(
+      rotationTrack?.keyframes.some((keyframe) => keyframe.time === 0.5),
+    ).toBe(false);
     const keyed = clip.tracks[0]?.keyframes.find(
       (keyframe) => keyframe.time === 0.5,
     );

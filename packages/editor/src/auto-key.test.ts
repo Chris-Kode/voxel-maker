@@ -6,7 +6,7 @@ import {
   nodeId,
   trackId,
 } from "@voxel-maker/shared";
-import type { AnimationDescriptor } from "@voxel-maker/model";
+import { createDocument, type AnimationDescriptor } from "@voxel-maker/model";
 import {
   setNodeTransformCommand,
   setKeyframeCommand,
@@ -189,6 +189,171 @@ describe("buildAutoKeyCommands", () => {
     const key = keyPayload(commands[0]);
     if (key === undefined) throw new Error("unexpected command list");
     expect(key.trackId).toBe(ROT_TRACK);
+  });
+
+  it("keys fresh tracks through the channelFor resolver", () => {
+    const commands = buildAutoKeyCommands(
+      [
+        setNodeTransformCommand(commandId("command:autokey:move:0009"), {
+          nodeId: WHEEL,
+          transform: { ...IDENTITY, translation: [5, 0, 0] },
+        }),
+      ],
+      {
+        clip: clip(),
+        time: 1,
+        nextKeyframeId: (track) => keyframeId(`keyframe:autokey:new:${track}`),
+        // The timeline remembers the channel chosen at track creation.
+        channelFor: (track) =>
+          track === EMPTY_TRACK ? "translation" : undefined,
+      },
+    );
+    const key = keyPayload(
+      commands.find(
+        (command) =>
+          command.type === "keyframe.set" &&
+          (command.payload as { trackId?: string }).trackId === EMPTY_TRACK,
+      ),
+    );
+    if (key === undefined) throw new Error("expected an empty-track key");
+    expect(key.trackId).toBe(EMPTY_TRACK);
+    expect(key.property.channel).toBe("translation");
+    expect(key.property.value).toEqual([5, 0, 0]);
+  });
+
+  it("skips channels the transaction did not change (document given)", () => {
+    const document = createDocument({
+      documentId: "document:autokey:0002" as never,
+      metadata: { title: "auto-key changed channels" },
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [WHEEL, ARM],
+          transform: IDENTITY,
+          components: [],
+        },
+        {
+          nodeId: WHEEL,
+          name: "Wheel",
+          parentId: ROOT,
+          children: [],
+          transform: { ...IDENTITY, rotation: [0, 0, 0, 1] },
+          components: [],
+        },
+        {
+          nodeId: ARM,
+          name: "Arm",
+          parentId: ROOT,
+          children: [],
+          transform: IDENTITY,
+          components: [],
+        },
+      ],
+    });
+    // A translation-only drag on WHEEL: the rotation track must NOT gain
+    // a control point because the drag did not change the rotation.
+    const commands = buildAutoKeyCommands(
+      [
+        setNodeTransformCommand(commandId("command:autokey:move:0010"), {
+          nodeId: WHEEL,
+          transform: { ...IDENTITY, translation: [3, 0, 0] },
+        }),
+      ],
+      {
+        clip: clip(),
+        time: 1,
+        document,
+        nextKeyframeId: (track) => keyframeId(`keyframe:autokey:new:${track}`),
+      },
+    );
+    expect(commands).toEqual([]);
+    // The same drag on ARM (translation track) still keys.
+    const armCommands = buildAutoKeyCommands(
+      [
+        setNodeTransformCommand(commandId("command:autokey:move:0011"), {
+          nodeId: ARM,
+          transform: { ...IDENTITY, translation: [3, 0, 0] },
+        }),
+      ],
+      {
+        clip: clip(),
+        time: 1,
+        document,
+        nextKeyframeId: (track) => keyframeId(`keyframe:autokey:new:${track}`),
+      },
+    );
+    expect(armCommands).toHaveLength(1);
+    const key = keyPayload(armCommands[0]);
+    if (key === undefined) throw new Error("unexpected command list");
+    expect(key.trackId).toBe(POS_TRACK);
+    expect(key.property.value).toEqual([3, 0, 0]);
+  });
+
+  it("treats quaternion sign flips as unchanged channels", () => {
+    const document = createDocument({
+      documentId: "document:autokey:0003" as never,
+      metadata: { title: "auto-key quaternion sign" },
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [WHEEL],
+          transform: IDENTITY,
+          components: [],
+        },
+        {
+          nodeId: WHEEL,
+          name: "Wheel",
+          parentId: ROOT,
+          children: [],
+          transform: { ...IDENTITY, rotation: [0, 0, 0, 1] },
+          components: [],
+        },
+      ],
+    });
+    const commands = buildAutoKeyCommands(
+      [
+        setNodeTransformCommand(commandId("command:autokey:move:0012"), {
+          nodeId: WHEEL,
+          transform: { ...IDENTITY, rotation: [0, 0, 0, -1] },
+        }),
+      ],
+      {
+        clip: clip(),
+        time: 1,
+        document,
+        nextKeyframeId: (track) => keyframeId(`keyframe:autokey:new:${track}`),
+      },
+    );
+    expect(commands).toEqual([]);
+  });
+
+  it("allocates exactly one keyframe id per created key", () => {
+    let allocations = 0;
+    const commands = buildAutoKeyCommands(transformCommands(), {
+      clip: clip(),
+      time: 1.5,
+      nextKeyframeId: (track) => {
+        allocations += 1;
+        return keyframeId(`keyframe:autokey:new:${track}`);
+      },
+    });
+    expect(allocations).toBe(2);
+    const first = keyPayload(commands[0]);
+    const second = keyPayload(commands[1]);
+    if (first === undefined || second === undefined) {
+      throw new Error("unexpected command list");
+    }
+    // The command ids derive from the allocated keyframe ids.
+    expect(commands[0]?.id).toBe(`command:autokey:${String(first.keyframeId)}`);
+    expect(commands[1]?.id).toBe(
+      `command:autokey:${String(second.keyframeId)}`,
+    );
   });
 
   it("clamps the key time into the clip duration", () => {

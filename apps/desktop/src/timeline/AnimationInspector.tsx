@@ -43,9 +43,14 @@ const CHANNEL_LABELS: Readonly<Record<TrackChannel, string>> = {
   scale: "Scale",
 };
 
-function channelOf(property: TrackProperty): TrackChannel {
-  return property.channel;
-}
+/** One parser per channel: the keyframe value editors share one switch. */
+const PARSERS: Readonly<Record<TrackChannel, (text: string) => Quat | Vec3>> = {
+  translation: (text) => parseVec3Input(text, "translation"),
+  rotation: parseRotationDegreesInput,
+  scale: parseScaleInput,
+};
+
+const AXES = ["X", "Y", "Z"] as const;
 
 export function AnimationInspector({
   controller,
@@ -129,19 +134,10 @@ export function AnimationInspector({
     if (single === undefined) return;
     try {
       const property = single.keyframe.property;
-      const text = values.join(", ");
-      const value =
-        property.channel === "rotation"
-          ? parseRotationDegreesInput(text)
-          : property.channel === "scale"
-            ? parseScaleInput(text)
-            : parseVec3Input(text, "translation");
-      const nextProperty: TrackProperty =
-        property.channel === "rotation"
-          ? { channel: "rotation", value: value as Quat }
-          : property.channel === "scale"
-            ? { channel: "scale", value: value as Vec3 }
-            : { channel: "translation", value: value as Vec3 };
+      const nextProperty: TrackProperty = {
+        channel: property.channel,
+        value: PARSERS[property.channel](values.join(", ")),
+      } as TrackProperty;
       report(
         controller.setKeyframe(
           single.trackId,
@@ -155,13 +151,6 @@ export function AnimationInspector({
       setError(message);
       editor.pushNotice("error", message);
     }
-  };
-
-  const label = (index: number): string => {
-    if (single === undefined) return String(index);
-    return single.keyframe.property.channel === "rotation"
-      ? (["X", "Y", "Z"][index] ?? String(index))
-      : (["X", "Y", "Z"][index] ?? String(index));
   };
 
   return (
@@ -246,12 +235,12 @@ export function AnimationInspector({
             <fieldset className="keyframe-editor">
               <legend>
                 Keyframe at {single.keyframe.time.toFixed(2)}s ·{" "}
-                {CHANNEL_LABELS[channelOf(single.keyframe.property)]}
+                {CHANNEL_LABELS[single.keyframe.property.channel]}
               </legend>
               <div className="keyframe-values">
                 {values.map((value, index) => (
-                  <label key={label(index)} className="field">
-                    <span>{label(index)}</span>
+                  <label key={AXES[index] ?? String(index)} className="field">
+                    <span>{AXES[index] ?? String(index)}</span>
                     <input
                       value={value}
                       onChange={(event) => {

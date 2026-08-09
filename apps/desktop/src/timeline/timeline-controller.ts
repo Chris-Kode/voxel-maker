@@ -39,12 +39,19 @@ import {
   type PlaybackClock,
 } from "@voxel-maker/animation";
 import {
+  TIMELINE_DEFAULT_SNAP_INCREMENT,
+  TIMELINE_DEFAULT_ZOOM,
   buildAutoKeyCommands,
+  buildChannelProperty,
   createTimelineStore,
   snapTime,
   type EditorStore,
   type KeyMode,
+  type TrackChannel,
 } from "@voxel-maker/editor";
+
+/** The animatable transform channels (plan S10.1). */
+export type { TrackChannel };
 import type { DocumentSession } from "@voxel-maker/session";
 
 /**
@@ -64,9 +71,6 @@ import type { DocumentSession } from "@voxel-maker/session";
  * keep their chosen channel in runtime-only `#pendingChannels` until a
  * keyframe pins it.
  */
-
-/** The animatable transform channels (plan S10.1). */
-export type TrackChannel = "translation" | "rotation" | "scale";
 
 /** One track row: the committed track plus its node's display name. */
 export interface TrackEntry {
@@ -221,10 +225,10 @@ function emptyState(): TimelineControllerState {
     playing: false,
     stopped: true,
     loopOverride: false,
-    zoom: 100,
+    zoom: TIMELINE_DEFAULT_ZOOM,
     scrollSeconds: 0,
     snapEnabled: true,
-    snapIncrement: 0.1,
+    snapIncrement: TIMELINE_DEFAULT_SNAP_INCREMENT,
     keyMode: "manual",
     canUndo: false,
     canRedo: false,
@@ -243,7 +247,7 @@ export function createTimelineController(
   let commandSequence = 0;
   let transactionSequence = 0;
   /** Fresh ids for authored clips/tracks/keyframes. */
-  let keyframeSequence = 0;
+  let idSequence = 0;
   /** Runtime-only channel intent for tracks whose channel is not pinned. */
   const pendingChannels = new Map<TrackId, TrackChannel>();
   let unsubscribeStore: (() => void) | undefined;
@@ -276,8 +280,8 @@ export function createTimelineController(
   const freshId = (prefix: string): string => {
     let candidate: string;
     do {
-      keyframeSequence += 1;
-      candidate = `${prefix}:${String(keyframeSequence)}`;
+      idSequence += 1;
+      candidate = `${prefix}:${String(idSequence)}`;
     } while (seenIds.has(candidate));
     seenIds.add(candidate);
     return candidate;
@@ -326,7 +330,19 @@ export function createTimelineController(
           ? 1
           : 0,
     );
-    const selectedClipId = timeline.snapshot().selectedClipId;
+    // Selection pruning (ARCHITECTURE.md "Editor interaction"): when the
+    // selected clip vanishes from the document (undo of create-clip,
+    // external deletion), the runtime selection follows. The re-entrant
+    // notify terminates because the cleared selection stops matching.
+    const view = timeline.snapshot();
+    if (
+      view.selectedClipId !== undefined &&
+      document.animations[view.selectedClipId] === undefined
+    ) {
+      timeline.selectClip(undefined);
+      return;
+    }
+    const selectedClipId = view.selectedClipId;
     const selectedClip =
       selectedClipId === undefined
         ? undefined
@@ -359,7 +375,7 @@ export function createTimelineController(
       )
       .map((entry) => entry.nodeId);
     const transport = playback.state;
-    const view = timeline.snapshot();
+    const viewState = timeline.snapshot();
     stateValue = {
       open: true,
       clips,
@@ -379,11 +395,11 @@ export function createTimelineController(
       playing: transport.playing,
       stopped: transport.stopped,
       loopOverride: transport.loopOverride,
-      zoom: view.zoom,
-      scrollSeconds: view.scrollSeconds,
-      snapEnabled: view.snapEnabled,
-      snapIncrement: view.snapIncrement,
-      keyMode: view.keyMode,
+      zoom: viewState.zoom,
+      scrollSeconds: viewState.scrollSeconds,
+      snapEnabled: viewState.snapEnabled,
+      snapIncrement: viewState.snapIncrement,
+      keyMode: viewState.keyMode,
       canUndo: current.bus.canUndo(),
       canRedo: current.bus.canRedo(),
     };
@@ -440,23 +456,6 @@ export function createTimelineController(
     stateValue.selectedClip?.tracks.find(
       (track) => track.trackId === trackIdValue,
     );
-
-  /** Builds the typed track property for a channel/value pair. */
-  function channelProperty(
-    channel: TrackChannel,
-    value: readonly number[],
-  ): TrackProperty {
-    if (channel === "rotation") {
-      return {
-        channel,
-        value: [...value] as unknown as [number, number, number, number],
-      };
-    }
-    return {
-      channel,
-      value: [...value] as unknown as [number, number, number],
-    };
-  }
 
   /** The transform value of a node for a channel (manual/auto keys). */
   const channelValueOf = (
@@ -582,8 +581,6 @@ export function createTimelineController(
     const commands: Command[] = [];
     for (const nodeId of nodeIds) {
       if (document.nodes[nodeId] === undefined) continue;
-      // Skip a track that already exists for the node (one per node).
-      if (clip.tracks.some((track) => track.targetNodeId === nodeId)) continue;
       const id = nextTrackId();
       fresh.push(id);
       commands.push(
@@ -683,7 +680,7 @@ export function createTimelineController(
       }
       const current = session.current;
       if (current === undefined) return fail(notOpen());
-      resolved = channelProperty(
+      resolved = buildChannelProperty(
         channel,
         channelValueOf(
           current.store.getDocument(),
@@ -765,7 +762,7 @@ export function createTimelineController(
           trackId: track.trackId,
           keyframeId: keyframeIdValue,
           time: parked?.time ?? time,
-          property: channelProperty(
+          property: buildChannelProperty(
             channel,
             channelValueOf(document, track.targetNodeId, channel),
           ),
@@ -848,12 +845,19 @@ export function createTimelineController(
     ) {
       return commands;
     }
+    // The store is still the PRE-commit snapshot here (the transaction
+    // has not executed), so it carries the exact pre-edit transforms the
+    // changed-channel check needs.
+    const document = session.current?.store.getDocument();
     return [
       ...commands,
       ...buildAutoKeyCommands(commands, {
         clip: stateValue.selectedClip,
         time: boundTime(playback.state.time),
         nextKeyframeId,
+        ...(document === undefined ? {} : { document }),
+        // Fresh tracks remember the channel chosen at creation time.
+        channelFor: (trackIdValue) => pendingChannels.get(trackIdValue),
       }),
     ];
   };
@@ -887,7 +891,7 @@ export function createTimelineController(
       unsubscribeStore?.();
       unsubscribeStore = undefined;
       currentDocument = null;
-      playback.load(undefined as never, null);
+      playback.load(null, null);
       timeline.selectClip(undefined);
     }
     refresh();

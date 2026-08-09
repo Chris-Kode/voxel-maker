@@ -172,10 +172,10 @@ export function TimelinePanel({
         : [...selected, keyframeIdValue]
       : [keyframeIdValue];
     controller.selectKeyframes(nextSelection);
-    // Resolve the drag origins from the committed clip state (the fresh
-    // selection is authoritative even before the re-render lands).
+    // Resolve the drag origins from the live committed clip state (the
+    // fresh selection is authoritative even before the re-render lands).
     const originals = nextSelection.flatMap((id) => {
-      for (const track of state.selectedClip?.tracks ?? []) {
+      for (const track of controller.state.selectedClip?.tracks ?? []) {
         const keyframe = track.keyframes.find(
           (candidate) => candidate.keyframeId === id,
         );
@@ -191,16 +191,6 @@ export function TimelinePanel({
       }
       return [];
     });
-    console.log(
-      "DBG pointerdown",
-      keyframeIdValue,
-      "multi",
-      event.shiftKey,
-      "next",
-      JSON.stringify(nextSelection),
-      "originals",
-      JSON.stringify(originals),
-    );
     const session = {
       startX: event.clientX,
       lastX: event.clientX,
@@ -521,6 +511,17 @@ export function TimelinePanel({
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    className="timeline-track-remove"
+                    aria-label={`Remove track for ${entry.nodeName}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      report(controller.removeTrack(entry.track.trackId));
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               ))
             )}
