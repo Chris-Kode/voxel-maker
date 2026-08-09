@@ -90,6 +90,8 @@ const MANIFEST: SkillManifest = {
   version: "1.0.0",
   description:
     "Creation skill for representative four-legged animals: body, head, four legs, and a tail built from generic symmetry and limb-chain generators.",
+
+  kind: "creation",
   category: "quadruped",
   instructions: INSTRUCTIONS,
   allowedTools: CREATION_TOOLS,

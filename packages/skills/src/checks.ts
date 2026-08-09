@@ -203,6 +203,37 @@ const NODE_COUNT_OPTIONS_SCHEMA: JsonSchema = {
   required: ["min", "max"],
 };
 
+/** Duration bounds of one animation-duration check (fractional seconds). */
+const DURATION_OPTIONS_SCHEMA: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    min: { type: "number", minimum: 0, maximum: 1_000_000 },
+    max: { type: "number", minimum: 0, maximum: 1_000_000 },
+  },
+  required: ["min", "max"],
+};
+
+/** Loop-policy option of one animation-loop-policy check. */
+const LOOP_POLICY_OPTIONS_SCHEMA: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    policy: { type: "string", enum: ["once", "loop"] },
+  },
+  required: ["policy"],
+};
+
+/** Node-presence option (fixture node ids are bounded plain strings). */
+const NODE_PRESENT_OPTIONS_SCHEMA: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    nodeId: { type: "string", minLength: 1, maxLength: 128 },
+  },
+  required: ["nodeId"],
+};
+
 const NO_OPTIONS_SCHEMA: JsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -405,7 +436,251 @@ export const STRUCTURAL_CHECKS: readonly StructuralCheckDefinition[] =
         };
       },
     },
+    {
+      name: "pivot-count-in-range",
+      description:
+        "Nodes carrying a pivot component stay within the declared inclusive count range.",
+      optionSchema: NODE_COUNT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = intOption(record, "min", 0);
+        const max = intOption(record, "max", 0);
+        const count = nodeComponentCount(store, "pivot");
+        return {
+          name: "pivot-count-in-range",
+          passed: count >= min && count <= max,
+          evidence: `pivots=${String(count)} expected [${String(min)},${String(max)}]`,
+        };
+      },
+    },
+    {
+      name: "joint-count-in-range",
+      description:
+        "Nodes carrying a joint component stay within the declared inclusive count range.",
+      optionSchema: NODE_COUNT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = intOption(record, "min", 0);
+        const max = intOption(record, "max", 0);
+        const count = nodeComponentCount(store, "joint");
+        return {
+          name: "joint-count-in-range",
+          passed: count >= min && count <= max,
+          evidence: `joints=${String(count)} expected [${String(min)},${String(max)}]`,
+        };
+      },
+    },
+    {
+      name: "constraint-count-in-range",
+      description:
+        "Nodes carrying a constraint component stay within the declared inclusive count range.",
+      optionSchema: NODE_COUNT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = intOption(record, "min", 0);
+        const max = intOption(record, "max", 0);
+        const count = nodeComponentCount(store, "constraint");
+        return {
+          name: "constraint-count-in-range",
+          passed: count >= min && count <= max,
+          evidence: `constraints=${String(count)} expected [${String(min)},${String(max)}]`,
+        };
+      },
+    },
+    {
+      name: "parented-node-count-in-range",
+      description:
+        "Nodes with a parent (hierarchy edges) stay within the declared inclusive count range.",
+      optionSchema: NODE_COUNT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = intOption(record, "min", 0);
+        const max = intOption(record, "max", 0);
+        const count = Object.values(store.getDocument().nodes).filter(
+          (node) => node.parentId !== null,
+        ).length;
+        return {
+          name: "parented-node-count-in-range",
+          passed: count >= min && count <= max,
+          evidence: `parented=${String(count)} expected [${String(min)},${String(max)}]`,
+        };
+      },
+    },
+    {
+      name: "node-present",
+      description: "The declared fixture node exists in the document.",
+      optionSchema: NODE_PRESENT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const nodeIdValue = record.nodeId as string;
+        const nodes = store.getDocument().nodes;
+        const present =
+          typeof nodeIdValue === "string" &&
+          Object.prototype.hasOwnProperty.call(nodes, nodeIdValue);
+        return {
+          name: "node-present",
+          passed: present,
+          evidence: present ? "node present" : `node missing ${nodeIdValue}`,
+        };
+      },
+    },
+    {
+      name: "animation-count-in-range",
+      description:
+        "Animations (clips) of the document stay within the declared inclusive count range.",
+      optionSchema: NODE_COUNT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = intOption(record, "min", 0);
+        const max = intOption(record, "max", 0);
+        const count = Object.keys(store.getDocument().animations).length;
+        return {
+          name: "animation-count-in-range",
+          passed: count >= min && count <= max,
+          evidence: `animations=${String(count)} expected [${String(min)},${String(max)}]`,
+        };
+      },
+    },
+    {
+      name: "track-count-in-range",
+      description:
+        "Animation tracks of the document stay within the declared inclusive count range.",
+      optionSchema: NODE_COUNT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = intOption(record, "min", 0);
+        const max = intOption(record, "max", 0);
+        const count = totalTracks(store);
+        return {
+          name: "track-count-in-range",
+          passed: count >= min && count <= max,
+          evidence: `tracks=${String(count)} expected [${String(min)},${String(max)}]`,
+        };
+      },
+    },
+    {
+      name: "keyframe-count-in-range",
+      description:
+        "Animation keyframes of the document stay within the declared inclusive count range.",
+      optionSchema: NODE_COUNT_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = intOption(record, "min", 0);
+        const max = intOption(record, "max", 0);
+        const count = totalKeyframes(store);
+        return {
+          name: "keyframe-count-in-range",
+          passed: count >= min && count <= max,
+          evidence: `keyframes=${String(count)} expected [${String(min)},${String(max)}]`,
+        };
+      },
+    },
+    {
+      name: "animation-duration-in-range",
+      description:
+        "The document has at least one animation and every animation duration stays within the declared inclusive range (looping endpoint policy: a looped clip must return to its start value at its duration, so the duration is part of the fixed motion contract).",
+      optionSchema: DURATION_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const min = numberOption(record, "min", 0);
+        const max = numberOption(record, "max", 0);
+        const animations = Object.values(store.getDocument().animations);
+        const inRange = animations.every(
+          (animation) => animation.duration >= min && animation.duration <= max,
+        );
+        const passed = animations.length > 0 && inRange;
+        return {
+          name: "animation-duration-in-range",
+          passed,
+          evidence: passed
+            ? `durations within [${String(min)},${String(max)}]`
+            : animations.length === 0
+              ? "no animations"
+              : "duration out of range",
+        };
+      },
+    },
+    {
+      name: "animation-loop-policy",
+      description:
+        "The document has at least one animation and every animation uses the declared loop policy.",
+      optionSchema: LOOP_POLICY_OPTIONS_SCHEMA,
+      run(store, options, context) {
+        void context;
+        const record = options as Readonly<Record<string, unknown>>;
+        const policy = record.policy as string;
+        const animations = Object.values(store.getDocument().animations);
+        const allMatch = animations.every(
+          (animation) => animation.loop === policy,
+        );
+        const passed = animations.length > 0 && allMatch;
+        return {
+          name: "animation-loop-policy",
+          passed,
+          evidence: passed
+            ? `all animations loop=${policy}`
+            : animations.length === 0
+              ? "no animations"
+              : `loop policy mismatch (want ${policy})`,
+        };
+      },
+    },
   ]);
+
+/** Counts nodes carrying at least one component of the given kind. */
+function nodeComponentCount(
+  store: DocumentStoreRead,
+  kind: "pivot" | "joint" | "constraint",
+): number {
+  let count = 0;
+  for (const node of Object.values(store.getDocument().nodes)) {
+    if (node.components.some((component) => component.kind === kind)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/** Total animation tracks across every animation of the document. */
+function totalTracks(store: DocumentStoreRead): number {
+  let count = 0;
+  for (const animation of Object.values(store.getDocument().animations)) {
+    count += animation.tracks.length;
+  }
+  return count;
+}
+
+/** Total keyframes across every track of every animation. */
+function totalKeyframes(store: DocumentStoreRead): number {
+  let count = 0;
+  for (const animation of Object.values(store.getDocument().animations)) {
+    for (const track of animation.tracks) {
+      count += track.keyframes.length;
+    }
+  }
+  return count;
+}
+
+/** Reads a bounded non-negative number option. */
+function numberOption(
+  options: Readonly<Record<string, unknown>>,
+  key: string,
+  defaultValue: number,
+): number {
+  const value = options[key] ?? defaultValue;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : defaultValue;
+}
 
 /** Looks up one structural check definition by name. */
 export function structuralCheckByName(

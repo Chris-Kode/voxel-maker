@@ -89,6 +89,8 @@ const MANIFEST: SkillManifest = {
   version: "1.0.0",
   description:
     "Creation skill for representative humanoid figures: head, torso, arms, and legs built from generic symmetry and limb-chain generators.",
+
+  kind: "creation",
   category: "humanoid",
   instructions: INSTRUCTIONS,
   allowedTools: CREATION_TOOLS,

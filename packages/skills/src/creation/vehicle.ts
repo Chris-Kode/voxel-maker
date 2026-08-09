@@ -86,6 +86,8 @@ const MANIFEST: SkillManifest = {
   version: "1.0.0",
   description:
     "Creation skill for representative vehicles: wheeled carts and cars with body, cabin, and wheels built from generic symmetry and wheel generators.",
+
+  kind: "creation",
   category: "vehicle",
   instructions: INSTRUCTIONS,
   allowedTools: CREATION_TOOLS,

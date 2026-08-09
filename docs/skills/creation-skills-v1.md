@@ -4,13 +4,19 @@
 
 The creation-skill catalog ships removable, versioned domain knowledge
 for building representative asset categories with the generic engine. It
-lives in the `@voxel-maker/skills` package (plan S14) and contains:
+lives in the `@voxel-maker/skills` package (plan S14) together with the
+rigging and motion catalogs (ticket #39, see
+[`rigging-motion-skills-v1.md`](./rigging-motion-skills-v1.md)) and
+contains:
 
-- the **skill manifest** contract and validator (`src/manifest.ts`);
+- the **skill manifest** contract and validator (`src/manifest.ts`) —
+  every skill has a `kind` (`creation`, `rigging`, or `motion`) and a
+  kind-scoped category;
 - the **creation-skill registry** (`src/skill-registry.ts`) — seven v1
   skills: furniture, architecture, vegetation, vehicle, humanoid,
   quadruped, and flying creature;
-- the **generic structural-check registry** (`src/checks.ts`);
+- the **generic structural-check registry** (`src/checks.ts`) — voxel
+  checks plus the rig-state and animation-state checks of ticket #39;
 - the **capability check** (`src/capabilities.ts`) that decides whether a
   skill is usable under an authorized tool-capability set;
 - the **visual-baseline** and **efficiency-limit** evaluators
@@ -31,13 +37,14 @@ One skill manifest is a frozen JSON object:
 | `name` | Stable unique name `skill.<kebab-case>` | ≤ 64 chars, pattern-enforced |
 | `version` | Skill definition version `major.minor.patch` | ≤ 32 chars, pattern-enforced |
 | `description` | Short description | 1..512 chars |
-| `category` | Asset category | one of the seven v1 categories |
+| `kind` | Knowledge kind | `creation`, `rigging`, or `motion` |
+| `category` | Asset category within the kind | one of the kind's categories (creation: the seven below; rigging: `biped`, `quadruped`, `wings`, `mechanical-linkage`; motion: `walk`, `run`, `jump`, `idle`, `fly`, `mechanical`) |
 | `instructions` | Fixed instructions the agent runs under | 1..16384 chars |
 | `allowedTools` | Allowed agent tool names | non-empty, unique, all registered |
-| `generators` | Compatible generator names | non-empty, unique, all registered |
+| `generators` | Compatible generator names | creation: non-empty, unique, all registered; rigging/motion: must be empty (their knowledge is tool recipes, not geometry proposals) |
 | `constraints` | Hard caps (rounds/tool calls/commands per run, commands/voxels per proposal) | integers 1..hard engine cap (ADR-0009) |
 | `provenance` | Author, source, license, created date | non-empty, bounded, ISO date |
-| `evaluation` | Scenario id, fixed prompt, structural checks, visual baselines, efficiency limits | see below |
+| `evaluation` | Scenario id, optional fixture id (required for rigging/motion), fixed prompt, structural checks, visual baselines (required for creation, must be empty for rigging/motion), efficiency limits | see below |
 
 The validator (`validateSkillManifest`) checks every dimension with its
 own stable error code, so a registry failure names the broken field:
@@ -79,6 +86,16 @@ by an explicit region in the options (extent per axis ≤ 2048, volume ≤
 | `material-present` | — | the document contains the skill target material |
 | `node-count-in-range` | `min`, `max` | document node count stays within `[min, max]` |
 | `symmetric-along-axis` | `axis`, `plane`, `region` | occupancy in the region is mirror-symmetric across the plane; a mirror twin outside the region is always a mismatch, so the verdict never reads occupancy outside the scan region |
+| `pivot-count-in-range` | `min`, `max` | nodes carrying a pivot component stay in range (ticket #39) |
+| `joint-count-in-range` | `min`, `max` | nodes carrying a joint component stay in range (ticket #39) |
+| `constraint-count-in-range` | `min`, `max` | nodes carrying a constraint component stay in range (ticket #39) |
+| `parented-node-count-in-range` | `min`, `max` | nodes with a parent stay in range (ticket #39) |
+| `node-present` | `nodeId` | the declared fixture node exists (ticket #39) |
+| `animation-count-in-range` | `min`, `max` | animations (clips) stay in range (ticket #39) |
+| `track-count-in-range` | `min`, `max` | animation tracks stay in range (ticket #39) |
+| `keyframe-count-in-range` | `min`, `max` | animation keyframes stay in range (ticket #39) |
+| `animation-duration-in-range` | `min`, `max` | at least one animation exists and every duration stays in range (ticket #39) |
+| `animation-loop-policy` | `policy` | at least one animation exists and every animation uses the declared loop policy (ticket #39) |
 
 `runStructuralChecks(checks, store, context)` executes a skill's checks
 against a store and returns frozen pass/fail evidence. Check options are

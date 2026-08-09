@@ -2,19 +2,31 @@ import { WorkspaceError, type JsonValue } from "@voxel-maker/shared";
 import { validateStructuralCheck } from "./checks.js";
 
 /**
- * Versioned creation-skill manifest (plan S14.1, ticket #38): the
+ * Versioned skill manifest (plan S14.1, tickets #38 and #39): the
  * removable, versioned domain-knowledge envelope above the generic
- * engine. One manifest names the skill, its fixed instructions, the
- * allowed agent tools, the compatible generators, hard constraints,
+ * engine. One manifest names the skill, its knowledge kind (creation,
+ * rigging, or motion), the fixed instructions, the allowed agent tools,
+ * the compatible generators (creation skills), hard constraints,
  * provenance, and the fixed evaluation metadata (scenario prompt,
- * structural checks, visual baselines, command/tool efficiency limits).
- * A manifest is plain JSON-safe data: it is validated and deep-frozen at
- * registration time, never mutated afterwards, and never required by any
- * saved document (plan S14.9).
+ * fixture reference, structural/rig/animation checks, visual baselines,
+ * command/tool efficiency limits). A manifest is plain JSON-safe data:
+ * it is validated and deep-frozen at registration time, never mutated
+ * afterwards, and never required by any saved document (plan S14.9).
  */
 
 /** Schema version of the v1 skill manifest contract. */
 export const SKILL_MANIFEST_VERSION = 1;
+
+/**
+ * Knowledge kinds of the v1 skill catalog. Creation skills propose
+ * generic voxel/region geometry; rigging skills articulate assets with
+ * the generic hierarchy/pivot/joint/constraint surface only; motion
+ * skills animate rigged assets with the generic clips/tracks/keyframes
+ * surface only (plan S14.6-S14.8, ticket #39 AC).
+ */
+export const SKILL_KINDS = ["creation", "rigging", "motion"] as const;
+
+export type SkillKind = (typeof SKILL_KINDS)[number];
 
 /** Asset categories the v1 creation skills cover (plan S14.6). */
 export const SKILL_CATEGORIES = [
@@ -28,6 +40,43 @@ export const SKILL_CATEGORIES = [
 ] as const;
 
 export type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+
+/** Rig categories the v1 rigging skills cover (plan S14.7, ticket #39). */
+export const RIGGING_CATEGORIES = [
+  "biped",
+  "quadruped",
+  "wings",
+  "mechanical-linkage",
+] as const;
+
+export type RiggingCategory = (typeof RIGGING_CATEGORIES)[number];
+
+/** Motion categories the v1 motion skills cover (plan S14.8, ticket #39). */
+export const MOTION_CATEGORIES = [
+  "walk",
+  "run",
+  "jump",
+  "idle",
+  "fly",
+  "mechanical",
+] as const;
+
+export type MotionCategory = (typeof MOTION_CATEGORIES)[number];
+
+/** Every category of every knowledge kind (kind -> category set). */
+export const CATEGORIES_BY_KIND: Readonly<
+  Record<SkillKind, readonly string[]>
+> = Object.freeze({
+  creation: SKILL_CATEGORIES,
+  rigging: RIGGING_CATEGORIES,
+  motion: MOTION_CATEGORIES,
+});
+
+/** Any skill category of any knowledge kind. */
+export type SkillCategoryOfKind =
+  | SkillCategory
+  | RiggingCategory
+  | MotionCategory;
 
 /** Provenance of one skill (plan S14.9): where the knowledge came from. */
 export interface SkillProvenance {
@@ -111,9 +160,17 @@ export interface SkillEfficiencyLimits {
 export interface SkillEvaluationMetadata {
   /** Stable id of the fixed evaluation scenario of the skill. */
   readonly scenarioId: string;
+  /**
+   * Stable id of the fixed evaluation fixture of the skill (plan
+   * S14.10, ticket #39): rigging and motion skills are evaluated
+   * against deterministic fixture documents registered in the skills
+   * package; creation skills may also reference one. The id resolves in
+   * the fixture registry or the manifest is rejected.
+   */
+  readonly fixtureId?: string;
   /** The fixed user prompt the skill is evaluated against. */
   readonly fixedPrompt: string;
-  /** Fixed structural checks over the resulting document. */
+  /** Fixed structural/rig/animation checks over the resulting document. */
   readonly structuralChecks: readonly SkillStructuralCheck[];
   /** Fixed rendered-preview baselines of the resulting document. */
   readonly visualBaselines: readonly SkillVisualBaseline[];
@@ -121,7 +178,7 @@ export interface SkillEvaluationMetadata {
   readonly efficiency: SkillEfficiencyLimits;
 }
 
-/** One versioned creation-skill manifest (plan S14.1). */
+/** One versioned skill manifest (plan S14.1). */
 export interface SkillManifest {
   readonly manifestVersion: number;
   /** Stable skill name (`skill.<kebab-case>`), unique in the registry. */
@@ -129,12 +186,19 @@ export interface SkillManifest {
   /** Semantic version of the skill definition (`major.minor.patch`). */
   readonly version: string;
   readonly description: string;
-  readonly category: SkillCategory;
+  /** Knowledge kind of the skill (creation, rigging, or motion). */
+  readonly kind: SkillKind;
+  /** Asset category within the skill's knowledge kind. */
+  readonly category: SkillCategoryOfKind;
   /** Fixed instructions the agent runs under when the skill is active. */
   readonly instructions: string;
   /** Allowed agent tool names (subset of the registered tool surface). */
   readonly allowedTools: readonly string[];
-  /** Compatible generator names (subset of the generator registry). */
+  /**
+   * Compatible generator names (subset of the generator registry).
+   * Creation skills declare at least one; rigging and motion skills use
+   * none (their knowledge is tool recipes, not geometry proposals).
+   */
   readonly generators: readonly string[];
   readonly constraints: SkillConstraints;
   readonly provenance: SkillProvenance;
@@ -154,6 +218,7 @@ export const INVALID_SKILL_MANIFEST_CODE = "INVALID_SKILL_MANIFEST";
 export const SKILL_MANIFEST_VERSION_CODE = "SKILL_MANIFEST_VERSION_INVALID";
 export const SKILL_NAME_CODE = "SKILL_NAME_INVALID";
 export const SKILL_DESCRIPTION_CODE = "SKILL_DESCRIPTION_INVALID";
+export const SKILL_KIND_CODE = "SKILL_KIND_INVALID";
 export const SKILL_CATEGORY_CODE = "SKILL_CATEGORY_INVALID";
 export const SKILL_VERSION_CODE = "SKILL_VERSION_INVALID";
 export const SKILL_INSTRUCTIONS_CODE = "SKILL_INSTRUCTIONS_INVALID";
@@ -280,12 +345,19 @@ export function validateSkillManifest(
     });
   }
 
-  const category = value.category;
+  const kind = value.kind;
   if (
-    typeof category !== "string" ||
-    !(SKILL_CATEGORIES as readonly string[]).includes(category)
+    typeof kind !== "string" ||
+    !(SKILL_KINDS as readonly string[]).includes(kind)
   ) {
-    invalid(SKILL_CATEGORY_CODE, "Invalid skill category", {
+    invalid(SKILL_KIND_CODE, "Invalid skill kind", { kind: value.kind });
+  }
+
+  const category = value.category;
+  const categoriesOfKind = CATEGORIES_BY_KIND[kind as SkillKind];
+  if (typeof category !== "string" || !categoriesOfKind.includes(category)) {
+    invalid(SKILL_CATEGORY_CODE, "Invalid skill category for kind", {
+      kind: value.kind,
       category: value.category,
     });
   }
@@ -323,14 +395,19 @@ export function validateSkillManifest(
   }
 
   const generators = value.generators;
+  const isCreation = kind === "creation";
   if (
     !Array.isArray(generators) ||
-    generators.length < 1 ||
     generators.length > MAX_GENERATORS ||
+    (isCreation && generators.length < 1) ||
+    (!isCreation && generators.length !== 0) ||
     generators.some((generator) => typeof generator !== "string") ||
     !uniqueStrings(generators as string[])
   ) {
-    invalid(SKILL_GENERATOR_CODE, "Invalid generator list", { generators });
+    invalid(SKILL_GENERATOR_CODE, "Invalid generator list for kind", {
+      kind: value.kind,
+      generators,
+    });
   }
   const unknownGenerators = (generators as string[]).filter(
     (generator) => !environment.knownGenerators.has(generator),
@@ -343,14 +420,19 @@ export function validateSkillManifest(
 
   const constraints = validateConstraints(value.constraints);
   const provenance = validateProvenance(value.provenance);
-  const evaluation = validateEvaluation(value.evaluation, constraints);
+  const evaluation = validateEvaluation(
+    value.evaluation,
+    constraints,
+    isCreation,
+  );
 
   const manifest: SkillManifest = {
     manifestVersion: SKILL_MANIFEST_VERSION,
     name,
     version,
     description,
-    category: category as SkillCategory,
+    kind: kind as SkillKind,
+    category: category as SkillCategoryOfKind,
     instructions,
     allowedTools: Object.freeze(
       allowedTools.filter((tool): tool is string => typeof tool === "string"),
@@ -440,6 +522,7 @@ function deepFreezeJson(value: unknown): unknown {
 function validateEvaluation(
   value: unknown,
   constraints: SkillConstraints,
+  isCreation: boolean,
 ): SkillEvaluationMetadata {
   if (!isRecord(value)) {
     invalid(SKILL_EVALUATION_CODE, "Evaluation metadata must be an object", {});
@@ -448,6 +531,19 @@ function validateEvaluation(
   if (scenarioId === undefined) {
     invalid(SKILL_EVALUATION_CODE, "Invalid evaluation scenario id", {
       scenarioId: value.scenarioId,
+    });
+  }
+  // Rigging and motion skills are evaluated against fixed fixture
+  // documents (plan S14.10, ticket #39 AC): the fixture id is required
+  // and must resolve in the fixture registry at catalog load.
+  const fixtureId =
+    value.fixtureId === undefined
+      ? undefined
+      : boundedString(value.fixtureId, 1, 128);
+  if (fixtureId === undefined && !isCreation) {
+    invalid(SKILL_EVALUATION_CODE, "Evaluation fixture id is required", {
+      kind: "non-creation",
+      fixtureId: value.fixtureId,
     });
   }
   const fixedPrompt = boundedString(
@@ -524,10 +620,12 @@ function validateEvaluation(
   const visualBaselines = value.visualBaselines;
   if (
     !Array.isArray(visualBaselines) ||
-    visualBaselines.length < 1 ||
+    (isCreation && visualBaselines.length < 1) ||
+    (!isCreation && visualBaselines.length !== 0) ||
     visualBaselines.length > MAX_BASELINES
   ) {
     invalid(SKILL_EVALUATION_CODE, "Invalid visual baselines list", {
+      kind: isCreation ? "creation" : "non-creation",
       visualBaselines,
     });
   }
@@ -583,6 +681,7 @@ function validateEvaluation(
 
   return Object.freeze({
     scenarioId,
+    ...(fixtureId === undefined ? {} : { fixtureId }),
     fixedPrompt,
     structuralChecks: Object.freeze(
       parsedChecks,

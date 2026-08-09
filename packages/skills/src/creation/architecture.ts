@@ -87,6 +87,8 @@ const MANIFEST: SkillManifest = {
   version: "1.0.0",
   description:
     "Creation skill for small architectural structures: houses, walls with openings, stairs, roofs, and courtyards built from generic structural generators.",
+
+  kind: "creation",
   category: "architecture",
   instructions: INSTRUCTIONS,
   allowedTools: CREATION_TOOLS,

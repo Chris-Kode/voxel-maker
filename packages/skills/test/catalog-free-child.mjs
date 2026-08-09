@@ -45,8 +45,16 @@ import {
 import { evaluateAnimationRuntime } from "@voxel-maker/animation";
 import { readVxlProject, writeVxlProject } from "@voxel-maker/formats";
 
-// File script: argv = [node, script, documentPath, journalPath].
-const [documentPath, journalPath] = process.argv.slice(2);
+// File script: argv = [node, script, documentPath, journalPath,
+// editVolumeId, editMaterialId]. The edit volume defaults to the
+// generator fixture volume (ticket #38); rig/motion boundary runs pass
+// the fixture's own volume id (ticket #39).
+const [documentPath, journalPath, editVolumeIdArg, editMaterialIdArg] =
+  process.argv.slice(2);
+const editVolumeId = volumeId(editVolumeIdArg ?? "volume:generator:main");
+const editMaterialId = materialId(
+  editMaterialIdArg === undefined ? 1 : Number(editMaterialIdArg),
+);
 const document = JSON.parse(readFileSync(documentPath, "utf8"));
 const frames = readFileSync(journalPath, "utf8")
   .trim()
@@ -103,9 +111,9 @@ if (JSON.stringify(openedStore.getDocument()).includes("skill")) {
 // EDIT: extend the stairs with one more box via the ordinary bus.
 const edit = bus.execute(
   fillBoxCommand(commandId("command:child:edit:0001"), {
-    volumeId: volumeId("volume:generator:main"),
+    volumeId: editVolumeId,
     region: { min: [0, 3, 0], max: [4, 4, 1] },
-    material: materialId(1),
+    material: editMaterialId,
   }),
   {
     transactionId: transactionId("transaction:child:edit:0001"),
