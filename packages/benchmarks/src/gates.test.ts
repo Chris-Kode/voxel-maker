@@ -21,28 +21,166 @@ function sceneReport(overrides: {
 }): BenchmarkReport {
   const scene = {
     buildMs: 1,
-    command: { samples: 100, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: overrides.commandP95 ?? 1, p99: 1 },
-    remesh: { samples: 100, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: overrides.remeshP95 ?? 1, p99: 1 },
-    queueWait: { samples: 100, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: 1, p99: 1 },
-    flush: { samples: 100, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: overrides.flushP95 ?? 1, p99: 1 },
+    command: {
+      samples: 100,
+      mean: 1,
+      min: 1,
+      max: 1,
+      p50: 1,
+      p90: 1,
+      p95: overrides.commandP95 ?? 1,
+      p99: 1,
+    },
+    remesh: {
+      samples: 100,
+      mean: 1,
+      min: 1,
+      max: 1,
+      p50: 1,
+      p90: 1,
+      p95: overrides.remeshP95 ?? 1,
+      p99: 1,
+    },
+    queueWait: {
+      samples: 100,
+      mean: 1,
+      min: 1,
+      max: 1,
+      p50: 1,
+      p90: 1,
+      p95: 1,
+      p99: 1,
+    },
+    flush: {
+      samples: 100,
+      mean: 1,
+      min: 1,
+      max: 1,
+      p50: 1,
+      p90: 1,
+      p95: overrides.flushP95 ?? 1,
+      p99: 1,
+    },
     meshSettleMs: 1,
-    meshing: { dispatchedTotal: 1, installedTotal: 1, pendingChunks: 0, inFlightMeshes: 0, completedQueue: 0, uploadsThisFrame: 1, staleDropped: 0, cancelled: 0, failed: 0, installedTriangles: 1, installedDrawCalls: 1, installedMeshBytes: 1 },
-    save: { summary: { samples: 5, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: overrides.saveP95Ms ?? 1000, p99: 1 }, bytes: 1, peakRssMiB: 0 },
-    load: { summary: { samples: 5, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: overrides.loadP95Ms ?? 1000, p99: 1 }, bytes: 1, peakRssMiB: 0 },
-    export: { summary: { samples: 2, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: 1000, p99: 1 }, bytes: 1, peakRssMiB: 0 },
-    preview: { samples: 10, mean: 1, min: 1, max: 1, p50: 1, p90: 1, p95: 1, p99: 1 },
+    meshing: {
+      dispatchedTotal: 1,
+      installedTotal: 1,
+      pendingChunks: 0,
+      inFlightMeshes: 0,
+      completedQueue: 0,
+      uploadsThisFrame: 1,
+      staleDropped: 0,
+      cancelled: 0,
+      failed: 0,
+      installedTriangles: 1,
+      installedDrawCalls: 1,
+      installedMeshBytes: 1,
+    },
+    save: {
+      summary: {
+        samples: 5,
+        mean: 1,
+        min: 1,
+        max: 1,
+        p50: 1,
+        p90: 1,
+        p95: overrides.saveP95Ms ?? 1000,
+        p99: 1,
+      },
+      bytes: 1,
+      peakRssMiB: 0,
+      blocked: undefined,
+    },
+    load: {
+      summary: {
+        samples: 5,
+        mean: 1,
+        min: 1,
+        max: 1,
+        p50: 1,
+        p90: 1,
+        p95: overrides.loadP95Ms ?? 1000,
+        p99: 1,
+      },
+      bytes: 1,
+      peakRssMiB: 0,
+      blocked: undefined,
+    },
+    export: {
+      summary: {
+        samples: 2,
+        mean: 1,
+        min: 1,
+        max: 1,
+        p50: 1,
+        p90: 1,
+        p95: 1000,
+        p99: 1,
+      },
+      bytes: 1,
+      peakRssMiB: 0,
+      blocked: undefined,
+    },
+    preview: {
+      samples: 10,
+      mean: 1,
+      min: 1,
+      max: 1,
+      p50: 1,
+      p90: 1,
+      p95: 1,
+      p99: 1,
+    },
     inputToPreview95Ms: overrides.inputToPreview95Ms ?? 10,
-    memory: { rssMiB: overrides.rssMiB ?? 100, heapUsedMiB: 50, heapTotalMiB: 80, arrayBuffersMiB: 5 },
+    memory: {
+      rssMiB: overrides.rssMiB ?? 100,
+      heapUsedMiB: 50,
+      heapTotalMiB: 80,
+      arrayBuffersMiB: 5,
+    },
   };
   return {
     schemaVersion: 1,
     benchmarkVersion: "test",
     date: "2025-01-01T00:00:00.000Z",
-    hardware: { tier: "reference", cpuModel: "Apple M1", platform: "darwin", arch: "arm64", cores: 8, totalMemoryGiB: 16, nodeVersion: "v22" },
-    options: { sizes: [100_000], kinds: ["compact"], samples: 100, saveLoadRuns: 5, full: false },
+    hardware: {
+      tier: "reference",
+      cpuModel: "Apple M1",
+      platform: "darwin",
+      arch: "arm64",
+      cores: 8,
+      totalMemoryGiB: 16,
+      nodeVersion: "v22",
+    },
+    options: {
+      sizes: [100_000],
+      kinds: ["compact"],
+      samples: 100,
+      saveLoadRuns: 5,
+      full: false,
+    },
     scenes: { compact: { "100000": scene }, sparse: {}, checkerboard: {} },
     animation: [
-      { trackCount: 10_000, frames: 60, frameMs: { samples: 60, mean: 5, min: 4, max: 8, p50: 5, p90: 7, p95: 8, p99: 8 }, revisionBefore: 0, revisionAfter: 0, historyBefore: 0, historyAfter: 0, semanticHashBefore: "a", semanticHashAfter: "a" },
+      {
+        trackCount: 10_000,
+        frames: 60,
+        frameMs: {
+          samples: 60,
+          mean: 5,
+          min: 4,
+          max: 8,
+          p50: 5,
+          p90: 7,
+          p95: 8,
+          p99: 8,
+        },
+        revisionBefore: 0,
+        revisionAfter: 0,
+        historyBefore: 0,
+        historyAfter: 0,
+        semanticHashBefore: "a",
+        semanticHashAfter: "a",
+      },
     ],
     durationMs: 1000,
   };
@@ -60,24 +198,46 @@ describe("resolveTier", () => {
   });
 
   it("classifies unknown hardware as the CI smoke tier", () => {
-    expect(resolveTier("auto", "Intel(R) Xeon(R) Platinum 8370C")).toBe("ci-smoke");
+    expect(resolveTier("auto", "Intel(R) Xeon(R) Platinum 8370C")).toBe(
+      "ci-smoke",
+    );
   });
 });
 
 describe("detectHardware", () => {
-  it("records the running machine with the requested tier", () => {
-    const hardware = detectHardware("ci-smoke");
+  it("records the injected machine facts with the requested tier", () => {
+    const hardware = detectHardware("ci-smoke", {
+      cpuModel: "Apple M1",
+      cores: 8,
+      totalMemoryGiB: 16,
+    });
     expect(hardware.tier).toBe("ci-smoke");
-    expect(hardware.cpuModel.length).toBeGreaterThan(0);
-    expect(hardware.cores).toBeGreaterThan(0);
-    expect(hardware.totalMemoryGiB).toBeGreaterThan(0);
+    expect(hardware.cpuModel).toBe("Apple M1");
+    expect(hardware.cores).toBe(8);
+    expect(hardware.totalMemoryGiB).toBe(16);
+    expect(hardware.platform.length).toBeGreaterThan(0);
     expect(hardware.nodeVersion.startsWith("v")).toBe(true);
+  });
+
+  it("falls back to Node globals and unknown hardware", () => {
+    const hardware = detectHardware("ci-smoke");
+    expect(hardware.cpuModel).toBe("unknown");
+    expect(hardware.totalMemoryGiB).toBe(0);
+    expect(hardware.platform.length).toBeGreaterThan(0);
   });
 });
 
 describe("evaluateGates", () => {
   it("reference gates pass within the ADR-0008 budgets", () => {
-    const report = sceneReport({ commandP95: 7, remeshP95: 29, flushP95: 16, saveP95Ms: 1900, loadP95Ms: 1900, inputToPreview95Ms: 49, rssMiB: 1500 });
+    const report = sceneReport({
+      commandP95: 7,
+      remeshP95: 29,
+      flushP95: 16,
+      saveP95Ms: 1900,
+      loadP95Ms: 1900,
+      inputToPreview95Ms: 49,
+      rssMiB: 1500,
+    });
     const results = evaluateGates(report, "reference");
     const failed = results.filter((result) => !result.pass && !result.skipped);
     expect(failed).toEqual([]);
@@ -85,7 +245,15 @@ describe("evaluateGates", () => {
   });
 
   it("reference gates fail when a budget is exceeded", () => {
-    const report = sceneReport({ commandP95: 20, remeshP95: 100, flushP95: 50, saveP95Ms: 3000, loadP95Ms: 3000, inputToPreview95Ms: 200, rssMiB: 3000 });
+    const report = sceneReport({
+      commandP95: 20,
+      remeshP95: 100,
+      flushP95: 50,
+      saveP95Ms: 3000,
+      loadP95Ms: 3000,
+      inputToPreview95Ms: 200,
+      rssMiB: 3000,
+    });
     const results = evaluateGates(report, "reference");
     const failed = results.filter((result) => !result.pass && !result.skipped);
     expect(failed.length).toBeGreaterThan(0);
@@ -110,8 +278,12 @@ describe("evaluateGates", () => {
     const report = sceneReport({ commandP95: 500, rssMiB: 7000 });
     const results = evaluateGates(report, "ci-smoke");
     const failed = results.filter((result) => !result.pass && !result.skipped);
-    expect(failed.some((result) => result.id === "commit.p95.100k.smoke")).toBe(true);
-    expect(failed.some((result) => result.id === "memory.peak.smoke")).toBe(true);
+    expect(failed.some((result) => result.id === "commit.p95.100k.smoke")).toBe(
+      true,
+    );
+    expect(failed.some((result) => result.id === "memory.peak.smoke")).toBe(
+      true,
+    );
   });
 
   it("animation mutation detection fails the no-mutation gate", () => {
@@ -125,7 +297,9 @@ describe("evaluateGates", () => {
       })),
     };
     const results = evaluateGates(mutated, "ci-smoke");
-    const gate = results.find((result) => result.id === "animation.noMutation.smoke");
+    const gate = results.find(
+      (result) => result.id === "animation.noMutation.smoke",
+    );
     expect(gate?.pass).toBe(false);
   });
 });

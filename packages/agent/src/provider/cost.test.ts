@@ -16,7 +16,9 @@ describe("model pricing", () => {
   });
 
   it("prices the deterministic suite provider for evaluation cost tracking", () => {
-    expect(priceForModel("deterministic-model")).toBe(DETERMINISTIC_MODEL_PRICE);
+    expect(priceForModel("deterministic-model")).toBe(
+      DETERMINISTIC_MODEL_PRICE,
+    );
   });
 
   it("estimates cost deterministically for the eval model", () => {

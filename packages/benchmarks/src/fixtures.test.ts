@@ -91,7 +91,9 @@ describe("createBenchmarkFixture", () => {
       expect(y).toBeLessThan(max[1]);
       expect(z).toBeGreaterThanOrEqual(min[2]);
       expect(z).toBeLessThan(max[2]);
-      expect(fixture.store.getVoxel(fixture.volumeId, fixture.editCoordinate)).not.toBe(0);
+      expect(
+        fixture.store.getVoxel(fixture.volumeId, fixture.editCoordinate),
+      ).not.toBe(0);
     }
   });
 

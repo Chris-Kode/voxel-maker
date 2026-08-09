@@ -55,9 +55,11 @@ export interface ByteTransferMeasurement {
   /**
    * Structured rejection evidence when the export service refused the
    * volume (e.g. the glTF face limit): graceful degradation is recorded,
-   * not hidden.
+   * not hidden. Undefined when the operation completed.
    */
-  readonly blocked?: { readonly code: string; readonly message: string };
+  readonly blocked:
+    | { readonly code: string; readonly message: string }
+    | undefined;
 }
 
 /** Process memory snapshot (MiB). */

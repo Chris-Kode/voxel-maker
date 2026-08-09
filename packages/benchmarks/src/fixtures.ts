@@ -52,9 +52,7 @@ export const BENCHMARK_SCENE_KINDS: readonly BenchmarkSceneKind[] =
 
 /** The nominal occupied-voxel sizes of the benchmark matrix. */
 export const BENCHMARK_SIZES: readonly number[] = Object.freeze([
-  100_000,
-  500_000,
-  1_000_000,
+  100_000, 500_000, 1_000_000,
 ]);
 
 /** Deterministic 32-bit PRNG (mulberry32); pure, seed-stable. */
@@ -109,7 +107,7 @@ export function sceneEntries(
     for (let x = 0; x < mx; x += 1) {
       for (let y = 0; y < my; y += 1) {
         for (let z = 0; z < mz; z += 1) {
-          const occupied = kind === "compact" || ((x + y + z) % 2) === 0;
+          const occupied = kind === "compact" || (x + y + z) % 2 === 0;
           if (occupied) entries.push([x, y, z]);
         }
       }
@@ -244,11 +242,7 @@ export function createBenchmarkFixture(
   if (staged === undefined) throw new Error("benchmark volume missing");
   const entries = sceneEntries(kind, targetOccupied);
   for (const [x, y, z] of entries) {
-    staged.setVoxel(
-      [x, y, z],
-      materialFor(x, y, z, ids),
-      writeCapability,
-    );
+    staged.setVoxel([x, y, z], materialFor(x, y, z, ids), writeCapability);
   }
   // The first generated entry is occupied in every kind and stable per
   // seed; it becomes the fixture's localized edit coordinate.
@@ -257,9 +251,13 @@ export function createBenchmarkFixture(
   const event: DocumentCommitted = {
     revisionBefore: store.revision,
     revisionAfter: store.revision + 1,
-    transactionId: transactionId(`transaction:bench:seed:${kind}:${String(targetOccupied)}`),
+    transactionId: transactionId(
+      `transaction:bench:seed:${kind}:${String(targetOccupied)}`,
+    ),
     source: "system",
-    commandIds: [commandId(`command:bench:seed:${kind}:${String(targetOccupied)}`)],
+    commandIds: [
+      commandId(`command:bench:seed:${kind}:${String(targetOccupied)}`),
+    ],
     commandTypes: ["seedBenchmarkFixture"],
     changedNodeIds: [],
     changedMaterialIds: [],
@@ -311,9 +309,7 @@ export const BENCHMARK_EDIT_COORDINATE: readonly [number, number, number] = [
  * 10,000-track matrix inside the document's 10,000-node limit. Pure
  * document construction — no store, no commands.
  */
-export function createAnimationScaleDocument(
-  trackCount: number,
-): {
+export function createAnimationScaleDocument(trackCount: number): {
   readonly document: VoxelDocument;
   readonly clip: AnimationDescriptor;
   readonly trackCount: number;

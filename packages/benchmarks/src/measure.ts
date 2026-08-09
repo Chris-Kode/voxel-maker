@@ -1,4 +1,3 @@
-import { performance } from "node:perf_hooks";
 import {
   CommandBus,
   CommandRegistry,
@@ -135,7 +134,10 @@ function fixtureEditCoordinate(
  * 1 <-> 2 toggle) and the chunk revision actually advances.
  */
 function toggleMaterial(fixture: BenchmarkFixture): MaterialId {
-  const current = fixture.store.getVoxel(fixture.volumeId, fixture.editCoordinate);
+  const current = fixture.store.getVoxel(
+    fixture.volumeId,
+    fixture.editCoordinate,
+  );
   return current === materialId(1) ? materialId(2) : materialId(1);
 }
 
@@ -317,7 +319,10 @@ class BenchmarkMeshingPipeline {
     return Object.keys(store.getDocument().volumes)[0] as VolumeId;
   }
 
-  keyOf(volumeId: VolumeId, coordinate: readonly [number, number, number]): string {
+  keyOf(
+    volumeId: VolumeId,
+    coordinate: readonly [number, number, number],
+  ): string {
     return `${String(volumeId)}:${chunkKey(coordinate)}`;
   }
 }
@@ -371,9 +376,7 @@ export async function measureRemeshAndPipeline(
           material: toggleMaterial(fixture),
         }),
         {
-          transactionId: transactionId(
-            `transaction:bench:local:${String(i)}`,
-          ),
+          transactionId: transactionId(`transaction:bench:local:${String(i)}`),
           source: "ui",
           expectedRevision: fixture.store.revision,
         },
@@ -408,7 +411,10 @@ export interface PersistenceMeasurements {
 export function measureSaveLoad(
   fixture: BenchmarkFixture,
   runs: number,
-): { readonly save: ByteTransferMeasurement; readonly load: ByteTransferMeasurement } {
+): {
+  readonly save: ByteTransferMeasurement;
+  readonly load: ByteTransferMeasurement;
+} {
   const document = fixture.store.getDocument();
   const volumes = new Map<VolumeId, VoxelVolumeReadView>();
   for (const key of Object.keys(document.volumes)) {
@@ -451,8 +457,18 @@ export function measureSaveLoad(
     }
   }
   return {
-    save: { summary: summarize(saveTimes), bytes, peakRssMiB: 0 },
-    load: { summary: summarize(loadTimes), bytes, peakRssMiB: 0 },
+    save: {
+      summary: summarize(saveTimes),
+      bytes,
+      peakRssMiB: 0,
+      blocked: undefined,
+    },
+    load: {
+      summary: summarize(loadTimes),
+      bytes,
+      peakRssMiB: 0,
+      blocked: undefined,
+    },
   };
 }
 
@@ -514,12 +530,7 @@ export async function measureExportGltf(
       const rssMiB = process.memoryUsage().rss / (1024 * 1024);
       if (rssMiB > peakRssMiB) peakRssMiB = rssMiB;
     }
-    return {
-      summary: summarize(times),
-      bytes,
-      peakRssMiB,
-      ...(blocked === undefined ? {} : { blocked }),
-    };
+    return { summary: summarize(times), bytes, peakRssMiB, blocked };
   } catch (error: unknown) {
     // Structured limit errors (e.g. GLTF_FACE_LIMIT at >1M faces) are
     // the product's graceful degradation for oversized volumes.
@@ -528,15 +539,9 @@ export async function measureExportGltf(
         typeof error === "object" && error !== null && "code" in error
           ? String((error as { code: unknown }).code)
           : "EXPORT_FAILED",
-      message:
-        error instanceof Error ? error.message : "glTF export failed",
+      message: error instanceof Error ? error.message : "glTF export failed",
     };
-    return {
-      summary: summarize(times),
-      bytes,
-      peakRssMiB,
-      ...(blocked === undefined ? {} : { blocked }),
-    };
+    return { summary: summarize(times), bytes, peakRssMiB, blocked };
   } finally {
     clearInterval(sampler);
   }

@@ -24,10 +24,7 @@ export interface SampleSummary {
  * definition used by ADR-0008 gate reporting). Returns 0 for an empty
  * sample set. `p` is a fraction in [0, 1]; 0.95 is the gate percentile.
  */
-export function percentile(
-  samples: readonly number[],
-  p: number,
-): number {
+export function percentile(samples: readonly number[], p: number): number {
   if (samples.length === 0) return 0;
   const sorted = [...samples].sort((a, b) => a - b);
   const rank = Math.max(0, Math.min(1, p)) * (sorted.length - 1);

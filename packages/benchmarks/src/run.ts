@@ -1,5 +1,3 @@
-import { performance } from "node:perf_hooks";
-import { cpus } from "node:os";
 import {
   ANIMATION_TRACK_COUNTS,
   BENCHMARK_SCENE_KINDS,
@@ -60,6 +58,8 @@ export interface RunBenchmarksOptions {
   /** Include export measurements for every size (default: 100k only). */
   readonly full?: boolean;
   readonly onProgress?: (message: string) => void;
+  /** OS facts from the app's node:os introspection (named hardware). */
+  readonly hardwareInput?: import("./gates.js").HardwareInput;
 }
 
 /** One benchmark run result: report plus gate verdicts. */
@@ -99,8 +99,11 @@ export async function runBenchmarks(
   const previewSize = options.previewSize ?? 256;
   const animationFrames = options.animationFrames ?? 60;
   const full = options.full ?? false;
-  const tier = resolveTier(options.tier ?? "auto", cpus()[0]?.model ?? "");
-  const hardware: HardwareInfo = detectHardware(tier);
+  const tier = resolveTier(
+    options.tier ?? "auto",
+    options.hardwareInput?.cpuModel ?? "unknown",
+  );
+  const hardware: HardwareInfo = detectHardware(tier, options.hardwareInput);
 
   progress(options.onProgress, `tier resolved: ${tier} (${hardware.cpuModel})`);
 
@@ -162,7 +165,12 @@ export async function runBenchmarks(
         meshing: remesh.meshing,
         save: saveLoad.save,
         load: saveLoad.load,
-        export: { summary: emptySummary(), bytes: 0, peakRssMiB: 0 },
+        export: {
+          summary: emptySummary(),
+          bytes: 0,
+          peakRssMiB: 0,
+          blocked: undefined,
+        },
         inputToPreview95Ms,
         memory: peakMemory(snapshots),
       } satisfies SceneMeasurements;
@@ -196,7 +204,12 @@ export async function runBenchmarks(
         (full && hardware.totalMemoryGiB * 1024 ** 3 >= estimatedExportBytes);
       const exportMeasurement = canHoldExport
         ? await measureExportGltf(fixture)
-        : { summary: emptySummary(), bytes: 0, peakRssMiB: 0 };
+        : {
+            summary: emptySummary(),
+            bytes: 0,
+            peakRssMiB: 0,
+            blocked: undefined,
+          };
       scenes[kind][String(size)] = { ...current, export: exportMeasurement };
 
       if (size === 100_000) {

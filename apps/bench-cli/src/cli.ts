@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { cpus, totalmem } from "node:os";
 import {
   appendTrendRow,
   compareWithTrends,
@@ -8,6 +9,7 @@ import {
   runBenchmarks,
   type BenchmarkSceneKind,
   type BenchmarkTrendHistory,
+  type HardwareInput,
   type RunBenchmarksOptions,
   type TierName,
 } from "@voxel-maker/benchmarks";
@@ -74,7 +76,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
           .filter((size) => Number.isFinite(size) && size > 0);
         break;
       case "--kinds":
-        options.kinds = value().split(",").map((part) => part.trim());
+        options.kinds = value()
+          .split(",")
+          .map((part) => part.trim());
         for (const kind of options.kinds) {
           if (!(KIND_NAMES as readonly string[]).includes(kind)) {
             throw new Error(`unknown scene kind: ${kind}`);
@@ -172,6 +176,12 @@ async function loadTrends(path: string): Promise<BenchmarkTrendHistory> {
 
 async function main(): Promise<number> {
   const options = parseArgs(process.argv.slice(2));
+  const cpu = cpus();
+  const hardwareInput: HardwareInput = {
+    cpuModel: cpu[0]?.model ?? "unknown",
+    cores: cpu.length,
+    totalMemoryGiB: Math.round((totalmem() / 1024 ** 3) * 10) / 10,
+  };
   const runOptions: RunBenchmarksOptions = {
     tier: options.tier,
     sizes: options.sizes,
@@ -182,6 +192,7 @@ async function main(): Promise<number> {
     previewSize: options.previewSize,
     animationFrames: options.animationFrames,
     full: options.full,
+    hardwareInput,
     ...(options.noProgress
       ? {}
       : {
@@ -214,10 +225,14 @@ async function main(): Promise<number> {
     const trendsPath = resolve(options.trends);
     const history = await loadTrends(trendsPath);
     const comparisons = compareWithTrends(report, history);
-    const regressions = comparisons.filter((comparison) => comparison.regressed);
+    const regressions = comparisons.filter(
+      (comparison) => comparison.regressed,
+    );
     if (comparisons.length > 0) {
       console.log("");
-      console.log(`trend baseline: ${history.rows[history.rows.length - 1]?.date ?? "none"}`);
+      console.log(
+        `trend baseline: ${history.rows[history.rows.length - 1]?.date ?? "none"}`,
+      );
       for (const comparison of comparisons) {
         const flag = comparison.regressed ? " REGRESSED" : "";
         const unit = comparison.key.endsWith("rssMiB") ? "MiB" : "ms";

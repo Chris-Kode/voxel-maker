@@ -86,8 +86,7 @@ export function flattenReport(report: BenchmarkReport): FlattenedValues {
     }
   }
   for (const row of report.animation) {
-    values[`animation.${String(row.trackCount)}.frameMs.p95`] =
-      row.frameMs.p95;
+    values[`animation.${String(row.trackCount)}.frameMs.p95`] = row.frameMs.p95;
   }
   return values;
 }

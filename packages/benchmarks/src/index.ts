@@ -30,6 +30,7 @@ export {
   type GateResult,
   type GateSummary,
   type GateUnit,
+  type HardwareInput,
 } from "./gates.js";
 export {
   measureAnimationScale,

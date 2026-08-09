@@ -1,9 +1,4 @@
-import { cpus, platform, arch, totalmem } from "node:os";
-import type {
-  BenchmarkReport,
-  HardwareInfo,
-  TierName,
-} from "./report.js";
+import type { BenchmarkReport, HardwareInfo, TierName } from "./report.js";
 
 /**
  * Hardware tiers and gate thresholds (ADR-0008, ticket #45). The named
@@ -92,9 +87,8 @@ function meanSaveLoadP95(
   let total = 0;
   let count = 0;
   for (const kind of Object.keys(report.scenes)) {
-    const scene = report.scenes[kind as keyof typeof report.scenes][
-      String(size)
-    ];
+    const scene =
+      report.scenes[kind as keyof typeof report.scenes][String(size)];
     if (scene !== undefined) {
       total += scene[metric].summary.p95;
       count += 1;
@@ -306,9 +300,9 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
       let total = 0;
       let count = 0;
       for (const kind of Object.keys(report.scenes)) {
-        const value = report.scenes[kind as keyof typeof report.scenes][
-          "100000"
-        ]?.inputToPreview95Ms;
+        const value =
+          report.scenes[kind as keyof typeof report.scenes]["100000"]
+            ?.inputToPreview95Ms;
         if (value !== undefined) {
           total += value;
           count += 1;
@@ -401,9 +395,9 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
       let total = 0;
       let count = 0;
       for (const kind of Object.keys(report.scenes)) {
-        const exportMs = report.scenes[kind as keyof typeof report.scenes][
-          "100000"
-        ]?.export.summary.p95;
+        const exportMs =
+          report.scenes[kind as keyof typeof report.scenes]["100000"]?.export
+            .summary.p95;
         if (exportMs !== undefined) {
           total += exportMs;
           count += 1;
@@ -463,16 +457,38 @@ const GATES_BY_TIER: Readonly<Record<TierName, readonly GateDefinition[]>> =
  * Detects the running hardware: CPU model string (the named-hardware
  * identity), platform, arch, core count, total memory, and Node version.
  */
-export function detectHardware(tier: TierName): HardwareInfo {
-  const cpu = cpus();
+/**
+ * The OS facts the app composition root injects (the package stays
+ * import-clean for the browser-bundle entrypoint check; node:os lives
+ * in the CLI app).
+ */
+export interface HardwareInput {
+  readonly cpuModel?: string;
+  readonly platform?: string;
+  readonly arch?: string;
+  readonly cores?: number;
+  readonly totalMemoryGiB?: number;
+  readonly nodeVersion?: string;
+}
+
+/**
+ * Records the running hardware: CPU model string (the named-hardware
+ * identity), platform, arch, core count, total memory, and Node version.
+ * Platform/arch/version fall back to Node globals; the CPU model and
+ * total memory come from the app's node:os introspection.
+ */
+export function detectHardware(
+  tier: TierName,
+  input: HardwareInput = {},
+): HardwareInfo {
   return {
     tier,
-    cpuModel: cpu[0]?.model ?? "unknown",
-    platform: platform(),
-    arch: arch(),
-    cores: cpu.length,
-    totalMemoryGiB: Math.round((totalmem() / (1024 ** 3)) * 10) / 10,
-    nodeVersion: process.version,
+    cpuModel: input.cpuModel ?? "unknown",
+    platform: input.platform ?? process.platform,
+    arch: input.arch ?? process.arch,
+    cores: input.cores ?? 1,
+    totalMemoryGiB: input.totalMemoryGiB ?? 0,
+    nodeVersion: input.nodeVersion ?? process.version,
   };
 }
 
@@ -520,8 +536,9 @@ export function summarizeGates(
   results: readonly GateResult[],
 ): GateSummary {
   const passed = results.filter((result) => result.pass).length;
-  const failed = results.filter((result) => !result.pass && !result.skipped)
-    .length;
+  const failed = results.filter(
+    (result) => !result.pass && !result.skipped,
+  ).length;
   const skipped = results.filter((result) => result.skipped).length;
   return {
     tier,

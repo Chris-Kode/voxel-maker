@@ -26,30 +26,160 @@ const report: BenchmarkReport = {
   benchmarkVersion: "test",
   date: "2025-02-01T00:00:00.000Z",
   hardware,
-  options: { sizes: [100_000], kinds: ["compact"], samples: 10, saveLoadRuns: 2, full: false },
+  options: {
+    sizes: [100_000],
+    kinds: ["compact"],
+    samples: 10,
+    saveLoadRuns: 2,
+    full: false,
+  },
   scenes: {
     compact: {
       "100000": {
         buildMs: 1,
-        command: { samples: 10, mean: 2, min: 1, max: 4, p50: 2, p90: 3, p95: 4, p99: 4 },
-        remesh: { samples: 10, mean: 5, min: 3, max: 9, p50: 5, p90: 8, p95: 9, p99: 9 },
-        queueWait: { samples: 10, mean: 6, min: 4, max: 10, p50: 6, p90: 9, p95: 10, p99: 10 },
-        flush: { samples: 10, mean: 1, min: 1, max: 2, p50: 1, p90: 2, p95: 2, p99: 2 },
+        command: {
+          samples: 10,
+          mean: 2,
+          min: 1,
+          max: 4,
+          p50: 2,
+          p90: 3,
+          p95: 4,
+          p99: 4,
+        },
+        remesh: {
+          samples: 10,
+          mean: 5,
+          min: 3,
+          max: 9,
+          p50: 5,
+          p90: 8,
+          p95: 9,
+          p99: 9,
+        },
+        queueWait: {
+          samples: 10,
+          mean: 6,
+          min: 4,
+          max: 10,
+          p50: 6,
+          p90: 9,
+          p95: 10,
+          p99: 10,
+        },
+        flush: {
+          samples: 10,
+          mean: 1,
+          min: 1,
+          max: 2,
+          p50: 1,
+          p90: 2,
+          p95: 2,
+          p99: 2,
+        },
         meshSettleMs: 50,
-        meshing: { dispatchedTotal: 10, installedTotal: 10, pendingChunks: 0, inFlightMeshes: 0, completedQueue: 0, uploadsThisFrame: 4, staleDropped: 0, cancelled: 0, failed: 0, installedTriangles: 100, installedDrawCalls: 10, installedMeshBytes: 1000 },
-        save: { summary: { samples: 2, mean: 10, min: 9, max: 11, p50: 10, p90: 11, p95: 11, p99: 11 }, bytes: 100, peakRssMiB: 0 },
-        load: { summary: { samples: 2, mean: 10, min: 9, max: 11, p50: 10, p90: 11, p95: 11, p99: 11 }, bytes: 100, peakRssMiB: 0 },
-        export: { summary: { samples: 2, mean: 100, min: 90, max: 110, p50: 100, p90: 110, p95: 110, p99: 110 }, bytes: 1000, peakRssMiB: 10 },
-        preview: { samples: 2, mean: 3, min: 2, max: 4, p50: 3, p90: 4, p95: 4, p99: 4 },
+        meshing: {
+          dispatchedTotal: 10,
+          installedTotal: 10,
+          pendingChunks: 0,
+          inFlightMeshes: 0,
+          completedQueue: 0,
+          uploadsThisFrame: 4,
+          staleDropped: 0,
+          cancelled: 0,
+          failed: 0,
+          installedTriangles: 100,
+          installedDrawCalls: 10,
+          installedMeshBytes: 1000,
+        },
+        save: {
+          summary: {
+            samples: 2,
+            mean: 10,
+            min: 9,
+            max: 11,
+            p50: 10,
+            p90: 11,
+            p95: 11,
+            p99: 11,
+          },
+          bytes: 100,
+          peakRssMiB: 0,
+          blocked: undefined,
+        },
+        load: {
+          summary: {
+            samples: 2,
+            mean: 10,
+            min: 9,
+            max: 11,
+            p50: 10,
+            p90: 11,
+            p95: 11,
+            p99: 11,
+          },
+          bytes: 100,
+          peakRssMiB: 0,
+          blocked: undefined,
+        },
+        export: {
+          summary: {
+            samples: 2,
+            mean: 100,
+            min: 90,
+            max: 110,
+            p50: 100,
+            p90: 110,
+            p95: 110,
+            p99: 110,
+          },
+          bytes: 1000,
+          peakRssMiB: 10,
+          blocked: undefined,
+        },
+        preview: {
+          samples: 2,
+          mean: 3,
+          min: 2,
+          max: 4,
+          p50: 3,
+          p90: 4,
+          p95: 4,
+          p99: 4,
+        },
         inputToPreview95Ms: 15,
-        memory: { rssMiB: 100, heapUsedMiB: 50, heapTotalMiB: 80, arrayBuffersMiB: 5 },
+        memory: {
+          rssMiB: 100,
+          heapUsedMiB: 50,
+          heapTotalMiB: 80,
+          arrayBuffersMiB: 5,
+        },
       },
     },
     sparse: {},
     checkerboard: {},
   },
   animation: [
-    { trackCount: 10_000, frames: 10, frameMs: { samples: 10, mean: 5, min: 4, max: 8, p50: 5, p90: 7, p95: 8, p99: 8 }, revisionBefore: 0, revisionAfter: 0, historyBefore: 0, historyAfter: 0, semanticHashBefore: "a", semanticHashAfter: "a" },
+    {
+      trackCount: 10_000,
+      frames: 10,
+      frameMs: {
+        samples: 10,
+        mean: 5,
+        min: 4,
+        max: 8,
+        p50: 5,
+        p90: 7,
+        p95: 8,
+        p99: 8,
+      },
+      revisionBefore: 0,
+      revisionAfter: 0,
+      historyBefore: 0,
+      historyAfter: 0,
+      semanticHashBefore: "a",
+      semanticHashAfter: "a",
+    },
   ],
   durationMs: 1000,
 };
@@ -102,14 +232,19 @@ describe("compareWithTrends / appendTrendRow", () => {
           ...report.scenes.compact,
           "100000": {
             ...(report.scenes.compact["100000"] as SceneMeasurements),
-            command: { ...(report.scenes.compact["100000"] as SceneMeasurements).command, p95: 4 },
+            command: {
+              ...(report.scenes.compact["100000"] as SceneMeasurements).command,
+              p95: 4,
+            },
           },
         },
       },
     };
     const comparisons = compareWithTrends(slow, history);
     expect(comparisons.length).toBeGreaterThan(0);
-    const commit = comparisons.find((c) => c.key === "compact.100000.command.p95");
+    const commit = comparisons.find(
+      (c) => c.key === "compact.100000.command.p95",
+    );
     expect(commit?.previous).toBe(4);
     expect(commit?.current).toBe(4);
     expect(commit?.regressed).toBe(false);
@@ -126,13 +261,18 @@ describe("compareWithTrends / appendTrendRow", () => {
           ...report.scenes.compact,
           "100000": {
             ...(report.scenes.compact["100000"] as SceneMeasurements),
-            command: { ...(report.scenes.compact["100000"] as SceneMeasurements).command, p95: 40 },
+            command: {
+              ...(report.scenes.compact["100000"] as SceneMeasurements).command,
+              p95: 40,
+            },
           },
         },
       },
     };
     const comparisons = compareWithTrends(slower, history);
-    const commit = comparisons.find((c) => c.key === "compact.100000.command.p95");
+    const commit = comparisons.find(
+      (c) => c.key === "compact.100000.command.p95",
+    );
     expect(commit?.regressed).toBe(true);
   });
 
@@ -141,11 +281,17 @@ describe("compareWithTrends / appendTrendRow", () => {
       schemaVersion: 1,
       rows: [
         { date: "old", hardware, values: { "compact.100000.command.p95": 4 } },
-        { date: "latest", hardware, values: { "compact.100000.command.p95": 5 } },
+        {
+          date: "latest",
+          hardware,
+          values: { "compact.100000.command.p95": 5 },
+        },
       ],
     };
     const comparisons = compareWithTrends(report, history);
-    const commit = comparisons.find((c) => c.key === "compact.100000.command.p95");
+    const commit = comparisons.find(
+      (c) => c.key === "compact.100000.command.p95",
+    );
     expect(commit?.previous).toBe(5);
   });
 });
