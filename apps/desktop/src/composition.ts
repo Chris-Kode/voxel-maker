@@ -1,9 +1,13 @@
 import * as THREE from "three";
-import type { ProjectStoragePort } from "@voxel-maker/storage";
+import type {
+  ProjectStoragePort,
+  RecoveryJournalPort,
+} from "@voxel-maker/storage";
 import {
   createDocumentSession,
   type DocumentSession,
 } from "@voxel-maker/session";
+import type { CommittedTransactionRecord } from "@voxel-maker/commands";
 import {
   createEditorStore,
   firstMaterialId,
@@ -19,6 +23,11 @@ import {
 } from "@voxel-maker/commands";
 import { createSceneAdapter, type SceneAdapter } from "@voxel-maker/renderer";
 import { createFileService, type FileService } from "./file-service.js";
+import { createDefaultPrompts, type PromptService } from "./prompts.js";
+import {
+  createMemoryRecentProjects,
+  type RecentProjectsPort,
+} from "./recent-projects.js";
 import {
   createViewportController,
   type ViewportController,
@@ -61,8 +70,23 @@ export interface DesktopComposition {
 }
 
 export interface CompositionOptions {
-  readonly storage: ProjectStoragePort;
+  readonly storage: ProjectStoragePort & RecoveryJournalPort;
   readonly picker: FilePicker;
+  /**
+   * User confirmations for dirty-close, overwrite, and recovery choices.
+   * Defaults to native `window.confirm` prompts; tests inject scripted
+   * responders.
+   */
+  readonly prompts?: PromptService;
+  /**
+   * Bounded recent-project list. Defaults to a per-window in-memory list
+   * (browser shells override with their scoped native storage).
+   */
+  readonly recent?: RecentProjectsPort;
+  /**
+   * Autosave debounce; defaults to 2000 ms. Tests may lower it.
+   */
+  readonly autosaveDelayMs?: number;
   /**
    * Per-gesture voxel budget shared by the stroke and shape tools.
    * Defaults to ADR-0009 `MAX_VOXELS_PER_OPERATION`; callers may lower
@@ -73,19 +97,32 @@ export interface CompositionOptions {
   readonly gestureVoxelLimit?: number;
 }
 
+const REGISTER_COMMANDS = [
+  registerVoxelCommands,
+  registerBatchCommands,
+  registerRegionCommands,
+  registerNodeCommands,
+  registerMaterialCommands,
+] as const;
+
 export function createDesktopComposition(
   options: CompositionOptions,
 ): DesktopComposition {
   const scene = new THREE.Scene();
   const adapter = createSceneAdapter({ scene });
+  // The composition-owned journal sink: every fresh bus the session
+  // installs carries `busHooks.onCommitted`, which delegates to the file
+  // service's current-document journal (ticket #22 recovery wiring).
+  const journalSink: {
+    current: ((record: CommittedTransactionRecord) => void) | undefined;
+  } = { current: undefined };
   const session = createDocumentSession({
-    registerCommands: [
-      registerVoxelCommands,
-      registerBatchCommands,
-      registerRegionCommands,
-      registerNodeCommands,
-      registerMaterialCommands,
-    ],
+    registerCommands: [...REGISTER_COMMANDS],
+    busHooks: {
+      onCommitted(record) {
+        journalSink.current?.(record);
+      },
+    },
   });
   const editor = createEditorStore();
   const viewport = createViewportController({
@@ -106,6 +143,14 @@ export function createDesktopComposition(
     session,
     storage: options.storage,
     picker: options.picker,
+    editor,
+    prompts: options.prompts ?? createDefaultPrompts(),
+    recent: options.recent ?? createMemoryRecentProjects(),
+    journalSink,
+    registerCommands: [...REGISTER_COMMANDS],
+    ...(options.autosaveDelayMs === undefined
+      ? {}
+      : { autosaveDelayMs: options.autosaveDelayMs }),
   });
 
   // Lifecycle rebinding: opening, replacing, and closing a document fully
@@ -161,6 +206,7 @@ export function createDesktopComposition(
     dispose() {
       viewport.dispose();
       draftOverlay.dispose();
+      fileService.dispose();
       adapter.dispose();
       session.dispose();
     },

@@ -142,3 +142,155 @@ body {
   padding: 6px 10px;
   font-size: 12px;
 }
+
+/* Project lifecycle chrome (ticket #22): recent menu, status badges,
+   and the notice tray. */
+
+.toolbar .cancel-save {
+  background: #4a2d2d;
+  border-color: #7a4444;
+}
+
+.recent {
+  position: relative;
+}
+
+.recent-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  min-width: 320px;
+  max-width: 480px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.recent-menu li {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.recent-menu li.recent-empty {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recent-menu button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-menu button:hover {
+  background: #262b33;
+}
+
+.recent-menu button.recent-remove {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.recent-title {
+  font-weight: 600;
+}
+
+.recent-path {
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.statusbar .path {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusbar .dirty {
+  color: #ffd166;
+}
+
+.statusbar .saving,
+.statusbar .stale,
+.statusbar .degraded {
+  color: #ffd166;
+}
+
+.statusbar .degraded {
+  color: #ff9f43;
+}
+
+.statusbar .error {
+  color: var(--error);
+}
+
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.notices:empty {
+  display: none;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.notice-info {
+  background: #1c2a3d;
+  border-color: #2c4a6e;
+}
+
+.notice-warning {
+  background: #3d331c;
+  border-color: #6e5a2c;
+}
+
+.notice-error {
+  background: #3d1c1c;
+  border-color: #6e2c2c;
+}
+
+.notice button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+}

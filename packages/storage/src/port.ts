@@ -38,6 +38,14 @@ export interface AtomicWriteOptions {
   readonly signal?: AbortSignal;
   /** Per-call fault plan; overrides the adapter default when present. */
   readonly faults?: AtomicWriteFaultPlan;
+  /**
+   * Optional per-phase progress callback (plan S7.16 "progress/cancel").
+   * Adapters invoke it before each atomic-write phase so the shell can
+   * render pending-save progress. Adapters that cannot observe phases
+   * (the Tauri IPC surface) simply never invoke it; the shell falls back
+   * to its generic "saving" state.
+   */
+  readonly onPhase?: (phase: AtomicWritePhase) => void;
 }
 
 /** Result of one successful atomic write. */

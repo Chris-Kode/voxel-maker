@@ -223,14 +223,33 @@ describe("SaveCoordinator", () => {
     expect(kinds).toEqual([
       "dirty-changed",
       "save-started",
+      "save-progress",
+      "save-progress",
+      "save-progress",
+      "save-progress",
+      "save-progress",
       "save-completed",
       "dirty-changed",
       "dirty-changed",
     ]);
     expect(events[1]).toMatchObject({ kind: "save-started", revision: 0 });
-    expect(events[2]).toMatchObject({ kind: "save-completed", stale: false });
-    expect(events[3]).toMatchObject({ kind: "dirty-changed", dirty: false });
-    expect(events[4]).toMatchObject({ kind: "dirty-changed", dirty: true });
+    // The memory adapter reports every atomic-write phase (plan S7.16).
+    expect(events[2]).toMatchObject({
+      kind: "save-progress",
+      phase: "create-temp",
+    });
+    expect(events[events.length - 3]).toMatchObject({
+      kind: "save-completed",
+      stale: false,
+    });
+    expect(events[events.length - 2]).toMatchObject({
+      kind: "dirty-changed",
+      dirty: false,
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      kind: "dirty-changed",
+      dirty: true,
+    });
   });
 
   it("rejects empty save paths without touching the port", async () => {
@@ -264,6 +283,39 @@ describe("SaveCoordinator", () => {
       code: "IO_WRITE_FAILED",
     });
     expect(await memory.exists("project.vxl")).toBe(false);
+  });
+
+  it("markDurable seeds a clean state for an opened project and makes same-path saves unchanged", async () => {
+    const { coordinator } = createCoordinator();
+    const snapshot = coordinator.capture();
+    coordinator.markDurable(
+      snapshot.revision,
+      snapshot.semanticHash,
+      "project.vxl",
+    );
+    expect(coordinator.isDirty()).toBe(false);
+    expect(coordinator.lastDurableRevision()).toBe(snapshot.revision);
+
+    const outcome = await coordinator.save("project.vxl");
+    expect(outcome.status).toBe("unchanged");
+    expect(outcome.revision).toBe(snapshot.revision);
+
+    // Saving to a different path is a real write, and it moves the anchor.
+    const saved = await coordinator.save("other.vxl");
+    expect(saved.status).toBe("saved");
+    expect(coordinator.lastDurableHash()).toBe(saved.semanticHash);
+  });
+
+  it("markDurable does not clear dirty state when live state moved past the anchor", () => {
+    const { store, writeCapability, coordinator } = createCoordinator();
+    const snapshot = coordinator.capture();
+    commitVoxel(store, writeCapability, [0, 0, 0], 1);
+    coordinator.markDurable(
+      snapshot.revision,
+      snapshot.semanticHash,
+      "project.vxl",
+    );
+    expect(coordinator.isDirty()).toBe(true);
   });
 
   it("isolates listener exceptions", async () => {

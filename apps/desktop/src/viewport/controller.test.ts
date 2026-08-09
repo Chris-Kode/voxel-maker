@@ -25,6 +25,7 @@ import {
   type DesktopComposition,
   type FilePicker,
 } from "../composition.js";
+import { autoConfirmPrompts, requireResult } from "../test-prompts.js";
 
 /**
  * Viewport controller tests (ticket #16): the composition seam between
@@ -113,10 +114,12 @@ const createFakePicker = (): FilePicker => ({
   },
 });
 
-function openFixture(composition: DesktopComposition): void {
-  const result = composition.fileService.openLoadedProject(
-    "fixture.vxl",
-    buildFixtureProject(),
+async function openFixture(composition: DesktopComposition): Promise<void> {
+  const result = requireResult(
+    await composition.fileService.openLoadedProject(
+      "fixture.vxl",
+      buildFixtureProject(),
+    ),
   );
   if (!result.ok) {
     const error = result.error;
@@ -139,12 +142,13 @@ function boundsSegments(scene: THREE.Scene): THREE.LineSegments[] {
 }
 
 describe("viewport controller", () => {
-  it("picks the fixture box through the center of the viewport", () => {
+  it("picks the fixture box through the center of the viewport", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     composition.viewport.setViewportSize(800, 600);
     // Focus preserves the viewing direction, so pin a standard view first.
     composition.viewport.setStandardView("front");
@@ -161,12 +165,13 @@ describe("viewport controller", () => {
     composition.dispose();
   });
 
-  it("selects the picked node and clears selection on a miss", () => {
+  it("selects the picked node and clears selection on a miss", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     composition.viewport.setViewportSize(800, 600);
     composition.viewport.focus();
     composition.viewport.selectAt(400, 300);
@@ -178,12 +183,13 @@ describe("viewport controller", () => {
     composition.dispose();
   });
 
-  it("navigates: standard views, mode toggle, zoom, orbit, and focus", () => {
+  it("navigates: standard views, mode toggle, zoom, orbit, and focus", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     const viewport = composition.viewport;
     viewport.setStandardView("front");
     expect(viewport.cameraState.direction).toEqual([0, 0, 1]);
@@ -205,12 +211,13 @@ describe("viewport controller", () => {
     composition.dispose();
   });
 
-  it("rebuilds the content bounds overlay after a commit", () => {
+  it("rebuilds the content bounds overlay after a commit", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     const initial = boundsSegments(composition.renderer.scene);
     expect(initial).toHaveLength(1);
     expect(initial[0]?.position.x).toBe(4);
@@ -238,25 +245,27 @@ describe("viewport controller", () => {
     composition.dispose();
   });
 
-  it("removes document overlays when the document closes", () => {
+  it("removes document overlays when the document closes", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     expect(boundsSegments(composition.renderer.scene)).toHaveLength(1);
-    const result = composition.fileService.closeProject();
+    const result = requireResult(await composition.fileService.closeProject());
     expect(result.ok).toBe(true);
     expect(boundsSegments(composition.renderer.scene)).toHaveLength(0);
     composition.dispose();
   });
 
-  it("toggles overlay visibility through the controller", () => {
+  it("toggles overlay visibility through the controller", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     expect(composition.viewport.toggleOverlay("grid")).toBe(false);
     expect(composition.viewport.overlays.visible.grid).toBe(false);
     composition.viewport.setOverlay("grid", true);

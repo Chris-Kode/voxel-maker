@@ -155,21 +155,25 @@ export class NodeProjectStorage
   ): Promise<AtomicWriteResult> {
     const faults = options?.faults ?? this.#faults;
     const signal = options?.signal;
+    const onPhase = options?.onPhase;
     const tempPath = tempPathFor(path, this.#nonce());
     const backupPath = backupPathFor(path);
     const backupTempPath = tempPathFor(backupPath, this.#nonce());
     let handle: FileHandle | undefined;
     try {
+      onPhase?.("create-temp");
       throwPhaseFault(faults, "create-temp", path);
       throwIfAborted(signal, path);
       // Exclusive creation: a stale temp with a colliding name must not be
       // overwritten; the nonce makes collisions practically impossible.
       handle = await open(tempPath, "wx");
 
+      onPhase?.("write-temp");
       throwPhaseFault(faults, "write-temp", path);
       throwIfAborted(signal, path);
       await writeChunked(handle, bytes, this.#writeChunkBytes, signal, path);
 
+      onPhase?.("flush-temp");
       throwPhaseFault(faults, "flush-temp", path);
       throwIfAborted(signal, path);
       await handle.sync();
@@ -184,6 +188,7 @@ export class NodeProjectStorage
       // last-known-good backup stays intact.
       let backupCreated = false;
       if (await this.exists(path)) {
+        onPhase?.("backup");
         throwPhaseFault(faults, "backup", path);
         throwIfAborted(signal, path);
         await copyFile(path, backupTempPath);
@@ -192,6 +197,7 @@ export class NodeProjectStorage
         backupCreated = true;
       }
 
+      onPhase?.("replace");
       throwPhaseFault(faults, "replace", path);
       throwIfAborted(signal, path);
       await rename(tempPath, path);
@@ -199,6 +205,7 @@ export class NodeProjectStorage
       // Best-effort parent directory sync: a failure never fails the save.
       let directorySyncSucceeded = true;
       try {
+        onPhase?.("sync-directory");
         throwPhaseFault(faults, "sync-directory", path);
         await syncDirectory(dirname(path));
       } catch {

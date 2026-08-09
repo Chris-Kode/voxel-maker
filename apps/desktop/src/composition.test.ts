@@ -28,6 +28,7 @@ import {
   type DesktopComposition,
   type FilePicker,
 } from "./composition.js";
+import { autoConfirmPrompts, requireResult } from "./test-prompts.js";
 
 const IDENTITY = {
   translation: [0, 0, 0],
@@ -133,6 +134,7 @@ describe("desktop composition root", () => {
     const composition = createDesktopComposition({
       storage,
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
     expect(composition.session).toBeDefined();
     expect(composition.editor).toBeDefined();
@@ -142,12 +144,13 @@ describe("desktop composition root", () => {
     composition.dispose();
   });
 
-  it("creates a blank project and projects the root node", () => {
+  it("creates a blank project and projects the root node", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
-    const result = composition.fileService.newProject();
+    const result = requireResult(await composition.fileService.newProject());
     expect(result.ok).toBe(true);
     expect(composition.session.current?.revision).toBe(0);
     expect(composition.renderer.adapter.nodeCount).toBe(1);
@@ -155,16 +158,16 @@ describe("desktop composition root", () => {
     composition.dispose();
   });
 
-  it("opens a project, replaces the blank document, and projects chunks", () => {
+  it("opens a project, replaces the blank document, and projects chunks", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
-    composition.fileService.newProject();
+    await composition.fileService.newProject();
     const bytes = buildFixtureProject();
-    const result = composition.fileService.openLoadedProject(
-      "fixture.vxl",
-      bytes,
+    const result = requireResult(
+      await composition.fileService.openLoadedProject("fixture.vxl", bytes),
     );
     expect(result.ok).toBe(true);
     expect(result.documentId).toBe("document:test:0001");
@@ -184,13 +187,14 @@ describe("desktop composition root", () => {
     composition.dispose();
   });
 
-  it("disposes the previous projection when a document is replaced", () => {
+  it("disposes the previous projection when a document is replaced", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
-    composition.fileService.newProject();
-    composition.fileService.openLoadedProject(
+    await composition.fileService.newProject();
+    await composition.fileService.openLoadedProject(
       "fixture.vxl",
       buildFixtureProject(),
     );
@@ -201,19 +205,20 @@ describe("desktop composition root", () => {
     if (mesh === undefined) throw new Error("missing chunk mesh");
     const dispose = vi.spyOn(mesh.geometry, "dispose");
 
-    composition.fileService.newProject();
+    await composition.fileService.newProject();
     expect(dispose).toHaveBeenCalled();
     expect(composition.renderer.adapter.chunkMeshCount).toBe(0);
     expect(meshesOf(composition)).toHaveLength(0);
     composition.dispose();
   });
 
-  it("applies ordinary commits incrementally through the session bus", () => {
+  it("applies ordinary commits incrementally through the session bus", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
-    composition.fileService.openLoadedProject(
+    await composition.fileService.openLoadedProject(
       "fixture.vxl",
       buildFixtureProject(),
     );
@@ -253,12 +258,13 @@ describe("desktop composition root", () => {
     composition.dispose();
   });
 
-  it("disposes a deleted node subtree", () => {
+  it("disposes a deleted node subtree", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
-    composition.fileService.openLoadedProject(
+    await composition.fileService.openLoadedProject(
       "fixture.vxl",
       buildFixtureProject(),
     );
@@ -281,17 +287,18 @@ describe("desktop composition root", () => {
     composition.dispose();
   });
 
-  it("closing a document clears the scene through lifecycle events", () => {
+  it("closing a document clears the scene through lifecycle events", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
-    composition.fileService.openLoadedProject(
+    await composition.fileService.openLoadedProject(
       "fixture.vxl",
       buildFixtureProject(),
     );
     expect(composition.renderer.adapter.chunkMeshCount).toBe(1);
-    const result = composition.fileService.closeProject();
+    const result = requireResult(await composition.fileService.closeProject());
     expect(result.ok).toBe(true);
     expect(composition.session.current).toBeUndefined();
     expect(composition.renderer.adapter.chunkMeshCount).toBe(0);
@@ -306,21 +313,23 @@ describe("desktop composition root", () => {
     const composition = createDesktopComposition({
       storage,
       picker: createFakePicker(() => Promise.resolve("picked.vxl")),
+      prompts: autoConfirmPrompts,
     });
-    const result = await composition.fileService.openProject();
-    expect(result?.ok).toBe(true);
-    expect(result?.path).toBe("picked.vxl");
+    const result = requireResult(await composition.fileService.openProject());
+    expect(result.ok).toBe(true);
+    expect(result.path).toBe("picked.vxl");
     expect(composition.session.current?.documentId).toBe("document:test:0001");
     expect(composition.renderer.adapter.chunkMeshCount).toBe(1);
     composition.dispose();
   });
 
-  it("defaults, prunes, and clears the active paint material", () => {
+  it("defaults, prunes, and clears the active paint material", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(() => Promise.resolve(undefined)),
+      prompts: autoConfirmPrompts,
     });
-    composition.fileService.openLoadedProject(
+    await composition.fileService.openLoadedProject(
       "fixture.vxl",
       buildFixtureProject(),
     );
@@ -372,7 +381,7 @@ describe("desktop composition root", () => {
     ).toBe(true);
 
     // Closing the document keeps the runtime store empty.
-    const closed = composition.fileService.closeProject();
+    const closed = requireResult(await composition.fileService.closeProject());
     expect(closed.ok).toBe(true);
     expect(composition.editor.activeMaterial).toBeUndefined();
     composition.dispose();
