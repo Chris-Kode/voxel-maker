@@ -457,6 +457,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: 'catalog:'
         version: 3.2.4(vitest@3.2.4(@types/node@22.18.0)(happy-dom@20.11.2))
+      '@voxel-maker/testkit':
+        specifier: workspace:*
+        version: link:../testkit
       typescript:
         specifier: 'catalog:'
         version: 5.9.2
@@ -651,6 +654,9 @@ importers:
         specifier: workspace:*
         version: link:../voxel
     devDependencies:
+      '@voxel-maker/testkit':
+        specifier: workspace:*
+        version: link:../testkit
       typescript:
         specifier: 'catalog:'
         version: 5.9.2

@@ -22,7 +22,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "@voxel-maker/testkit": "workspace:*"
   },
   "dependencies": {
     "@voxel-maker/shared": "workspace:*",

@@ -34,6 +34,24 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 /** Maximum response bytes read for an error body. */
 const MAX_ERROR_BODY = 1_000;
 
+/**
+ * Hard caps on the provider stream (issue #44, plan §11.2): the provider
+ * response is untrusted input, so the accumulated SSE buffer, one SSE
+ * line, one accumulated tool-call argument payload, and the tool-call
+ * count are all bounded before further allocation. Violations fail the
+ * stream with a structured error instead of growing memory without bound.
+ * All caps are measured in UTF-8 bytes of decoded text.
+ */
+export const MAX_STREAM_BUFFER_BYTES = 8 * 1024 * 1024;
+export const MAX_STREAM_LINE_BYTES = 1024 * 1024;
+export const MAX_TOOL_ARGUMENT_BYTES = 256 * 1024;
+export const MAX_TOOL_CALLS_PER_STREAM = 128;
+
+/** Bounded-stream error used for every stream-limit violation. */
+function streamLimitError(code: string, message: string): ProviderError {
+  return normalizedError("invalid-response", code, message, false);
+}
+
 export interface OpenAIAdapterOptions {
   /** Supplies the keychain-held API key per request; never stored here. */
   readonly getApiKey: () => Secret | Promise<Secret>;
@@ -396,19 +414,45 @@ export class OpenAIProvider implements ProviderAdapter {
         return;
       }
       let buffer = "";
+      let bufferBytes = 0;
       const toolCalls = new Map<number, StreamedToolCall>();
+      const toolArgumentBytes = new Map<number, number>();
       let usage: ProviderUsage | undefined;
       let finish: ProviderFinishReason | undefined;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        const text = decoder.decode(value, { stream: true });
+        buffer += text;
+        bufferBytes += new TextEncoder().encode(text).byteLength;
+        if (bufferBytes > MAX_STREAM_BUFFER_BYTES) {
+          yield {
+            kind: "error",
+            error: streamLimitError(
+              "STREAM_LIMIT_EXCEEDED",
+              "Provider stream exceeded the accumulated byte limit",
+            ),
+          };
+          return;
+        }
         let newline = buffer.indexOf("\n");
         while (newline >= 0) {
           const line = buffer.slice(0, newline).trim();
           buffer = buffer.slice(newline + 1);
           if (line.startsWith("data:")) {
             const data = line.slice(5).trim();
+            if (
+              new TextEncoder().encode(data).byteLength > MAX_STREAM_LINE_BYTES
+            ) {
+              yield {
+                kind: "error",
+                error: streamLimitError(
+                  "STREAM_LIMIT_EXCEEDED",
+                  "Provider stream exceeded the per-line byte limit",
+                ),
+              };
+              return;
+            }
             if (data === "[DONE]") {
               if (finish === undefined) finish = "stop";
               buffer = "";
@@ -463,11 +507,44 @@ export class OpenAIProvider implements ProviderAdapter {
                   name: "",
                   arguments: "",
                 };
+                if (
+                  toolCalls.size >= MAX_TOOL_CALLS_PER_STREAM &&
+                  !toolCalls.has(part.index)
+                ) {
+                  yield {
+                    kind: "error",
+                    error: streamLimitError(
+                      "STREAM_LIMIT_EXCEEDED",
+                      "Provider stream exceeded the tool-call count limit",
+                    ),
+                  };
+                  return;
+                }
+                const added = part.function?.arguments ?? "";
+                const addedBytes = new TextEncoder().encode(added).byteLength;
+                const currentArgumentBytes =
+                  toolArgumentBytes.get(part.index) ?? 0;
+                if (
+                  currentArgumentBytes + addedBytes >
+                  MAX_TOOL_ARGUMENT_BYTES
+                ) {
+                  yield {
+                    kind: "error",
+                    error: streamLimitError(
+                      "STREAM_LIMIT_EXCEEDED",
+                      "Provider stream exceeded the tool-call argument byte limit",
+                    ),
+                  };
+                  return;
+                }
+                toolArgumentBytes.set(
+                  part.index,
+                  currentArgumentBytes + addedBytes,
+                );
                 toolCalls.set(part.index, {
                   id: part.id ?? current.id,
                   name: part.function?.name ?? current.name,
-                  arguments:
-                    current.arguments + (part.function?.arguments ?? ""),
+                  arguments: current.arguments + added,
                 });
               }
               if (

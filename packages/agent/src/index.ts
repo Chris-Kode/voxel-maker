@@ -261,6 +261,11 @@ export {
   redactSecrets,
 } from "./provider/redact.js";
 export {
+  buildSessionDiagnostics,
+  type SessionDiagnostics,
+  type SessionDiagnosticsInput,
+} from "./diagnostics.js";
+export {
   OPENAI_ALLOWED_MODELS,
   OPENAI_MODEL_PRICES,
   estimateCostUsd,

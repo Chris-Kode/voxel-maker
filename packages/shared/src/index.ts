@@ -98,16 +98,39 @@ export interface WorkspaceErrorInput extends Omit<WorkspaceErrorData, "cause"> {
   readonly cause?: unknown;
 }
 
-function cloneJson(value: JsonValue): JsonValue {
+/**
+ * Hard nesting caps for canonical JSON work (issue #44, plan §11.2): a
+ * deeply nested untrusted value must fail with a structured `WorkspaceError`
+ * instead of a stack-overflow `RangeError`. 512 levels is far above every
+ * legitimate v1 payload (document metadata is capped at 16) and far below
+ * the engine stack limit.
+ */
+export const CANONICAL_JSON_MAX_DEPTH = 512;
+
+/** Structured nesting-cap failure shared by every deep JSON walker. */
+export function depthLimitError(maxDepth: number): WorkspaceError {
+  return new WorkspaceError({
+    family: "limit",
+    code: "LIMIT_EXCEEDED",
+    message: `Value exceeds the maximum nesting depth of ${String(maxDepth)}`,
+  });
+}
+
+function cloneJson(value: JsonValue, depth = 0): JsonValue {
+  if (depth > CANONICAL_JSON_MAX_DEPTH)
+    throw depthLimitError(CANONICAL_JSON_MAX_DEPTH);
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) {
     const items = value as readonly JsonValue[];
-    return Object.freeze(items.map((item) => cloneJson(item)));
+    return Object.freeze(items.map((item) => cloneJson(item, depth + 1)));
   }
   const record = value as Readonly<Record<string, JsonValue>>;
   return Object.freeze(
     Object.fromEntries(
-      Object.entries(record).map(([key, item]) => [key, cloneJson(item)]),
+      Object.entries(record).map(([key, item]) => [
+        key,
+        cloneJson(item, depth + 1),
+      ]),
     ),
   );
 }
@@ -204,7 +227,13 @@ export function materialId(value: number): MaterialId {
   return value as MaterialId;
 }
 
-function normalize(value: JsonValue, ancestors: Set<object>): JsonValue {
+function normalize(
+  value: JsonValue,
+  ancestors: Set<object>,
+  depth = 0,
+): JsonValue {
+  if (depth > CANONICAL_JSON_MAX_DEPTH)
+    throw depthLimitError(CANONICAL_JSON_MAX_DEPTH);
   if (
     typeof value === "number" &&
     (!Number.isFinite(value) || Object.is(value, -0))
@@ -228,13 +257,16 @@ function normalize(value: JsonValue, ancestors: Set<object>): JsonValue {
   let result: JsonValue;
   if (Array.isArray(value)) {
     const items = value as readonly JsonValue[];
-    result = items.map((item) => normalize(item, ancestors));
+    result = items.map((item) => normalize(item, ancestors, depth + 1));
   } else {
     const record = value as Readonly<Record<string, JsonValue>>;
     result = Object.fromEntries(
       Object.keys(record)
         .sort()
-        .map((key) => [key, normalize(record[key] as JsonValue, ancestors)]),
+        .map((key) => [
+          key,
+          normalize(record[key] as JsonValue, ancestors, depth + 1),
+        ]),
     );
   }
   ancestors.delete(value);

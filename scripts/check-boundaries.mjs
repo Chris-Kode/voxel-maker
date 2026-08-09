@@ -56,6 +56,7 @@ const allowedDependencies = {
     "voxel",
     "rigging",
     "animation",
+    "testkit",
   ],
   interchange: [
     "shared",
@@ -67,7 +68,15 @@ const allowedDependencies = {
     "formats",
     "storage",
   ],
-  storage: ["shared", "math", "model", "document", "voxel", "formats"],
+  storage: [
+    "shared",
+    "math",
+    "model",
+    "document",
+    "voxel",
+    "formats",
+    "testkit",
+  ],
   agent: [
     "shared",
     "math",
@@ -81,7 +90,9 @@ const allowedDependencies = {
   // Generators themselves depend only on shared/agent/commands; the
   // generic document stack is declared for the generator lifecycle and
   // boundary tests that stage proposals into a real preview session.
-  skills: ["shared", "agent", "commands", "model", "document"],
+  // animation/formats are test-only devDependencies (ticket #38 boundary
+  // proof) and are never imported by skills source.
+  skills: ["shared", "agent", "commands", "model", "document", "animation", "formats"],
   testkit: ["shared"],
   evaluation: [
     "shared",
@@ -144,7 +155,13 @@ export async function inspectBoundaries(workspaceRoot) {
     const packageName = directory.name;
     const manifestPath = resolve(packageRoot, packageName, "package.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    const dependencies = Object.keys(manifest.dependencies ?? {})
+    // Both runtime and test-only (dev) workspace dependencies count as
+    // declared; the allowed-graph rule below still bounds both.
+    const declared = {
+      ...(manifest.dependencies ?? {}),
+      ...(manifest.devDependencies ?? {}),
+    };
+    const dependencies = Object.keys(declared)
       .filter((name) => name.startsWith("@voxel-maker/"))
       .map((name) => name.slice(13));
     graph.set(packageName, dependencies);

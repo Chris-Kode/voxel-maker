@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   WorkspaceError,
+  type JsonValue,
   animationId,
   canonicalJson,
   createListenerSet,
@@ -41,6 +42,21 @@ describe("shared contracts", () => {
     expect(materialId(65_535)).toBe(65_535);
     expect(() => materialId(0)).toThrow(/1 through 65535/u);
     expect(() => materialId(1.5)).toThrow(/1 through 65535/u);
+  });
+
+  it("rejects nesting bombs with a structured limit error, not a stack overflow", () => {
+    let nested: JsonValue = { leaf: true };
+    for (let i = 0; i < 2000; i += 1) nested = { next: nested };
+    try {
+      canonicalJson(nested);
+      expect.unreachable("expected LIMIT_EXCEEDED");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkspaceError);
+      expect((error as WorkspaceError).family).toBe("limit");
+      expect((error as WorkspaceError).code).toBe("LIMIT_EXCEEDED");
+    }
+    // Shallow payloads are unaffected.
+    expect(canonicalJson({ a: [{ b: 1 }] })).toBe('{"a":[{"b":1}]}');
   });
 
   it("exposes immutable serializable errors with redacted causes", () => {
