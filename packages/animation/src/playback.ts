@@ -133,6 +133,7 @@ export function createPlaybackController(
       clipId: currentClip?.animationId ?? null,
     });
 
+  /** True when a once-policy clip with the transport loop off reached its end. */
   const atClipEnd = (): boolean => {
     if (currentClip === null) return false;
     if (loopOverride || currentClip.loop === "loop") return false;
@@ -198,8 +199,10 @@ export function createPlaybackController(
       time += delta;
       if (atClipEnd()) {
         // A `once` clip with the transport loop override off reaches its
-        // end: clamp and auto-pause exactly at the duration.
-        time = currentClip === null ? time : currentClip.duration;
+        // end: clamp and auto-pause exactly at the duration. atClipEnd
+        // implies a loaded clip, so the duration is safe to read.
+        const clip = currentClip;
+        if (clip !== null) time = clip.duration;
         playing = false;
       }
       emit();

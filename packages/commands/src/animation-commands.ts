@@ -592,17 +592,11 @@ function parseKeyframeRef(payload: unknown): {
   readonly keyframeId: KeyframeId;
 } {
   const ref = parseTrackRef(payload);
-  if (!isRecord(payload)) {
-    throw new WorkspaceError({
-      family: "validation",
-      code: "INVALID_FIELD_TYPE",
-      message: "Expected a payload object",
-      path: ["payload"],
-    });
-  }
+  // parseTrackRef already rejected non-record payloads.
+  const record = payload as Record<string, unknown>;
   return {
     ...ref,
-    keyframeId: parseKeyframeIdValue(payload.keyframeId, [
+    keyframeId: parseKeyframeIdValue(record.keyframeId, [
       "payload",
       "keyframeId",
     ]),
@@ -780,45 +774,28 @@ function animationResources(
   };
 }
 
-function countTracks(document: VoxelDocument): number {
-  let total = 0;
-  for (const clip of Object.values(document.animations)) {
-    total += clip.tracks.length;
-  }
-  return total;
-}
-
-function countKeyframes(document: VoxelDocument): number {
-  let total = 0;
-  for (const clip of Object.values(document.animations)) {
-    for (const track of clip.tracks) {
-      total += track.keyframes.length;
-    }
-  }
-  return total;
-}
-
-function trackIdExists(document: VoxelDocument, trackId: TrackId): boolean {
-  for (const clip of Object.values(document.animations)) {
-    if (clip.tracks.some((track) => track.trackId === trackId)) return true;
-  }
-  return false;
-}
-
-function keyframeIdExists(
-  document: VoxelDocument,
-  keyframeId: KeyframeId,
-): boolean {
+/** One walk over the animation model for budget and uniqueness checks. */
+function animationModelSummary(document: VoxelDocument): {
+  readonly trackCount: number;
+  readonly keyframeCount: number;
+  readonly trackIds: ReadonlySet<string>;
+  readonly keyframeIds: ReadonlySet<string>;
+} {
+  let trackCount = 0;
+  let keyframeCount = 0;
+  const trackIds = new Set<string>();
+  const keyframeIds = new Set<string>();
   for (const clip of Object.values(document.animations)) {
     for (const track of clip.tracks) {
-      if (
-        track.keyframes.some((keyframe) => keyframe.keyframeId === keyframeId)
-      ) {
-        return true;
+      trackCount += 1;
+      trackIds.add(track.trackId);
+      for (const keyframe of track.keyframes) {
+        keyframeCount += 1;
+        keyframeIds.add(keyframe.keyframeId);
       }
     }
   }
-  return false;
+  return { trackCount, keyframeCount, trackIds, keyframeIds };
 }
 
 const createAnimationHandler: CommandHandler<
@@ -1075,7 +1052,8 @@ const addTrackHandler: CommandHandler<
         context: { nodeId: payload.targetNodeId },
       });
     }
-    if (trackIdExists(context.document, payload.trackId)) {
+    const summary = animationModelSummary(context.document);
+    if (summary.trackIds.has(payload.trackId)) {
       const existing = trackOfDocument(context.document, payload.trackId);
       if (existing !== undefined && trackMatchesAddPayload(existing, payload)) {
         return; // identical record: no-op commit
@@ -1087,7 +1065,7 @@ const addTrackHandler: CommandHandler<
         context: { trackId: payload.trackId },
       });
     }
-    if (countTracks(context.document) >= context.limits.maxTracks) {
+    if (summary.trackCount >= context.limits.maxTracks) {
       throw new WorkspaceError({
         family: "limit",
         code: "LIMIT_EXCEEDED",
@@ -1340,7 +1318,10 @@ const setKeyframeHandler: CommandHandler<
     );
     if (existing === undefined) {
       // Creating a new keyframe: honor the document-wide keyframe budgets.
-      if (countKeyframes(context.document) >= context.limits.maxKeyframes) {
+      if (
+        animationModelSummary(context.document).keyframeCount >=
+        context.limits.maxKeyframes
+      ) {
         throw new WorkspaceError({
           family: "limit",
           code: "LIMIT_EXCEEDED",
@@ -1356,7 +1337,11 @@ const setKeyframeHandler: CommandHandler<
           context: { trackId: payload.trackId },
         });
       }
-      if (keyframeIdExists(context.document, payload.keyframeId)) {
+      if (
+        animationModelSummary(context.document).keyframeIds.has(
+          payload.keyframeId,
+        )
+      ) {
         throw new WorkspaceError({
           family: "validation",
           code: "DUPLICATE_KEYFRAME_ID",

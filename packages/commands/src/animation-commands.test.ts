@@ -651,6 +651,36 @@ describe("keyframe.set / keyframe.move / keyframe.delete", () => {
     expect(clips(store)[CLIP]?.tracks[0]?.keyframes).toHaveLength(2);
   });
 
+  it("rejects updating a keyframe onto another keyframe's time", () => {
+    const { bus, tx } = harness();
+    authorClip(bus, tx);
+    bus.execute(
+      setKeyframeCommand(commandId("command:animcmd:key:0002"), {
+        animationId: CLIP,
+        trackId: TRACK,
+        keyframeId: keyframeId("keyframe:animcmd:spin:1"),
+        time: 1,
+        property: { channel: "rotation", value: [0, 1, 0, 0] },
+      }),
+      tx("set2"),
+    );
+    // Updating the existing keyframe at time 0 onto time 1 collides.
+    const collision = bus.execute(
+      setKeyframeCommand(commandId("command:animcmd:key:collision"), {
+        animationId: CLIP,
+        trackId: TRACK,
+        keyframeId: KEY,
+        time: 1,
+        property: { channel: "rotation", value: [0, 0, 0, 1] },
+      }),
+      tx("collision-update"),
+    );
+    expect(collision.ok).toBe(false);
+    if (!collision.ok)
+      expect(collision.error.code).toBe("DUPLICATE_KEYFRAME_TIME");
+    expect(collision.ok).toBe(false);
+  });
+
   it("rejects moving a keyframe onto another keyframe's time", () => {
     const { bus, tx } = harness();
     authorClip(bus, tx);
