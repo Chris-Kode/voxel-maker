@@ -1,19 +1,6 @@
 import {
   CommandBus,
   CommandRegistry,
-  decodeVolumeEntries,
-  VOXEL_COPY_REGION_COMMAND,
-  VOXEL_DELETE_REGION_COMMAND,
-  VOXEL_FILL_BOX_COMMAND,
-  VOXEL_FILL_CYLINDER_COMMAND,
-  VOXEL_FILL_SPHERE_COMMAND,
-  VOXEL_MIRROR_REGION_COMMAND,
-  VOXEL_REMOVE_BATCH_COMMAND,
-  VOXEL_REPLACE_MATERIAL_COMMAND,
-  VOXEL_ROTATE_REGION_COMMAND,
-  VOXEL_SET_BATCH_COMMAND,
-  VOXEL_TRANSLATE_REGION_COMMAND,
-  VOLUME_CREATE_COMMAND,
   type Command,
   type TransactionResult,
 } from "@voxel-maker/commands";
@@ -24,7 +11,6 @@ import {
   transactionId,
   type CommandId,
   type DocumentId,
-  type JsonValue,
   type MaterialId,
   type NodeId,
   type TransactionId,
@@ -37,11 +23,7 @@ import type {
   DocumentStoreRead,
 } from "@voxel-maker/document";
 import type { VoxelWriteCapability } from "@voxel-maker/voxel";
-import {
-  cylinderEstimate,
-  regionVolume,
-  sphereEstimate,
-} from "./mutation/parse.js";
+import { estimateVoxelDelta } from "./mutation/estimate.js";
 import { resolveMutationLimits, type MutationLimits } from "./limits.js";
 import { createPreviewRegistry } from "./registry.js";
 import { PreviewStore } from "./preview-store.js";
@@ -58,6 +40,15 @@ import { PreviewStore } from "./preview-store.js";
  * the live bus against the captured base revision; Discard and
  * cancellation release all preview resources.
  */
+
+/**
+ * Deterministic sequence for default session ids: two default sessions on
+ * the same document and revision must still own distinct namespaces and
+ * distinct default apply transaction ids (the live bus rejects a reused
+ * transaction id with different commands). Callers that need stable ids
+ * across runs pass an explicit `sessionId`.
+ */
+let defaultSessionSequence = 0;
 
 /** Branded identifier of one preview session; doubles as its namespace. */
 export type PreviewSessionId = string & {
@@ -101,7 +92,7 @@ export interface PreviewSessionOptions {
 }
 
 /** One staged command and the preview event it produced. */
-export interface StagedStage {
+export interface StagedEntry {
   readonly command: Command;
   readonly revision: number;
   readonly event: DocumentCommitted;
@@ -123,7 +114,7 @@ export type StageResult =
 export type StageManyResult =
   | {
       readonly ok: true;
-      readonly staged: readonly StagedStage[];
+      readonly staged: readonly StagedEntry[];
     }
   | {
       readonly ok: false;
@@ -268,7 +259,9 @@ class PreviewSessionImpl implements PreviewSession {
   }
 
   get stagedCommands(): readonly Command[] {
-    return this.#staged;
+    // A frozen copy: callers must never mutate the session's staged list,
+    // which would bypass the command/voxel budgets and duplicate-id checks.
+    return Object.freeze([...this.#staged]);
   }
 
   get voxelEstimate(): number {
@@ -372,7 +365,7 @@ class PreviewSessionImpl implements PreviewSession {
   }
 
   stageMany(commands: readonly Command[]): StageManyResult {
-    const staged: StagedStage[] = [];
+    const staged: StagedEntry[] = [];
     for (let index = 0; index < commands.length; index += 1) {
       const command = commands[index];
       if (command === undefined) continue;
@@ -498,7 +491,10 @@ export function createPreviewSession(
   (document as { revision: number }).revision = baseRevision;
   const sessionId =
     options.sessionId ??
-    previewSessionId(`preview:${document.documentId}:${String(baseRevision)}`);
+    previewSessionId(
+      `preview:${document.documentId}:${String(baseRevision)}:${String(defaultSessionSequence)}`,
+    );
+  defaultSessionSequence += 1;
   const capability: VoxelWriteCapability = { __kind: "VoxelWriteCapability" };
   const store = new PreviewStore(live, document, capability);
   const registry = options.registry ?? createPreviewRegistry();
@@ -556,103 +552,4 @@ function isCommandShape(value: unknown): value is Command {
     record.payload !== null &&
     !Array.isArray(record.payload)
   );
-}
-
-/**
- * Conservative proposed-voxel estimate of one staged command (plan
- * S11.10). Region operations use the region volume (an upper bound);
- * replaceMaterial without a region uses the volume's occupied count;
- * everything else reports 0. Malformed payloads estimate 0 and are
- * rejected by command validation instead.
- */
-function estimateVoxelDelta(
-  command: Command,
-  store: DocumentStoreRead,
-): number {
-  const payload = command.payload as
-    | Readonly<Record<string, JsonValue>>
-    | undefined;
-  if (payload === undefined) return 0;
-  switch (command.type) {
-    case VOXEL_SET_BATCH_COMMAND:
-      return arrayLength(payload.entries);
-    case VOXEL_REMOVE_BATCH_COMMAND:
-      return arrayLength(payload.coordinates);
-    case VOXEL_FILL_BOX_COMMAND:
-      return regionVolumeOf(payload.region);
-    case VOXEL_FILL_SPHERE_COMMAND:
-      return sphereEstimate(finiteNumber(payload.radius));
-    case VOXEL_FILL_CYLINDER_COMMAND:
-      return cylinderEstimate(
-        finiteNumber(payload.radius),
-        finiteNumber(payload.height),
-      );
-    case VOXEL_REPLACE_MATERIAL_COMMAND: {
-      const region = payload.region;
-      if (region !== undefined) return regionVolumeOf(region);
-      const volumeId =
-        typeof payload.volumeId === "string" ? payload.volumeId : "";
-      const view = store.getVolume(volumeId as VolumeId);
-      return view === undefined ? 0 : view.occupiedCount();
-    }
-    case VOXEL_COPY_REGION_COMMAND:
-      return 2 * regionVolumeOf(payload.source);
-    case VOXEL_DELETE_REGION_COMMAND:
-    case VOXEL_TRANSLATE_REGION_COMMAND:
-    case VOXEL_ROTATE_REGION_COMMAND:
-    case VOXEL_MIRROR_REGION_COMMAND:
-      return regionVolumeOf(payload.region);
-    case VOLUME_CREATE_COMMAND:
-      return volumeEntriesCount(payload.entries);
-    default:
-      return 0;
-  }
-}
-
-/** Length of a payload array, or 0 for malformed values. */
-function arrayLength(value: JsonValue | undefined): number {
-  return Array.isArray(value) ? value.length : 0;
-}
-
-/** Volume of a payload region, or 0 for malformed values. */
-function regionVolumeOf(value: JsonValue | undefined): number {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return 0;
-  }
-  const record = value as Readonly<Record<string, JsonValue>>;
-  const min = record.min;
-  const max = record.max;
-  if (!isVec3iValue(min) || !isVec3iValue(max)) {
-    return 0;
-  }
-  const minArr = min as readonly [number, number, number];
-  const maxArr = max as readonly [number, number, number];
-  if (minArr[0] > maxArr[0] || minArr[1] > maxArr[1] || minArr[2] > maxArr[2]) {
-    return 0;
-  }
-  return regionVolume({ min: minArr, max: maxArr });
-}
-
-/** True when `value` is an integer array of exactly three numbers. */
-function isVec3iValue(value: JsonValue | undefined): boolean {
-  return (
-    Array.isArray(value) &&
-    value.length === 3 &&
-    value.every((item) => typeof item === "number" && Number.isInteger(item))
-  );
-}
-
-/** Finite number or 0 for malformed values. */
-function finiteNumber(value: JsonValue | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-/** Decoded entry count of a volume.create payload, or 0. */
-function volumeEntriesCount(value: JsonValue | undefined): number {
-  if (value === undefined) return 0;
-  try {
-    return decodeVolumeEntries(value, []).length;
-  } catch {
-    return 0;
-  }
 }

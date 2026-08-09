@@ -16,6 +16,7 @@ import {
   requireString,
   resolveCommandId,
 } from "./parse.js";
+import { estimateVoxelDelta } from "./estimate.js";
 import { invalidArgument } from "../contract.js";
 
 /**
@@ -94,14 +95,6 @@ export const DELETE_MATERIAL_CONTRACT: ToolContract = {
   outputSchema: mutationOutputSchema("deleteMaterial"),
 };
 
-/** Throws the stable missing-material error. */
-function requireExistingMaterialOrThrow(
-  ctx: MutationToolContext,
-  id: ReturnType<typeof requireMaterialId>,
-): void {
-  requireExistingMaterial(ctx.store, id);
-}
-
 export function createMaterial(
   ctx: MutationToolContext,
   args: JsonValue,
@@ -115,18 +108,16 @@ export function createMaterial(
   }
   const name = requireString(record, "name");
   const color = requireColor(record);
-  return {
-    command: createMaterialCommand(resolveCommandId(ctx, record), {
-      materialId: materialIdValue,
-      name,
-      color,
-      opacity: requireOptionalNumber(record, "opacity", 0, 1) ?? 1,
-      roughness: requireOptionalNumber(record, "roughness", 0, 1) ?? 0.5,
-      metallic: requireOptionalNumber(record, "metallic", 0, 1) ?? 0,
-      emissive: requireOptionalNumber(record, "emissive", 0, 1) ?? 0,
-    }),
-    voxelEstimate: 0,
-  };
+  const command = createMaterialCommand(resolveCommandId(ctx, record), {
+    materialId: materialIdValue,
+    name,
+    color,
+    opacity: requireOptionalNumber(record, "opacity", 0, 1) ?? 1,
+    roughness: requireOptionalNumber(record, "roughness", 0, 1) ?? 0.5,
+    metallic: requireOptionalNumber(record, "metallic", 0, 1) ?? 0,
+    emissive: requireOptionalNumber(record, "emissive", 0, 1) ?? 0,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function updateMaterial(
@@ -135,25 +126,23 @@ export function updateMaterial(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const materialIdValue = requireMaterialId(record, "materialId");
-  requireExistingMaterialOrThrow(ctx, materialIdValue);
+  requireExistingMaterial(ctx.store, materialIdValue);
   const name = requireOptionalString(record, "name");
   const color = requireOptionalColor(record, "color");
   const opacity = requireOptionalNumber(record, "opacity", 0, 1);
   const roughness = requireOptionalNumber(record, "roughness", 0, 1);
   const metallic = requireOptionalNumber(record, "metallic", 0, 1);
   const emissive = requireOptionalNumber(record, "emissive", 0, 1);
-  return {
-    command: updateMaterialCommand(resolveCommandId(ctx, record), {
-      materialId: materialIdValue,
-      ...(name === undefined ? {} : { name }),
-      ...(color === undefined ? {} : { color: canonicalColor(color) }),
-      ...(opacity === undefined ? {} : { opacity }),
-      ...(roughness === undefined ? {} : { roughness }),
-      ...(metallic === undefined ? {} : { metallic }),
-      ...(emissive === undefined ? {} : { emissive }),
-    }),
-    voxelEstimate: 0,
-  };
+  const command = updateMaterialCommand(resolveCommandId(ctx, record), {
+    materialId: materialIdValue,
+    ...(name === undefined ? {} : { name }),
+    ...(color === undefined ? {} : { color: canonicalColor(color) }),
+    ...(opacity === undefined ? {} : { opacity }),
+    ...(roughness === undefined ? {} : { roughness }),
+    ...(metallic === undefined ? {} : { metallic }),
+    ...(emissive === undefined ? {} : { emissive }),
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function deleteMaterial(
@@ -162,26 +151,24 @@ export function deleteMaterial(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const materialIdValue = requireMaterialId(record, "materialId");
-  requireExistingMaterialOrThrow(ctx, materialIdValue);
+  requireExistingMaterial(ctx.store, materialIdValue);
   const replacement = record.replacement;
   let replacementId: ReturnType<typeof requireMaterialId> | undefined;
   if (replacement !== undefined) {
     replacementId = requireMaterialId(record, "replacement");
     requireExistingMaterial(ctx.store, replacementId);
   }
-  return {
-    command: deleteMaterialCommand(resolveCommandId(ctx, record), {
-      materialId: materialIdValue,
-      ...(replacementId === undefined ? {} : { replacement: replacementId }),
-    }),
-    voxelEstimate: 0,
-  };
+  const command = deleteMaterialCommand(resolveCommandId(ctx, record), {
+    materialId: materialIdValue,
+    ...(replacementId === undefined ? {} : { replacement: replacementId }),
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
-/** Validates a canonical #rrggbb color argument. */
+/** Validates a required canonical #rrggbb color argument. */
 function requireColor(record: Readonly<Record<string, JsonValue>>): Color {
-  const value = requireString(record, "color");
-  if (value.length !== 7 || value[0] !== "#") {
+  const value = requireOptionalColor(record, "color");
+  if (value === undefined) {
     invalidArgument("color must be a canonical #rrggbb color", ["color"]);
   }
   return canonicalColor(value);

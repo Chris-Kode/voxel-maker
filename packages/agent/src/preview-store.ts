@@ -16,6 +16,7 @@ import {
   type VoxelVolumeReadView,
   type VoxelWriteCapability,
 } from "@voxel-maker/voxel";
+import { deepFreeze } from "./freeze.js";
 
 /**
  * Copy-on-write preview store (plan S11.15, ticket #32): the private
@@ -208,13 +209,4 @@ export class PreviewStore implements DocumentStore {
       }
     }
   }
-}
-
-/** Deep-freezes a plain event/document object so consumers cannot mutate it. */
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null) return value;
-  for (const key of Object.keys(value)) {
-    deepFreeze((value as Record<string, unknown>)[key]);
-  }
-  return Object.freeze(value);
 }

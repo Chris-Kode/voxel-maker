@@ -1,9 +1,13 @@
 /**
  * Public entry point of the agent package: bounded, provider-neutral AI
- * inspection tools (plan S11.1-S11.4, S11.9, S11.10, S11.12, S11.14;
- * ticket #31). The surface is deterministic, versioned by JSON-Schema
- * contracts, resource-bounded, authorized separately from mutation, and
- * testable headless without an LLM.
+ * tool surfaces. Inspection tools (plan S11.1-S11.4, S11.9, S11.10,
+ * S11.12, S11.14; ticket #31) read the live document; mutation tools
+ * (plan S11.5/S11.6, ticket #32) construct registered commands, and the
+ * copy-on-write preview session (plan S11.11/S11.15, ticket #32) stages
+ * them against an isolated overlay before one optimistic Apply. The whole
+ * surface is deterministic, versioned by JSON-Schema contracts,
+ * resource-bounded, authorized by capability, and testable headless
+ * without an LLM.
  */
 export {
   createInspector,
@@ -72,7 +76,7 @@ export {
   type PreviewSessionOptions,
   type StageManyResult,
   type StageResult,
-  type StagedStage,
+  type StagedEntry,
 } from "./preview.js";
 export {
   MUTATION_CAPABILITY,

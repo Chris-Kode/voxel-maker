@@ -25,6 +25,7 @@ import type { InspectionLimits } from "../limits.js";
 /** Stable error codes for missing references. */
 export const UNKNOWN_NODE_CODE = "UNKNOWN_NODE";
 export const UNKNOWN_VOLUME_CODE = "UNKNOWN_VOLUME";
+export const UNKNOWN_MATERIAL_CODE = "UNKNOWN_MATERIAL";
 export const UNKNOWN_ANIMATION_CODE = "UNKNOWN_ANIMATION";
 export const UNKNOWN_TRACK_CODE = "UNKNOWN_TRACK";
 

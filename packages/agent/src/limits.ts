@@ -57,21 +57,32 @@ export const DEFAULT_INSPECTION_LIMITS: InspectionLimits = Object.freeze({
  * strict lowerings are honored; every limit is clamped to `[0, default]`
  * so no caller can raise a bound past the default budget.
  */
+/**
+ * Merges caller overrides against hard defaults and clamps every numeric
+ * limit into `[0, default]`, so no caller can raise a bound past the
+ * default budget. Shared by every limit profile.
+ */
+function clampLimits<T extends object>(
+  defaults: T,
+  overrides: Partial<T> | undefined,
+): T {
+  const merged = { ...defaults, ...overrides };
+  const clamped = {} as Record<string, number>;
+  for (const key of Object.keys(defaults)) {
+    const value = (merged as Record<string, unknown>)[key];
+    const max = (defaults as Record<string, number>)[key] as number;
+    clamped[key] =
+      typeof value === "number" && Number.isFinite(value)
+        ? Math.max(0, Math.min(value, max))
+        : max;
+  }
+  return Object.freeze(clamped) as unknown as T;
+}
+
 export function resolveInspectionLimits(
   overrides: Partial<InspectionLimits> | undefined,
 ): InspectionLimits {
-  const merged = { ...DEFAULT_INSPECTION_LIMITS, ...overrides };
-  const clamped = {} as Record<keyof InspectionLimits, number>;
-  for (const key of Object.keys(DEFAULT_INSPECTION_LIMITS) as Array<
-    keyof InspectionLimits
-  >) {
-    const value = merged[key];
-    const max = DEFAULT_INSPECTION_LIMITS[key];
-    clamped[key] = Number.isFinite(value)
-      ? Math.max(0, Math.min(value, max))
-      : max;
-  }
-  return Object.freeze(clamped) as unknown as InspectionLimits;
+  return clampLimits(DEFAULT_INSPECTION_LIMITS, overrides);
 }
 
 /**
@@ -118,16 +129,5 @@ export const DEFAULT_MUTATION_LIMITS: MutationLimits = Object.freeze({
 export function resolveMutationLimits(
   overrides: Partial<MutationLimits> | undefined,
 ): MutationLimits {
-  const merged = { ...DEFAULT_MUTATION_LIMITS, ...overrides };
-  const clamped = {} as Record<keyof MutationLimits, number>;
-  for (const key of Object.keys(DEFAULT_MUTATION_LIMITS) as Array<
-    keyof MutationLimits
-  >) {
-    const value = merged[key];
-    const max = DEFAULT_MUTATION_LIMITS[key];
-    clamped[key] = Number.isFinite(value)
-      ? Math.max(0, Math.min(value, max))
-      : max;
-  }
-  return Object.freeze(clamped) as unknown as MutationLimits;
+  return clampLimits(DEFAULT_MUTATION_LIMITS, overrides);
 }

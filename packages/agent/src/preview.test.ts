@@ -6,6 +6,7 @@ import {
   createVolumeCommand,
   fillBoxCommand,
   setVoxelCommand,
+  type Command,
 } from "@voxel-maker/commands";
 import type {
   DocumentCommitted,
@@ -72,13 +73,14 @@ function fillCommand(
 describe("preview session creation (AC: mandatory base revision)", () => {
   it("captures the live revision as the base revision and clones the document", () => {
     const { store } = liveFixture();
-    const session = createPreviewSession({ live: store });
+    const session = createPreviewSession({
+      live: store,
+      sessionId: previewSessionId("preview:test:base"),
+    });
     expect(session.baseRevision).toBe(store.revision);
     expect(session.revision).toBe(store.revision);
     expect(session.documentId).toBe(FIXTURE_IDS.document);
-    expect(session.sessionId).toBe(
-      previewSessionId(`preview:${FIXTURE_IDS.document}:1`),
-    );
+    expect(session.sessionId).toBe(previewSessionId("preview:test:base"));
     expect(session.namespace).toBe(session.sessionId);
     expect(session.namespace).toMatch(/^preview:/);
     expect(session.closed).toBe(false);
@@ -122,6 +124,36 @@ describe("preview session creation (AC: mandatory base revision)", () => {
     expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(store.revision).toBe(2);
     session.discard();
+  });
+
+  it("gives concurrent default sessions distinct namespaces and apply ids", () => {
+    const { store, bus } = liveFixture();
+    const a = createPreviewSession({ live: store, applyBus: bus });
+    const b = createPreviewSession({ live: store, applyBus: bus });
+    expect(a.sessionId).not.toBe(b.sessionId);
+    expect(a.namespace).not.toBe(b.namespace);
+    expect(a.namespace).toMatch(/^preview:document:inspect:0001:1:/);
+    // Both sessions stage the same command bytes; without distinct default
+    // transaction ids the second apply would fail with DUPLICATE_TRANSACTION_ID.
+    const command = fillCommand(
+      "command:test:dupsess:0001",
+      [0, 0, 0],
+      [2, 2, 2],
+    );
+    expect(a.stage(command).ok).toBe(true);
+    expect(b.stage(command).ok).toBe(true);
+    const applyA = a.apply();
+    expect(applyA.ok, JSON.stringify(applyA)).toBe(true);
+    expect(store.revision).toBe(2);
+    // Distinct default apply transaction ids: the live bus idempotency map
+    // would silently replay A's result for B if the ids collided; a
+    // distinct id surfaces the real optimistic conflict instead.
+    const applyB = b.apply();
+    expect(applyB.ok).toBe(false);
+    if (!applyB.ok) expect(applyB.error.code).toBe("REVISION_CONFLICT");
+    expect(store.revision).toBe(2);
+    a.discard();
+    b.discard();
   });
 
   it("exposes a distinct worker namespace per session", () => {
@@ -651,6 +683,40 @@ describe("discard and cancellation release all preview resources", () => {
     session.cancel();
     expect(session.closed).toBe(true);
     expect(store.revision).toBe(1);
+  });
+
+  it("stagedCommands returns an immutable copy that cannot bypass staging", () => {
+    const { store, bus } = liveFixture();
+    const session = createPreviewSession({ live: store, applyBus: bus });
+    const staged = fillCommand(
+      "command:test:immutable:0001",
+      [0, 0, 0],
+      [2, 2, 2],
+    );
+    expect(session.stage(staged).ok).toBe(true);
+    const view = session.stagedCommands;
+    expect(Object.isFrozen(view)).toBe(true);
+    // Mutating the exposed view must not change what Apply executes.
+    const smuggled = fillCommand(
+      "command:test:smuggle:0001",
+      [9, 9, 9],
+      [10, 10, 10],
+    );
+    expect(() => {
+      (view as Command[]).push(smuggled);
+    }).toThrow();
+    const result = session.apply({
+      transactionId: transactionId("transaction:test:immutable:0001"),
+    });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.value.event.commandIds).toEqual([
+      "command:test:immutable:0001",
+    ]);
+    expect(store.getVoxel(FIXTURE_IDS.volumeMain, [9, 9, 9])).toBe(
+      0 as MaterialId,
+    );
+    session.discard();
   });
 
   it("staged commands are released after apply", () => {

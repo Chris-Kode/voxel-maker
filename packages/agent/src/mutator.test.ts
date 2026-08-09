@@ -350,6 +350,14 @@ describe("mutation argument validation (AC: same schemas and errors as UI)", () 
     );
   });
 
+  it("reports the same voxel estimate the session budget enforces", () => {
+    const { mutator } = makeMutator();
+    const value = constructOk(mutator, "copyRegion", VALID_ARGS.copyRegion);
+    // copyRegion touches source and destination regions: the session
+    // budgets 2x the source volume, and the tool reports the same number.
+    expect(value.voxelEstimate).toBe(2);
+  });
+
   it("rejects a command id that is too long", () => {
     constructError(
       mutator,

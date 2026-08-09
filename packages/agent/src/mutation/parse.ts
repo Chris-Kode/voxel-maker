@@ -13,8 +13,13 @@ import {
   missingReference,
   mutationLimit,
 } from "../contract.js";
-import { isVec3, isVec3i, requireRegion } from "../tools/helpers.js";
-export { isVec3i, requireRegion };
+import {
+  isVec3,
+  isVec3i,
+  requireRegion,
+  UNKNOWN_MATERIAL_CODE,
+} from "../tools/helpers.js";
+export { isVec3i, requireRegion, UNKNOWN_MATERIAL_CODE };
 import type { MutationToolContext } from "./context.js";
 
 /**
@@ -23,9 +28,6 @@ import type { MutationToolContext } from "./context.js";
  * runs, and reference checks report the stable missing-reference errors
  * used across the agent surface.
  */
-
-/** Stable error code for a missing material record. */
-export const UNKNOWN_MATERIAL_CODE = "UNKNOWN_MATERIAL";
 
 const MAX_ID_LENGTH = 128;
 

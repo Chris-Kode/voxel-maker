@@ -21,6 +21,7 @@ import {
 import { MUTATION_TOOL_DEFINITIONS } from "./mutation/definitions.js";
 import { schemaErrorDetails } from "./schema.js";
 import { invalidArgument } from "./contract.js";
+import { deepFreeze } from "./freeze.js";
 import type { PreviewSession } from "./preview.js";
 
 /**
@@ -56,17 +57,6 @@ export interface Mutator {
   readonly contracts: readonly ToolContract[];
   /** Constructs one registered command; never throws. */
   construct(name: string, args: JsonValue): MutationResult;
-}
-
-/** Recursively freezes a plain JSON tree so no mutable backing data escapes. */
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object") {
-    Object.freeze(value);
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      deepFreeze((value as Record<string, unknown>)[key]);
-    }
-  }
-  return value;
 }
 
 function toToolError(error: unknown): ToolError {

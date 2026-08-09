@@ -56,7 +56,9 @@ import {
  * Every v1 mutation tool in stable registry order (plan S11.5/S11.6,
  * ticket #32): scene, material, and coarse-geometry command constructors.
  * This list is the single source for the registry, the mutator dispatch,
- * and the public exports, so adding a tool touches exactly one file.
+ * and the public exports. Adding a tool touches this list, the public
+ * re-exports in `mutation/index.ts`/`index.ts`, and — when the command
+ * touches voxels — the single estimate switch in `mutation/estimate.ts`.
  */
 export const MUTATION_TOOL_DEFINITIONS: readonly MutationToolDefinition[] =
   Object.freeze([

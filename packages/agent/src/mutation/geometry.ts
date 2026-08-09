@@ -20,13 +20,12 @@ import {
 } from "../contract.js";
 import type { JsonSchema } from "../schema.js";
 import type { MutationToolContext, MutationPayload } from "./context.js";
-import { UNKNOWN_VOLUME_CODE } from "../tools/helpers.js";
-import { missingReference } from "../contract.js";
+import { requireVolume } from "../tools/helpers.js";
+import { invalidArgument } from "../contract.js";
+import { estimateVoxelDelta } from "./estimate.js";
 import {
-  cylinderEstimate,
   isNonNegativeInteger,
   isVec3i,
-  regionVolume,
   requireAxis,
   requireBatchEntry,
   requireBatchLength,
@@ -37,9 +36,7 @@ import {
   requireRegion,
   requireVolumeId,
   resolveCommandId,
-  sphereEstimate,
 } from "./parse.js";
-import { invalidArgument } from "../contract.js";
 
 /**
  * Coarse-geometry mutation tools (plan S11.6, ticket #32): fill, batch,
@@ -304,16 +301,6 @@ export const MIRROR_REGION_CONTRACT: ToolContract = {
   outputSchema: mutationOutputSchema("mirrorRegion"),
 };
 
-/** Throws the stable missing-volume error. */
-function requireExistingVolume(
-  ctx: MutationToolContext,
-  id: ReturnType<typeof requireVolumeId>,
-): void {
-  if (ctx.store.getDocument().volumes[id] === undefined) {
-    missingReference("volume", id, UNKNOWN_VOLUME_CODE);
-  }
-}
-
 /** Validates a 0..65535 material filter argument (0 = empty). */
 function requireMaterialFilter(
   record: Readonly<Record<string, JsonValue>>,
@@ -337,18 +324,16 @@ export function fillBox(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const region = requireRegion(record.region as JsonValue, "region");
   const material = requireMaterialId(record, "material");
   requireExistingMaterial(ctx.store, material);
-  return {
-    command: fillBoxCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      region,
-      material,
-    }),
-    voxelEstimate: regionVolume(region),
-  };
+  const command = fillBoxCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    region,
+    material,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function fillSphere(
@@ -357,20 +342,18 @@ export function fillSphere(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const center = requireVec3i(record, "center");
   const radius = requireDimension(record, "radius");
   const material = requireMaterialId(record, "material");
   requireExistingMaterial(ctx.store, material);
-  return {
-    command: fillSphereCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      center,
-      radius,
-      material,
-    }),
-    voxelEstimate: sphereEstimate(radius),
-  };
+  const command = fillSphereCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    center,
+    radius,
+    material,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function fillCylinder(
@@ -379,24 +362,22 @@ export function fillCylinder(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const center = requireVec3i(record, "center");
   const radius = requireDimension(record, "radius");
   const height = requireDimension(record, "height");
   const axis = requireAxis(record, "axis");
   const material = requireMaterialId(record, "material");
   requireExistingMaterial(ctx.store, material);
-  return {
-    command: fillCylinderCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      center,
-      radius,
-      height,
-      axis,
-      material,
-    }),
-    voxelEstimate: cylinderEstimate(radius, height),
-  };
+  const command = fillCylinderCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    center,
+    radius,
+    height,
+    axis,
+    material,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function setVoxelBatch(
@@ -405,7 +386,7 @@ export function setVoxelBatch(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const entries = record.entries;
   if (!Array.isArray(entries)) {
     invalidArgument("entries must be an array", ["entries"]);
@@ -417,13 +398,11 @@ export function setVoxelBatch(
       index,
     ]),
   );
-  return {
-    command: setBatchCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      entries: parsed,
-    }),
-    voxelEstimate: parsed.length,
-  };
+  const command = setBatchCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    entries: parsed,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function removeVoxelBatch(
@@ -432,7 +411,7 @@ export function removeVoxelBatch(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const coordinates = record.coordinates;
   if (!Array.isArray(coordinates)) {
     invalidArgument("coordinates must be an array", ["coordinates"]);
@@ -449,13 +428,11 @@ export function removeVoxelBatch(
     }
     return coordinate as [number, number, number];
   });
-  return {
-    command: removeBatchCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      coordinates: parsed,
-    }),
-    voxelEstimate: parsed.length,
-  };
+  const command = removeBatchCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    coordinates: parsed,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function replaceVoxelMaterial(
@@ -464,20 +441,17 @@ export function replaceVoxelMaterial(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const region = requireOptionalRegion(record, "region");
   const fromMaterial = requireMaterialFilter(record, "fromMaterial");
   const toMaterial = requireMaterialFilter(record, "toMaterial");
-  const estimate = regionVolumeOrOccupied(ctx, volumeIdValue, region);
-  return {
-    command: replaceMaterialCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      ...(region === undefined ? {} : { region }),
-      fromMaterial,
-      toMaterial,
-    }),
-    voxelEstimate: estimate,
-  };
+  const command = replaceMaterialCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    ...(region === undefined ? {} : { region }),
+    fromMaterial,
+    toMaterial,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function copyRegion(
@@ -486,17 +460,15 @@ export function copyRegion(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const source = requireRegion(record.source as JsonValue, "source");
   const destination = requireVec3i(record, "destination");
-  return {
-    command: copyRegionCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      source,
-      destination,
-    }),
-    voxelEstimate: regionVolume(source),
-  };
+  const command = copyRegionCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    source,
+    destination,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function deleteRegion(
@@ -505,15 +477,13 @@ export function deleteRegion(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const region = requireRegion(record.region as JsonValue, "region");
-  return {
-    command: deleteRegionCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      region,
-    }),
-    voxelEstimate: regionVolume(region),
-  };
+  const command = deleteRegionCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    region,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function translateRegion(
@@ -522,17 +492,15 @@ export function translateRegion(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const region = requireRegion(record.region as JsonValue, "region");
   const delta = requireVec3i(record, "delta");
-  return {
-    command: translateRegionCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      region,
-      delta,
-    }),
-    voxelEstimate: regionVolume(region),
-  };
+  const command = translateRegionCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    region,
+    delta,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function rotateRegion(
@@ -541,19 +509,17 @@ export function rotateRegion(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const region = requireRegion(record.region as JsonValue, "region");
   const axis = requireAxis(record, "axis");
   const quarterTurns = requireQuarterTurns(record, "quarterTurns");
-  return {
-    command: rotateRegionCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      region,
-      axis,
-      quarterTurns,
-    }),
-    voxelEstimate: regionVolume(region),
-  };
+  const command = rotateRegionCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    region,
+    axis,
+    quarterTurns,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 export function mirrorRegion(
@@ -562,17 +528,15 @@ export function mirrorRegion(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const volumeIdValue = requireVolumeId(record, "volumeId");
-  requireExistingVolume(ctx, volumeIdValue);
+  requireVolume(ctx.store.getDocument(), volumeIdValue);
   const region = requireRegion(record.region as JsonValue, "region");
   const axis = requireAxis(record, "axis");
-  return {
-    command: mirrorRegionCommand(resolveCommandId(ctx, record), {
-      volumeId: volumeIdValue,
-      region,
-      axis,
-    }),
-    voxelEstimate: regionVolume(region),
-  };
+  const command = mirrorRegionCommand(resolveCommandId(ctx, record), {
+    volumeId: volumeIdValue,
+    region,
+    axis,
+  });
+  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
 }
 
 /** Validates an integer [x, y, z] argument. */
@@ -597,15 +561,4 @@ function requireDimension(
     invalidArgument(`${key} must be a non-negative integer`, [key]);
   }
   return value as number;
-}
-
-/** Region volume, or the volume's occupied count when region is absent. */
-function regionVolumeOrOccupied(
-  ctx: MutationToolContext,
-  volumeId: ReturnType<typeof requireVolumeId>,
-  region: ReturnType<typeof requireOptionalRegion>,
-): number {
-  if (region !== undefined) return regionVolume(region);
-  const view = ctx.store.getVolume(volumeId);
-  return view === undefined ? 0 : view.occupiedCount();
 }
