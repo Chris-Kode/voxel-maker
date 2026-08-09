@@ -1,9 +1,8 @@
 import type { JsonValue } from "@voxel-maker/shared";
-import { boundedEmit } from "../budget.js";
 import { outputSchema, type ToolContract } from "../contract.js";
 import {
   clampName,
-  pageSlice,
+  paginated,
   resolvePage,
   resolvePageSize,
 } from "./helpers.js";
@@ -85,10 +84,11 @@ export function inspectMaterials(
   const materials = Object.values(store.getDocument().materials).sort(
     (a, b) => a.materialId - b.materialId,
   );
-  const slice = pageSlice(materials.length, page, pageSize);
-  const emitted = boundedEmit(
+  return paginated(
     budget,
-    materials.slice(slice.start, slice.end),
+    materials,
+    page,
+    pageSize,
     (material) => ({
       materialId: material.materialId,
       name: clampName(material.name, limits),
@@ -98,12 +98,6 @@ export function inspectMaterials(
       metallic: material.metallic,
       emissive: material.emissive,
     }),
+    "materials",
   );
-  return {
-    total: slice.total,
-    page: slice.page,
-    pageSize: slice.pageSize,
-    hasMore: slice.hasMore && !emitted.truncated,
-    materials: emitted.list,
-  };
 }

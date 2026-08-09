@@ -1,10 +1,13 @@
+import { worldTransformMatrix } from "@voxel-maker/document";
+import { decomposeMatrix, type Mat4 } from "@voxel-maker/math";
 import type { Component } from "@voxel-maker/model";
 import type { JsonValue, NodeId } from "@voxel-maker/shared";
-import { worldTransformMatrix } from "@voxel-maker/document";
-import { applyMatrix, decomposeMatrix, type Mat4 } from "@voxel-maker/math";
+import { boundedEmit } from "../budget.js";
 import {
-  invalidArgument,
+  inspectionLimit,
   outputSchema,
+  transformSchema,
+  worldTransformSchema,
   type ToolContract,
 } from "../contract.js";
 import { clampName, requireNode } from "./helpers.js";
@@ -139,7 +142,7 @@ export function inspectHierarchy(
       ? limits.defaultHierarchyDepth
       : (record.maxDepth as number);
   if (requestedDepth > limits.maxHierarchyDepth) {
-    invalidArgument(`maxDepth must be <= ${String(limits.maxHierarchyDepth)}`, [
+    inspectionLimit("maxDepth", requestedDepth, limits.maxHierarchyDepth, [
       "maxDepth",
     ]);
   }
@@ -189,62 +192,8 @@ export const INSPECT_NODE_CONTRACT: ToolContract = {
       name: { type: "string" },
       parentId: { anyOf: [{ type: "string" }, { type: "null" }] },
       children: { type: "array", items: { type: "string" } },
-      transform: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          translation: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 3,
-            maxItems: 3,
-          },
-          pivot: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 3,
-            maxItems: 3,
-          },
-          rotation: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 4,
-            maxItems: 4,
-          },
-          scale: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 3,
-            maxItems: 3,
-          },
-        },
-        required: ["translation", "pivot", "rotation", "scale"],
-      },
-      worldTransform: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          translation: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 3,
-            maxItems: 3,
-          },
-          rotation: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 4,
-            maxItems: 4,
-          },
-          scale: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 3,
-            maxItems: 3,
-          },
-        },
-        required: ["translation", "rotation", "scale"],
-      },
+      transform: transformSchema(),
+      worldTransform: worldTransformSchema(),
       components: { type: "array", items: { type: "object" } },
       metadata: {
         type: "object",
@@ -291,11 +240,12 @@ export function inspectNode(
   const record = args as Readonly<Record<string, JsonValue>>;
   const node = requireNode(document, record.nodeId as string as NodeId);
   const includeWorld = record.includeWorldTransform !== false;
+  const children = boundedEmit(ctx.budget, node.children, (childId) => childId);
   const payload: {
     nodeId: NodeId;
     name?: string;
     parentId: string | null;
-    children: readonly string[];
+    children: readonly JsonValue[];
     transform: JsonValue;
     worldTransform?: JsonValue;
     components: JsonValue[];
@@ -304,7 +254,7 @@ export function inspectNode(
     nodeId: node.nodeId,
     ...(node.name === undefined ? {} : { name: clampName(node.name, limits) }),
     parentId: node.parentId,
-    children: node.children,
+    children: children.list,
     transform: transformJson(node.transform),
     components: node.components.map(componentJson),
     metadata: {
@@ -316,14 +266,4 @@ export function inspectNode(
     payload.worldTransform = worldTransformJson(world, node.transform.pivot);
   }
   return payload;
-}
-
-/** World-space position of a node (its origin transformed to world space). */
-export function nodeWorldPosition(
-  ctx: ToolContext,
-  nodeId: NodeId,
-): readonly [number, number, number] {
-  const document = ctx.store.getDocument();
-  const matrix = worldTransformMatrix(document, nodeId);
-  return applyMatrix(matrix, [0, 0, 0]);
 }

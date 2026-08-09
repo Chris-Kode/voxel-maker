@@ -1,50 +1,17 @@
 import type { ToolCapability, ToolContract } from "./contract.js";
-import { GET_SELECTION_CONTRACT } from "./tools/selection.js";
-import { INSPECT_SUMMARY_CONTRACT } from "./tools/summary.js";
-import {
-  INSPECT_HIERARCHY_CONTRACT,
-  INSPECT_NODE_CONTRACT,
-} from "./tools/hierarchy.js";
-import { INSPECT_MATERIALS_CONTRACT } from "./tools/materials.js";
-import {
-  QUERY_VOXELS_CONTRACT,
-  INSPECT_BOUNDS_CONTRACT,
-} from "./tools/voxels.js";
-import { RAYCAST_CONTRACT } from "./tools/raycast.js";
-import { INSPECT_RIGGING_CONTRACT } from "./tools/rigging.js";
-import {
-  INSPECT_CLIPS_CONTRACT,
-  INSPECT_TRACKS_CONTRACT,
-  INSPECT_KEYFRAMES_CONTRACT,
-} from "./tools/animation.js";
-import { SEARCH_NODES_CONTRACT } from "./tools/search.js";
-import { MEASURE_DISTANCE_CONTRACT } from "./tools/distance.js";
+import { TOOL_DEFINITIONS } from "./tools/definitions.js";
 
 /**
  * Tool registry (plan S11.9): the versioned v1 inspection surface plus
- * capability-based authorization. The registry is the single source of
- * tool contracts; sessions expose only the contracts whose capability is
- * enabled, and inspection is always distinct from mutation.
+ * capability-based authorization. Contracts are derived from the single
+ * `TOOL_DEFINITIONS` list, so the registry cannot drift from dispatch;
+ * sessions expose only the contracts whose capability is enabled, and
+ * inspection is always distinct from mutation.
  */
 
 /** Every v1 inspection tool contract in stable registry order. */
 export const INSPECTION_TOOL_CONTRACTS: readonly ToolContract[] = Object.freeze(
-  [
-    INSPECT_SUMMARY_CONTRACT,
-    GET_SELECTION_CONTRACT,
-    INSPECT_HIERARCHY_CONTRACT,
-    INSPECT_NODE_CONTRACT,
-    INSPECT_MATERIALS_CONTRACT,
-    INSPECT_BOUNDS_CONTRACT,
-    QUERY_VOXELS_CONTRACT,
-    RAYCAST_CONTRACT,
-    INSPECT_RIGGING_CONTRACT,
-    INSPECT_CLIPS_CONTRACT,
-    INSPECT_TRACKS_CONTRACT,
-    INSPECT_KEYFRAMES_CONTRACT,
-    SEARCH_NODES_CONTRACT,
-    MEASURE_DISTANCE_CONTRACT,
-  ],
+  TOOL_DEFINITIONS.map((definition) => definition.contract),
 );
 
 /** Capability class of every v1 inspection tool. */

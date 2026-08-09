@@ -42,17 +42,18 @@ export {
   jsonUnits,
 } from "./budget.js";
 export {
+  TOOL_DEFINITIONS,
+  type ToolDefinition,
+  type ToolHandler,
+} from "./tools/definitions.js";
+export {
   isValidValue,
   schemaErrors,
   validateValue,
   type JsonSchema,
   type JsonSchemaType,
 } from "./schema.js";
-export type {
-  EditorContextPort,
-  EditorSelection,
-  EditorSelectionSnapshot,
-} from "./port.js";
+export type { EditorContextPort, EditorSelectionSnapshot } from "./port.js";
 export {
   INSPECT_SUMMARY_CONTRACT,
   GET_SELECTION_CONTRACT,

@@ -3,10 +3,10 @@ import type { Vec3 } from "@voxel-maker/math";
 import {
   invalidArgument,
   outputSchema,
+  vec3Schema,
   type ToolContract,
 } from "../contract.js";
-import { requireNode } from "./helpers.js";
-import { nodeWorldPosition } from "./hierarchy.js";
+import { nodeWorldPosition, requireNode } from "./helpers.js";
 import type { ToolContext } from "./context.js";
 
 /**
@@ -21,25 +21,15 @@ export const MEASURE_DISTANCE_CONTRACT: ToolContract = {
   version: 1,
   capability: "inspect",
   description:
-    "Euclidean world-space distance between two references; each side is exactly one of fromNodeId/fromPoint (toNodeId/toPoint). Node origins are their world-space translation.",
+    "Euclidean world-space distance between two references; each side is exactly one of fromNodeId/fromPoint (toNodeId/toPoint). Node positions are their local origin mapped through the pivot-aware world transform.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
     properties: {
-      fromNodeId: { type: "string" },
-      fromPoint: {
-        type: "array",
-        items: { type: "number" },
-        minItems: 3,
-        maxItems: 3,
-      },
-      toNodeId: { type: "string" },
-      toPoint: {
-        type: "array",
-        items: { type: "number" },
-        minItems: 3,
-        maxItems: 3,
-      },
+      fromNodeId: { type: "string", maxLength: 256 },
+      fromPoint: vec3Schema(),
+      toNodeId: { type: "string", maxLength: 256 },
+      toPoint: vec3Schema(),
     },
   },
   outputSchema: outputSchema(
@@ -50,12 +40,7 @@ export const MEASURE_DISTANCE_CONTRACT: ToolContract = {
         additionalProperties: false,
         properties: {
           nodeId: { type: "string" },
-          point: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 3,
-            maxItems: 3,
-          },
+          point: vec3Schema(),
         },
       },
       to: {
@@ -63,12 +48,7 @@ export const MEASURE_DISTANCE_CONTRACT: ToolContract = {
         additionalProperties: false,
         properties: {
           nodeId: { type: "string" },
-          point: {
-            type: "array",
-            items: { type: "number" },
-            minItems: 3,
-            maxItems: 3,
-          },
+          point: vec3Schema(),
         },
       },
       distance: { type: "number", minimum: 0 },
@@ -127,9 +107,9 @@ export function measureDistance(
   const from = resolveEndpoint(ctx, record, "from");
   const to = resolveEndpoint(ctx, record, "to");
   const fromPosition =
-    "nodeId" in from ? nodeWorldPosition(ctx, from.nodeId) : from.point;
+    "nodeId" in from ? nodeWorldPosition(ctx.store, from.nodeId) : from.point;
   const toPosition =
-    "nodeId" in to ? nodeWorldPosition(ctx, to.nodeId) : to.point;
+    "nodeId" in to ? nodeWorldPosition(ctx.store, to.nodeId) : to.point;
   const dx = toPosition[0] - fromPosition[0];
   const dy = toPosition[1] - fromPosition[1];
   const dz = toPosition[2] - fromPosition[2];

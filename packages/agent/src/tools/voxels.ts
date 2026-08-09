@@ -2,13 +2,15 @@ import type { JsonValue, VolumeId } from "@voxel-maker/shared";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
 import { boundedEmit } from "../budget.js";
 import {
+  inspectionLimit,
   invalidArgument,
   outputSchema,
+  regionSchema,
   type ToolContract,
 } from "../contract.js";
 import {
   clampName,
-  pageSlice,
+  paginated,
   requireRegion,
   requireVolume,
   requireVolumeView,
@@ -36,26 +38,8 @@ export const QUERY_VOXELS_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      volumeId: { type: "string" },
-      region: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          min: {
-            type: "array",
-            items: { type: "integer" },
-            minItems: 3,
-            maxItems: 3,
-          },
-          max: {
-            type: "array",
-            items: { type: "integer" },
-            minItems: 3,
-            maxItems: 3,
-          },
-        },
-        required: ["min", "max"],
-      },
+      volumeId: { type: "string", maxLength: 256 },
+      region: regionSchema(),
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
       maxVoxels: {
@@ -71,30 +55,7 @@ export const QUERY_VOXELS_CONTRACT: ToolContract = {
     "queryVoxels",
     {
       volumeId: { type: "string" },
-      region: {
-        anyOf: [
-          {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              min: {
-                type: "array",
-                items: { type: "integer" },
-                minItems: 3,
-                maxItems: 3,
-              },
-              max: {
-                type: "array",
-                items: { type: "integer" },
-                minItems: 3,
-                maxItems: 3,
-              },
-            },
-            required: ["min", "max"],
-          },
-          { type: "null" },
-        ],
-      },
+      region: { anyOf: [regionSchema(), { type: "null" }] },
       total: { type: "integer", minimum: 0 },
       scanTruncated: { type: "boolean" },
       page: { type: "integer", minimum: 1 },
@@ -238,24 +199,21 @@ export function queryVoxels(
     region,
     maxVoxels,
   );
-  const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(
-    ctx.budget,
-    entries.slice(slice.start, slice.end),
-    (entry) => ({
-      coordinate: [...entry.coordinate],
-      material: entry.material,
-    }),
-  );
   return {
     volumeId,
     region: { min: [...region.min], max: [...region.max] },
-    total: slice.total,
     scanTruncated,
-    page: slice.page,
-    pageSize: slice.pageSize,
-    hasMore: slice.hasMore && !emitted.truncated,
-    voxels: emitted.list,
+    ...paginated(
+      ctx.budget,
+      entries,
+      page,
+      pageSize,
+      (entry) => ({
+        coordinate: [...entry.coordinate],
+        material: entry.material,
+      }),
+      "voxels",
+    ),
   };
 }
 
@@ -274,10 +232,9 @@ function resolveMaxVoxels(
     invalidArgument("maxVoxels must be a positive integer", ["maxVoxels"]);
   }
   if (maxVoxels > limits.maxVoxelsPerQuery) {
-    invalidArgument(
-      `maxVoxels must be <= ${String(limits.maxVoxelsPerQuery)}`,
-      ["maxVoxels"],
-    );
+    inspectionLimit("maxVoxels", maxVoxels, limits.maxVoxelsPerQuery, [
+      "maxVoxels",
+    ]);
   }
   return maxVoxels;
 }
@@ -310,44 +267,8 @@ export const INSPECT_BOUNDS_CONTRACT: ToolContract = {
           properties: {
             volumeId: { type: "string" },
             name: { type: "string" },
-            declaredBounds: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                min: {
-                  type: "array",
-                  items: { type: "integer" },
-                  minItems: 3,
-                  maxItems: 3,
-                },
-                max: {
-                  type: "array",
-                  items: { type: "integer" },
-                  minItems: 3,
-                  maxItems: 3,
-                },
-              },
-              required: ["min", "max"],
-            },
-            occupiedBounds: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                min: {
-                  type: "array",
-                  items: { type: "integer" },
-                  minItems: 3,
-                  maxItems: 3,
-                },
-                max: {
-                  type: "array",
-                  items: { type: "integer" },
-                  minItems: 3,
-                  maxItems: 3,
-                },
-              },
-              required: ["min", "max"],
-            },
+            declaredBounds: regionSchema(),
+            occupiedBounds: regionSchema(),
             occupiedCount: { type: "integer", minimum: 0 },
             chunkCount: { type: "integer", minimum: 0 },
             ownerNodeIds: { type: "array", items: { type: "string" } },

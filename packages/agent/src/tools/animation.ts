@@ -1,9 +1,8 @@
 import type { AnimationId, JsonValue, TrackId } from "@voxel-maker/shared";
-import { boundedEmit } from "../budget.js";
 import { outputSchema, type ToolContract } from "../contract.js";
 import {
   clampName,
-  pageSlice,
+  paginated,
   requireAnimation,
   requireTrack,
   resolvePage,
@@ -88,19 +87,7 @@ export function inspectClips(
   }));
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
-  const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(
-    budget,
-    entries.slice(slice.start, slice.end),
-    (entry) => entry,
-  );
-  return {
-    total: slice.total,
-    page: slice.page,
-    pageSize: slice.pageSize,
-    hasMore: slice.hasMore && !emitted.truncated,
-    clips: emitted.list,
-  };
+  return paginated(budget, entries, page, pageSize, (entry) => entry, "clips");
 }
 
 /** `inspectTracks` contract. */
@@ -116,6 +103,7 @@ export const INSPECT_TRACKS_CONTRACT: ToolContract = {
     properties: {
       animationId: {
         type: "string",
+        maxLength: 256,
         description: "Restrict to one clip (default: every clip)",
       },
       page: { type: "integer", minimum: 1 },
@@ -135,7 +123,7 @@ export const INSPECT_TRACKS_CONTRACT: ToolContract = {
           type: "object",
           additionalProperties: false,
           properties: {
-            trackId: { type: "string" },
+            trackId: { type: "string", maxLength: 256 },
             animationId: { type: "string" },
             targetNodeId: { type: "string" },
             interpolation: {
@@ -200,19 +188,7 @@ export function inspectTracks(
   }
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
-  const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(
-    budget,
-    entries.slice(slice.start, slice.end),
-    (entry) => entry,
-  );
-  return {
-    total: slice.total,
-    page: slice.page,
-    pageSize: slice.pageSize,
-    hasMore: slice.hasMore && !emitted.truncated,
-    tracks: emitted.list,
-  };
+  return paginated(budget, entries, page, pageSize, (entry) => entry, "tracks");
 }
 
 /** `inspectKeyframes` contract. */
@@ -226,7 +202,7 @@ export const INSPECT_KEYFRAMES_CONTRACT: ToolContract = {
     type: "object",
     additionalProperties: false,
     properties: {
-      trackId: { type: "string" },
+      trackId: { type: "string", maxLength: 256 },
       page: { type: "integer", minimum: 1 },
       pageSize: { type: "integer", minimum: 1 },
     },
@@ -235,7 +211,7 @@ export const INSPECT_KEYFRAMES_CONTRACT: ToolContract = {
   outputSchema: outputSchema(
     "inspectKeyframes",
     {
-      trackId: { type: "string" },
+      trackId: { type: "string", maxLength: 256 },
       animationId: { type: "string" },
       targetNodeId: { type: "string" },
       interpolation: { type: "string", enum: ["step", "linear", "smoothstep"] },
@@ -299,21 +275,18 @@ export function inspectKeyframes(
   }));
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
-  const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(
-    budget,
-    entries.slice(slice.start, slice.end),
-    (entry) => entry,
-  );
   return {
     trackId: track.trackId,
     animationId,
     targetNodeId: track.targetNodeId,
     interpolation: track.interpolation,
-    total: slice.total,
-    page: slice.page,
-    pageSize: slice.pageSize,
-    hasMore: slice.hasMore && !emitted.truncated,
-    keyframes: emitted.list,
+    ...paginated(
+      budget,
+      entries,
+      page,
+      pageSize,
+      (entry) => entry,
+      "keyframes",
+    ),
   };
 }

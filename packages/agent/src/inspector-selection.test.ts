@@ -91,7 +91,7 @@ describe("inspectSummary selection context", () => {
     expect(summarySelection.entries as readonly JsonValue[]).toHaveLength(3);
   });
 
-  it("omits selection context when includeSelection is false", () => {
+  it("omits selection context when includeSelection is false but still reports the port", () => {
     const value = ok(
       "inspectSummary",
       { includeSelection: false },
@@ -100,8 +100,10 @@ describe("inspectSummary selection context", () => {
     const summarySelection = value.selection as Readonly<
       Record<string, JsonValue>
     >;
-    expect(summarySelection.available).toBe(false);
+    expect(summarySelection.available).toBe(true);
+    expect(summarySelection.included).toBe(false);
     expect(summarySelection.entries).toEqual([]);
+    expect(summarySelection.entriesTruncated).toBe(false);
   });
 });
 
@@ -113,12 +115,29 @@ describe("selection port isolation", () => {
     expect(value.name).toBe("Root");
   });
 
-  it("caps selection entries at the configured limit", () => {
+  it("caps selection entries at the configured limit and flags it", () => {
     const many = Array.from({ length: 300 }, () => ({
       kind: "node" as const,
       nodeId: FIXTURE_IDS.arm,
     }));
     const value = ok("getSelection", {}, createSelectionPort(many));
-    expect((value.entries as readonly JsonValue[]).length).toBe(256); // capped at the configured limit
+    expect((value.entries as readonly JsonValue[]).length).toBe(256);
+    expect(value.entriesTruncated).toBe(true);
+  });
+
+  it("drops selection entries at the byte budget and flags it", () => {
+    const inspector = createInspector({
+      store,
+      port: createSelectionPort(selection),
+      limits: { maxResponseBytes: 500 },
+    });
+    const result = inspector.inspect("getSelection", {});
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const value = result.value as Readonly<Record<string, JsonValue>>;
+      expect(value.truncated).toBe(true);
+      expect(value.entriesTruncated).toBe(true);
+      expect((value.entries as readonly JsonValue[]).length).toBeLessThan(3);
+    }
   });
 });

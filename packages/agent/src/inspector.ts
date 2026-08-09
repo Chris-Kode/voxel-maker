@@ -20,21 +20,7 @@ import {
   TOOL_NOT_AUTHORIZED_CODE,
   UNKNOWN_TOOL_CODE,
 } from "./registry.js";
-import type { ToolContext } from "./tools/context.js";
-import { getSelection } from "./tools/selection.js";
-import { inspectSummary } from "./tools/summary.js";
-import { inspectHierarchy, inspectNode } from "./tools/hierarchy.js";
-import { inspectMaterials } from "./tools/materials.js";
-import { inspectBounds, queryVoxels } from "./tools/voxels.js";
-import { raycast } from "./tools/raycast.js";
-import { inspectRigging } from "./tools/rigging.js";
-import {
-  inspectClips,
-  inspectKeyframes,
-  inspectTracks,
-} from "./tools/animation.js";
-import { searchNodes } from "./tools/search.js";
-import { measureDistance } from "./tools/distance.js";
+import { TOOL_DEFINITIONS } from "./tools/definitions.js";
 
 /**
  * The deterministic inspection facade (plan S11.2/S11.3): one entry point
@@ -65,46 +51,6 @@ export interface Inspector {
   readonly contracts: readonly ToolContract[];
   /** Runs one tool call; never throws. */
   inspect(name: string, args: JsonValue): InspectionResult;
-}
-
-type ToolHandler = (
-  ctx: ToolContext,
-  args: JsonValue,
-) => Readonly<Record<string, JsonValue>>;
-
-function handlerOf(contract: ToolContract): ToolHandler | undefined {
-  switch (contract.name) {
-    case "inspectSummary":
-      return inspectSummary;
-    case "getSelection":
-      return getSelection;
-    case "inspectHierarchy":
-      return inspectHierarchy;
-    case "inspectNode":
-      return inspectNode;
-    case "inspectMaterials":
-      return inspectMaterials;
-    case "inspectBounds":
-      return inspectBounds;
-    case "queryVoxels":
-      return queryVoxels;
-    case "raycast":
-      return raycast;
-    case "inspectRigging":
-      return inspectRigging;
-    case "inspectClips":
-      return inspectClips;
-    case "inspectTracks":
-      return inspectTracks;
-    case "inspectKeyframes":
-      return inspectKeyframes;
-    case "searchNodes":
-      return searchNodes;
-    case "measureDistance":
-      return measureDistance;
-    default:
-      return undefined;
-  }
 }
 
 /** Recursively freezes a plain JSON tree so no mutable backing data escapes. */
@@ -190,7 +136,9 @@ export function createInspector(options: InspectorOptions): Inspector {
         truncatedReason: "byte-budget",
       });
       budget.reserve(envelopeReservation);
-      const handler = handlerOf(contract);
+      const handler = TOOL_DEFINITIONS.find(
+        (definition) => definition.contract.name === name,
+      )?.handler;
       if (handler === undefined) {
         throw new WorkspaceError({
           family: "internal",
@@ -202,6 +150,10 @@ export function createInspector(options: InspectorOptions): Inspector {
         { store: options.store, limits, port: options.port, budget },
         args,
       );
+      // Verify the assembled payload fits the budget: array tools already
+      // drop items when they exceed it; fixed-shape payloads are flagged
+      // truncated when the whole response would still overrun.
+      budget.reserve(jsonUnits(payload));
       const value = {
         tool: name,
         contractVersion: INSPECTION_CONTRACT_VERSION,

@@ -1,9 +1,13 @@
 import type { JsonValue, NodeId } from "@voxel-maker/shared";
-import { boundedEmit } from "../budget.js";
-import { outputSchema, type ToolContract } from "../contract.js";
+import {
+  outputSchema,
+  regionSchema,
+  vec3Schema,
+  type ToolContract,
+} from "../contract.js";
 import {
   clampName,
-  pageSlice,
+  paginated,
   requireNode,
   resolvePage,
   resolvePageSize,
@@ -29,6 +33,7 @@ export const INSPECT_RIGGING_CONTRACT: ToolContract = {
     properties: {
       nodeId: {
         type: "string",
+        maxLength: 256,
         description: "Restrict to one node (default: every rigged node)",
       },
       page: { type: "integer", minimum: 1 },
@@ -50,12 +55,7 @@ export const INSPECT_RIGGING_CONTRACT: ToolContract = {
           properties: {
             nodeId: { type: "string" },
             name: { type: "string" },
-            pivot: {
-              type: "array",
-              items: { type: "number" },
-              minItems: 3,
-              maxItems: 3,
-            },
+            pivot: vec3Schema(),
             hasJoint: { type: "boolean" },
             constraints: {
               type: "array",
@@ -65,25 +65,7 @@ export const INSPECT_RIGGING_CONTRACT: ToolContract = {
                 properties: {
                   componentId: { type: "string" },
                   type: { type: "string" },
-                  limits: {
-                    type: "object",
-                    additionalProperties: false,
-                    properties: {
-                      min: {
-                        type: "array",
-                        items: { type: "number" },
-                        minItems: 3,
-                        maxItems: 3,
-                      },
-                      max: {
-                        type: "array",
-                        items: { type: "number" },
-                        minItems: 3,
-                        maxItems: 3,
-                      },
-                    },
-                    required: ["min", "max"],
-                  },
+                  limits: regionSchema(false),
                 },
                 required: ["componentId", "type", "limits"],
               },
@@ -151,17 +133,5 @@ export function inspectRigging(
   }
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
-  const slice = pageSlice(entries.length, page, pageSize);
-  const emitted = boundedEmit(
-    budget,
-    entries.slice(slice.start, slice.end),
-    (entry) => entry,
-  );
-  return {
-    total: slice.total,
-    page: slice.page,
-    pageSize: slice.pageSize,
-    hasMore: slice.hasMore && !emitted.truncated,
-    nodes: emitted.list,
-  };
+  return paginated(budget, entries, page, pageSize, (entry) => entry, "nodes");
 }

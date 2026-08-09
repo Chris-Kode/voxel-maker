@@ -118,8 +118,17 @@ describe("malformed arguments (AC: deterministic malformed-argument coverage)", 
     }
   });
 
-  it("rejects pageSize above the configured maximum", () => {
-    expectError("inspectMaterials", { pageSize: 10_000 }, "INVALID_ARGUMENT");
+  it("rejects pageSize above the configured maximum with a stable limit error", () => {
+    const result = expectError(
+      "inspectMaterials",
+      { pageSize: 10_000 },
+      "INSPECTION_LIMIT",
+    );
+    if (!result.ok) {
+      expect(result.error.family).toBe("limit");
+      expect(result.error.context?.limit).toBe("pageSize");
+      expect(result.error.path).toEqual(["pageSize"]);
+    }
   });
 
   it("rejects page below 1", () => {
@@ -138,8 +147,8 @@ describe("malformed arguments (AC: deterministic malformed-argument coverage)", 
     );
   });
 
-  it("rejects hierarchy depth above the hard limit", () => {
-    expectError("inspectHierarchy", { maxDepth: 100 }, "INVALID_ARGUMENT");
+  it("rejects hierarchy depth above the hard limit with a stable limit error", () => {
+    expectError("inspectHierarchy", { maxDepth: 100 }, "INSPECTION_LIMIT");
   });
 
   it("rejects measureDistance without a from reference", () => {
@@ -180,11 +189,11 @@ describe("malformed arguments (AC: deterministic malformed-argument coverage)", 
     );
   });
 
-  it("rejects maxVoxels above the configured budget", () => {
+  it("rejects maxVoxels above the configured budget with a stable limit error", () => {
     expectError(
       "queryVoxels",
       { volumeId: FIXTURE_IDS.volumeMain, maxVoxels: 1_000_000_000 },
-      "INVALID_ARGUMENT",
+      "INSPECTION_LIMIT",
     );
   });
 

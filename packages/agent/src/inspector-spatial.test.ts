@@ -158,5 +158,7 @@ describe("raycast", () => {
       maxDistance: 0.5,
     });
     expect(value.hit).toBe(false);
+    expect(value.stepLimit).toBe(false);
+    expect(value.steps).toBeLessThan(5);
   });
 });

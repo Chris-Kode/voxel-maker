@@ -1,4 +1,7 @@
 import type { DocumentStoreRead } from "@voxel-maker/document";
+import { worldTransformMatrix } from "@voxel-maker/document";
+import { applyMatrix } from "@voxel-maker/math";
+import type { IntAabb, Vec3, Vec3i } from "@voxel-maker/math";
 import type {
   AnimationDescriptor,
   SceneNode,
@@ -11,9 +14,12 @@ import type {
   TrackId,
   VolumeId,
 } from "@voxel-maker/shared";
-import type { IntAabb, Vec3, Vec3i } from "@voxel-maker/math";
-import { clampString } from "../budget.js";
-import { invalidArgument, missingReference } from "../contract.js";
+import { ResponseBudget, boundedEmit, clampString } from "../budget.js";
+import {
+  inspectionLimit,
+  invalidArgument,
+  missingReference,
+} from "../contract.js";
 import type { InspectionLimits } from "../limits.js";
 
 /** Stable error codes for missing references. */
@@ -191,9 +197,49 @@ export function resolvePageSize(
     invalidArgument("pageSize must be a positive integer", ["pageSize"]);
   }
   if (pageSize > limits.maxPageSize) {
-    invalidArgument(`pageSize must be <= ${String(limits.maxPageSize)}`, [
-      "pageSize",
-    ]);
+    inspectionLimit("pageSize", pageSize, limits.maxPageSize, ["pageSize"]);
   }
   return pageSize;
+}
+
+/**
+ * Emits one page of `items` through the response budget and returns the
+ * shared pagination payload fields (`total`, `page`, `pageSize`,
+ * `hasMore`, plus the page under `listKey`). Every paginated tool uses
+ * this one shape so paging is predictable and truncation is uniform.
+ */
+export function paginated<T>(
+  budget: ResponseBudget,
+  items: readonly T[],
+  page: number,
+  pageSize: number,
+  emit: (item: T) => JsonValue | undefined,
+  listKey: string,
+): Readonly<Record<string, JsonValue>> {
+  const slice = pageSlice(items.length, page, pageSize);
+  const emitted = boundedEmit(
+    budget,
+    items.slice(slice.start, slice.end),
+    (item) => emit(item),
+  );
+  return {
+    total: slice.total,
+    page: slice.page,
+    pageSize: slice.pageSize,
+    hasMore: slice.hasMore && !emitted.truncated,
+    [listKey]: emitted.list,
+  };
+}
+
+/**
+ * World-space position of a node: its local origin mapped through the
+ * pivot-aware world transform (ADR-0001), i.e. the image of `[0, 0, 0]`
+ * under `M(root) x ... x M(node)`.
+ */
+export function nodeWorldPosition(
+  store: DocumentStoreRead,
+  nodeId: NodeId,
+): readonly [number, number, number] {
+  const matrix = worldTransformMatrix(store.getDocument(), nodeId);
+  return applyMatrix(matrix, [0, 0, 0]);
 }

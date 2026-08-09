@@ -35,6 +35,3 @@ export interface EditorContextPort {
   /** Current selection snapshot; empty when nothing is selected. */
   getSelection(): readonly EditorSelectionSnapshot[];
 }
-
-/** The neutral port type consumed by the agent package. */
-export type { EditorSelectionSnapshot as EditorSelection };

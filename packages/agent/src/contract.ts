@@ -100,8 +100,86 @@ export function outputSchema(
   };
 }
 
+/** JSON Schema of a three-number vector (real coordinates). */
+export function vec3Schema(): JsonSchema {
+  return numberArraySchema(3, 3);
+}
+
+/** JSON Schema of a three-integer vector (voxel coordinates). */
+export function vec3iSchema(): JsonSchema {
+  return {
+    type: "array",
+    items: { type: "integer" },
+    minItems: 3,
+    maxItems: 3,
+  };
+}
+
+/** JSON Schema of a four-number quaternion `[x, y, z, w]`. */
+export function quatSchema(): JsonSchema {
+  return numberArraySchema(4, 4);
+}
+
+/** JSON Schema of a numeric array with a fixed item range. */
+export function numberArraySchema(
+  minItems: number,
+  maxItems: number,
+): JsonSchema {
+  return {
+    type: "array",
+    items: { type: "number" },
+    minItems,
+    maxItems,
+  };
+}
+
+/** JSON Schema of a half-open integer region `{ min, max }`. */
+export function regionSchema(integer = true): JsonSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      min: integer ? vec3iSchema() : vec3Schema(),
+      max: integer ? vec3iSchema() : vec3Schema(),
+    },
+    required: ["min", "max"],
+  };
+}
+
+/** JSON Schema of a canonical node transform (translation/pivot/rotation/scale). */
+export function transformSchema(): JsonSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      translation: vec3Schema(),
+      pivot: vec3Schema(),
+      rotation: quatSchema(),
+      scale: vec3Schema(),
+    },
+    required: ["translation", "pivot", "rotation", "scale"],
+  };
+}
+
+/** JSON Schema of a decomposed world transform (translation/rotation/scale). */
+export function worldTransformSchema(): JsonSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      translation: vec3Schema(),
+      rotation: quatSchema(),
+      scale: vec3Schema(),
+    },
+    required: ["translation", "rotation", "scale"],
+  };
+}
+
 /** Stable error code for malformed tool arguments. */
 export const INVALID_ARGUMENT_CODE = "INVALID_ARGUMENT";
+
+/** Stable error code for arguments that exceed a configured inspection limit. */
+export const INSPECTION_LIMIT_CODE = "INSPECTION_LIMIT";
 
 /** Throws the stable malformed-argument error for a tool call. */
 export function invalidArgument(
@@ -113,6 +191,26 @@ export function invalidArgument(
     code: INVALID_ARGUMENT_CODE,
     message,
     ...(path === undefined ? {} : { path }),
+  });
+}
+
+/**
+ * Throws the stable limit error (plan S11.10): a caller-supplied value
+ * exceeds the configured inspection budget. `limit` names the budget
+ * (pageSize, maxDepth, maxVoxels, maxSteps).
+ */
+export function inspectionLimit(
+  limit: string,
+  value: number,
+  max: number,
+  path: readonly (string | number)[],
+): never {
+  throw new WorkspaceError({
+    family: "limit",
+    code: INSPECTION_LIMIT_CODE,
+    message: `${limit} must be <= ${String(max)} (requested ${String(value)})`,
+    path,
+    context: { limit, value, max },
   });
 }
 

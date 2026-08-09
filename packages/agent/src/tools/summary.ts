@@ -1,6 +1,6 @@
 import type { JsonValue } from "@voxel-maker/shared";
 import { boundedEmit } from "../budget.js";
-import { outputSchema, type ToolContract } from "../contract.js";
+import { outputSchema, regionSchema, type ToolContract } from "../contract.js";
 import { clampName } from "./helpers.js";
 import type { ToolContext } from "./context.js";
 import { selectionSummary } from "./selection.js";
@@ -69,25 +69,7 @@ export const INSPECT_SUMMARY_CONTRACT: ToolContract = {
           properties: {
             volumeId: { type: "string" },
             name: { type: "string" },
-            occupiedBounds: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                min: {
-                  type: "array",
-                  items: { type: "integer" },
-                  minItems: 3,
-                  maxItems: 3,
-                },
-                max: {
-                  type: "array",
-                  items: { type: "integer" },
-                  minItems: 3,
-                  maxItems: 3,
-                },
-              },
-              required: ["min", "max"],
-            },
+            occupiedBounds: regionSchema(),
             occupiedCount: { type: "integer", minimum: 0 },
             chunkCount: { type: "integer", minimum: 0 },
           },
@@ -99,10 +81,33 @@ export const INSPECT_SUMMARY_CONTRACT: ToolContract = {
         additionalProperties: false,
         properties: {
           available: { type: "boolean" },
+          included: { type: "boolean" },
           entries: { type: "array", items: { type: "object" } },
-          pruned: { type: "integer", minimum: 0 },
+          entriesTruncated: { type: "boolean" },
+          pruned: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                reason: {
+                  type: "string",
+                  enum: ["missing-node", "missing-volume"],
+                },
+                nodeId: { type: "string" },
+                volumeId: { type: "string" },
+              },
+              required: ["reason"],
+            },
+          },
         },
-        required: ["available", "entries", "pruned"],
+        required: [
+          "available",
+          "included",
+          "entries",
+          "entriesTruncated",
+          "pruned",
+        ],
       },
     },
     ["document", "counts", "volumes", "selection"],

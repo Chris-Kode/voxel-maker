@@ -133,12 +133,14 @@ function firstHitInVolume(
         Math.abs(direction[2]),
   ];
   let t = 0;
+  let steps = 0;
   for (let count = 0; count < maxSteps; count += 1) {
+    steps = count + 1;
     const material = view.getVoxel(voxel);
     if (material !== 0 && (maxDistance === undefined || t <= maxDistance)) {
       return {
         hit: { volumeId, coordinate: [...voxel], material, distance: t },
-        steps: count + 1,
+        steps,
         stepLimit: false,
       };
     }
@@ -158,7 +160,7 @@ function firstHitInVolume(
     }
     if (maxDistance !== undefined && t > maxDistance) break;
   }
-  return { hit: undefined, steps: maxSteps, stepLimit: true };
+  return { hit: undefined, steps, stepLimit: steps >= maxSteps };
 }
 
 export function raycast(

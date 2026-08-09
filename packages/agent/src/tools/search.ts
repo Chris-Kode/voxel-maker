@@ -1,5 +1,4 @@
 import type { JsonValue } from "@voxel-maker/shared";
-import { boundedEmit } from "../budget.js";
 import {
   invalidArgument,
   outputSchema,
@@ -7,7 +6,7 @@ import {
 } from "../contract.js";
 import {
   clampName,
-  pageSlice,
+  paginated,
   resolvePage,
   resolvePageSize,
 } from "./helpers.js";
@@ -120,17 +119,12 @@ export function searchNodes(
   }
   const page = resolvePage(record);
   const pageSize = resolvePageSize(record, limits);
-  const slice = pageSlice(matches.length, page, pageSize);
-  const emitted = boundedEmit(
+  return paginated(
     budget,
-    matches.slice(slice.start, slice.end),
+    matches,
+    page,
+    pageSize,
     (entry) => entry,
+    "matches",
   );
-  return {
-    total: slice.total,
-    page: slice.page,
-    pageSize: slice.pageSize,
-    hasMore: slice.hasMore && !emitted.truncated,
-    matches: emitted.list,
-  };
 }

@@ -35,11 +35,6 @@ export class ResponseBudget {
     return this.#truncated;
   }
 
-  /** True when at least `units` are still available. */
-  fits(units: number): boolean {
-    return units <= this.#remaining;
-  }
-
   /**
    * Reserves `units` unconditionally (for required scalar fields). Marks
    * the response truncated when the reservation exceeds the budget.
