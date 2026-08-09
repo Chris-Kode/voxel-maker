@@ -4,6 +4,7 @@ import type { MaterialId } from "@voxel-maker/shared";
 import type { GeometryScenario } from "./scenarios.js";
 import { EVAL_IDS, regionCoordinates, voxelKey } from "./fixtures.js";
 import {
+  changedAnimations,
   changedMaterials,
   changedNodes,
   changedVoxels,
@@ -102,7 +103,19 @@ export interface RenderedPreviewsScore {
   readonly failures: readonly string[];
 }
 
-/** The seven scoring dimensions, in canonical order. */
+/** Overlay-clip playback evidence (plan S13.5, ticket #36). */
+export interface OverlayPlaybackScore {
+  readonly score: number;
+  readonly passed: number;
+  readonly total: number;
+  readonly failures: readonly string[];
+  /** The staged clip id that was played before Apply. */
+  readonly clipId: string | undefined;
+}
+
+/** The scoring dimensions, in canonical order (ticket #36 adds the
+ * overlay-clip playback dimension; geometry scenarios score it 1
+ * vacuously with zero signals). */
 export const SCORE_DIMENSIONS = [
   "taskCompletion",
   "unrelatedChanges",
@@ -111,6 +124,7 @@ export const SCORE_DIMENSIONS = [
   "limitFailures",
   "semanticStructure",
   "renderedPreviews",
+  "overlayPlayback",
 ] as const;
 
 /** One scoring dimension id. */
@@ -125,6 +139,7 @@ export interface GeometryEvalScores {
   readonly limitFailures: LimitFailuresScore;
   readonly semanticStructure: SemanticStructureScore;
   readonly renderedPreviews: RenderedPreviewsScore;
+  readonly overlayPlayback: OverlayPlaybackScore;
 }
 
 /** Inputs every score dimension needs. */
@@ -146,6 +161,19 @@ export interface ScoreInputs {
   readonly beforePreviews: PreviewEvidenceSet;
   readonly afterPreviews: PreviewEvidenceSet;
   readonly limitErrorCode: string | undefined;
+  /**
+   * Precomputed overlay-clip playback evidence (plan S13.5): the harness
+   * evaluates the staged clip BEFORE Apply, because Apply closes the
+   * preview session.
+   */
+  readonly playback:
+    | {
+        readonly clipId: string;
+        readonly passed: number;
+        readonly failures: readonly string[];
+        readonly total: number;
+      }
+    | undefined;
 }
 
 function scoreOf(passed: number, total: number): number {
@@ -174,43 +202,57 @@ function scoreTaskCompletion(
   };
 }
 
-/** Unrelated changes: voxel, material, and node diffs outside allowances. */
+/** Scan key of one voxel across volumes (no coordinate collisions). */
+function scanKey(volumeId: string, coordinate: readonly number[]): string {
+  return `${volumeId}|${voxelKey([coordinate[0] as number, coordinate[1] as number, coordinate[2] as number])}`;
+}
+
+/** Unrelated changes: voxel, material, node, and clip diffs outside allowances. */
 function scoreUnrelatedChanges(
   scenario: GeometryScenario,
   before: DocumentStoreRead,
   after: DocumentStoreRead,
 ): UnrelatedChangesScore {
-  const changed = changedVoxels(
-    before,
-    after,
-    EVAL_IDS.volumeMain,
-    scenario.scanRegion,
-  );
+  const scans = scenario.scanVolumes ?? [
+    { volumeId: EVAL_IDS.volumeMain, region: scenario.scanRegion },
+  ];
   const allowed = new Set(
-    regionCoordinates(scenario.allowedChangedRegion).map(voxelKey),
+    regionCoordinates(scenario.allowedChangedRegion).map((coordinate) =>
+      scanKey(EVAL_IDS.volumeMain, coordinate),
+    ),
   );
   const expected = new Set<string>();
   for (const region of scenario.expectedShape) {
     for (const coordinate of regionCoordinates(region)) {
-      expected.add(voxelKey(coordinate));
+      expected.add(scanKey(EVAL_IDS.volumeMain, coordinate));
     }
   }
   // Voxel changes outside the allowed region are unrelated. For
   // create-from-scaffold every change is allowed, so the expected shape
   // acts as the allowance: voxels occupied outside the chair shape are
   // unrelated extras.
+  let changed = 0;
   let unrelated = 0;
-  for (const coordinate of changed) {
-    const key = voxelKey(coordinate);
-    if (!allowed.has(key)) {
-      unrelated += 1;
-      continue;
-    }
-    if (scenario.strictShape && !expected.has(key)) {
-      unrelated += 1;
+  for (const scan of scans) {
+    const changedInVolume = changedVoxels(
+      before,
+      after,
+      scan.volumeId,
+      scan.region,
+    );
+    changed += changedInVolume.length;
+    for (const coordinate of changedInVolume) {
+      const key = scanKey(scan.volumeId, coordinate);
+      if (!allowed.has(key)) {
+        unrelated += 1;
+        continue;
+      }
+      if (scenario.strictShape && !expected.has(key)) {
+        unrelated += 1;
+      }
     }
   }
-  const voxelScore = changed.length === 0 ? 1 : 1 - unrelated / changed.length;
+  const voxelScore = changed === 0 ? 1 : 1 - unrelated / changed;
 
   const materialChanges = changedMaterials(
     before.getDocument(),
@@ -232,11 +274,34 @@ function scoreUnrelatedChanges(
     before.getDocument(),
     after.getDocument(),
   );
-  const nodeScore = changedNodeIds.length === 0 ? 1 : 0;
+  const allowedNodes = new Set(
+    (scenario.allowedChangedNodes ?? []).map((id) => String(id)),
+  );
+  const nodeScore =
+    changedNodeIds.length === 0
+      ? 1
+      : changedNodeIds.every((id) => allowedNodes.has(String(id)))
+        ? 1
+        : 0;
+
+  const animationChanges = changedAnimations(
+    before.getDocument(),
+    after.getDocument(),
+  );
+  const allowedAnimations = new Set(
+    (scenario.allowedChangedAnimations ?? []).map((id) => String(id)),
+  );
+  const unrelatedAnimationChanges = animationChanges.filter(
+    (id) => !allowedAnimations.has(String(id)),
+  ).length;
+  const animationScore =
+    animationChanges.length === 0
+      ? 1
+      : 1 - unrelatedAnimationChanges / animationChanges.length;
 
   return {
-    score: voxelScore * materialScore * nodeScore,
-    changedVoxels: changed.length,
+    score: voxelScore * materialScore * nodeScore * animationScore,
+    changedVoxels: changed,
     unrelatedVoxels: unrelated,
     voxelScore,
     materialChanges,
@@ -413,6 +478,29 @@ function scoreRenderedPreviews(
 }
 
 /** Computes every scoring dimension for one scenario run. */
+/** Overlay-clip playback: fraction of playback signals that pass. */
+function scoreOverlayPlayback(
+  scenario: GeometryScenario,
+  playback: ScoreInputs["playback"],
+): OverlayPlaybackScore {
+  if (playback === undefined) {
+    return {
+      score: 1,
+      passed: 0,
+      total: 0,
+      failures: [],
+      clipId: undefined,
+    };
+  }
+  return {
+    score: scoreOf(playback.passed, playback.total),
+    passed: playback.passed,
+    total: playback.total,
+    failures: playback.failures,
+    clipId: playback.clipId,
+  };
+}
+
 export function computeScores(inputs: ScoreInputs): GeometryEvalScores {
   const taskCompletion = scoreTaskCompletion(inputs.scenario, inputs.after);
   const unrelatedChanges = scoreUnrelatedChanges(
@@ -444,6 +532,10 @@ export function computeScores(inputs: ScoreInputs): GeometryEvalScores {
     inputs.beforePreviews,
     inputs.afterPreviews,
   );
+  const overlayPlayback = scoreOverlayPlayback(
+    inputs.scenario,
+    inputs.playback,
+  );
   return {
     taskCompletion,
     unrelatedChanges,
@@ -452,5 +544,6 @@ export function computeScores(inputs: ScoreInputs): GeometryEvalScores {
     limitFailures,
     semanticStructure,
     renderedPreviews,
+    overlayPlayback,
   };
 }

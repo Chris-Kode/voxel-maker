@@ -92,6 +92,8 @@ const allowedDependencies = {
     "commands",
     "agent",
     "renderer",
+    "rigging",
+    "animation",
   ],
 };
 const packageOnlyAdapterPattern =

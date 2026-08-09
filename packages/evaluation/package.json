@@ -26,11 +26,13 @@
   },
   "dependencies": {
     "@voxel-maker/agent": "workspace:*",
+    "@voxel-maker/animation": "workspace:*",
     "@voxel-maker/commands": "workspace:*",
     "@voxel-maker/document": "workspace:*",
     "@voxel-maker/math": "workspace:*",
     "@voxel-maker/model": "workspace:*",
     "@voxel-maker/renderer": "workspace:*",
+    "@voxel-maker/rigging": "workspace:*",
     "@voxel-maker/shared": "workspace:*",
     "@voxel-maker/voxel": "workspace:*"
   }

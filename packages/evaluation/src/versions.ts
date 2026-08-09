@@ -20,6 +20,9 @@ import { sha256Hex } from "@voxel-maker/model";
 /** Version of the fixed geometry evaluation suite itself. */
 export const EVALUATION_VERSION = "geometry-eval-v1";
 
+/** Version of the fixed rig/animation evaluation suite (ticket #36). */
+export const RIG_EVALUATION_VERSION = "rig-animation-eval-v1";
+
 /** Version of the deterministic provider adapter used by the suite. */
 export const PROVIDER_VERSION = "deterministic-provider-v1";
 
@@ -91,9 +94,11 @@ export function evaluationVersions(options: {
   readonly inputDocumentHash: string;
   readonly providerId: string;
   readonly model: string;
+  /** Suite version override (rig/animation suite, ticket #36). */
+  readonly evaluationVersion?: string;
 }): EvaluationVersions {
   return {
-    evaluation: EVALUATION_VERSION,
+    evaluation: options.evaluationVersion ?? EVALUATION_VERSION,
     provider: {
       id: options.providerId,
       version: PROVIDER_VERSION,

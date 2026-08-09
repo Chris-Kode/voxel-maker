@@ -23,12 +23,14 @@ import {
 } from "@voxel-maker/agent";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 import { WorkspaceError, type VolumeId } from "@voxel-maker/shared";
+import type { IntAabb } from "@voxel-maker/math";
 import {
   createChairStore,
   createEmptyScaffoldStore,
   createEvalSelectionPort,
   EVAL_IDS,
 } from "./fixtures.js";
+import { createRigFixtureStore } from "./rig-fixtures.js";
 import {
   changedVoxels,
   occupiedMetrics,
@@ -41,12 +43,17 @@ import {
   type GeometryEvalScores,
   type ToolLogEntry,
 } from "./score.js";
-import { evaluationVersions, type EvaluationVersions } from "./versions.js";
+import {
+  evaluationVersions,
+  RIG_EVALUATION_VERSION,
+  type EvaluationVersions,
+} from "./versions.js";
 import {
   scenarioById,
   type GeometryScenario,
   type ScenarioId,
 } from "./scenarios.js";
+import { rigScenarioById, type RigScenarioId } from "./rig-scenarios.js";
 
 /**
  * Fixed geometry evaluation harness (plan S12.12, ticket #35): runs one
@@ -96,7 +103,7 @@ export interface RunReport {
 
 /** The complete recorded result of one scenario evaluation. */
 export interface GeometryEvalResult {
-  readonly scenarioId: ScenarioId;
+  readonly scenarioId: ScenarioId | RigScenarioId;
   readonly scenario: GeometryScenario;
   readonly versions: EvaluationVersions;
   readonly run: RunReport;
@@ -119,7 +126,7 @@ export interface GeometryEvalResult {
 }
 
 export interface EvaluateScenarioOptions {
-  readonly scenarioId: ScenarioId;
+  readonly scenarioId: ScenarioId | RigScenarioId;
   /** Recorded trace; defaults to the scenario's golden trace. */
   readonly script?: readonly DeterministicStep[];
   /** Optional lowerings of the fixed budget profile. */
@@ -147,7 +154,38 @@ function createFixtureStore(scenario: GeometryScenario): {
       return createChairStore(false);
     case "chair-armrest":
       return createChairStore(true);
+    case "chest-lid":
+      return createRigFixtureStore("chest-lid", false);
+    case "wheel":
+      return createRigFixtureStore("wheel", false);
+    case "wings":
+      return createRigFixtureStore("wings", false);
+    case "linked-arm":
+      return createRigFixtureStore("linked-arm", false);
+    case "abstract":
+      return createRigFixtureStore("abstract", false);
+    case "chest-lid-rigged":
+      return createRigFixtureStore("chest-lid", true);
+    case "wheel-rigged":
+      return createRigFixtureStore("wheel", true);
+    case "wings-rigged":
+      return createRigFixtureStore("wings", true);
+    case "linked-arm-rigged":
+      return createRigFixtureStore("linked-arm", true);
+    case "abstract-rigged":
+      return createRigFixtureStore("abstract", true);
   }
+}
+
+/** The voxel scan volumes of a scenario (defaults to volume:main). */
+function scanVolumesOf(
+  scenario: GeometryScenario,
+): readonly { readonly volumeId: VolumeId; readonly region: IntAabb }[] {
+  return (
+    scenario.scanVolumes ?? [
+      { volumeId: EVAL_IDS.volumeMain, region: scenario.scanRegion },
+    ]
+  );
 }
 
 /** Canonical semantic hash of a committed store. */
@@ -173,11 +211,33 @@ function suiteConsent(providerId: string, model: string): ProviderConsent {
   });
 }
 
+/** Routes a scenario id to the geometry or rig/animation suite. */
+function scenarioByIdOrRig(id: ScenarioId | RigScenarioId): GeometryScenario {
+  if ((Object.values(RIG_SCENARIO_IDS) as readonly string[]).includes(id)) {
+    return rigScenarioById(id as RigScenarioId) as unknown as GeometryScenario;
+  }
+  return scenarioById(id as ScenarioId);
+}
+
+/** Every rig scenario id (stable routing list). */
+const RIG_SCENARIO_IDS = [
+  "chest-lid-open",
+  "wheel-spin",
+  "wings-flap",
+  "arm-reach",
+  "abstract-rig",
+  "chest-farther",
+  "wheel-slower",
+  "wings-one",
+  "arm-elbow-limit",
+  "wheel-faster",
+] as const;
+
 /** Runs one fixed scenario and returns the complete scored result. */
 export async function evaluateScenario(
   options: EvaluateScenarioOptions,
 ): Promise<GeometryEvalResult> {
-  const scenario = scenarioById(options.scenarioId);
+  const scenario = scenarioByIdOrRig(options.scenarioId);
   const clock = new VirtualClock();
   // The reference "before" state: a second identical fixture commit, so
   // the diff evidence never aliases the live store mutated by Apply.
@@ -257,10 +317,15 @@ export async function evaluateScenario(
   };
   sessionHolder.session = createAgentSession(loopOptions);
   const inputHash = semanticHashOf(handle.store);
+  const scans = scanVolumesOf(scenario);
+  const primaryScan = scans[0] ?? {
+    volumeId: EVAL_IDS.volumeMain,
+    region: scenario.scanRegion,
+  };
   const beforeMetrics = occupiedMetrics(
     beforeStore,
-    EVAL_IDS.volumeMain,
-    scenario.scanRegion,
+    primaryScan.volumeId,
+    primaryScan.region,
   );
   const beforePreviews = renderPreviewEvidence(beforeStore);
 
@@ -270,6 +335,32 @@ export async function evaluateScenario(
   const stagedCommands = result.ok ? result.stagedCommands : 0;
   const voxelEstimate = result.ok ? preview.voxelEstimate : 0;
   const usage = result.ok ? result.usage : { inputTokens: 0, outputTokens: 0 };
+  // Overlay-clip playback evidence (plan S13.5): the staged clip is read
+  // from the preview session and played (evaluated) BEFORE Apply; the
+  // live store is never touched by playback. Apply closes the preview,
+  // so the signals are evaluated here, before the live transaction.
+  const playback =
+    result.ok && scenario.playbackClipId !== undefined
+      ? (() => {
+          const clip = preview.overlayClip(scenario.playbackClipId);
+          if (clip === undefined) return undefined;
+          const failures: string[] = [];
+          let passed = 0;
+          for (const signal of scenario.playbackSignals ?? []) {
+            if (signal.check(preview, clip)) {
+              passed += 1;
+            } else {
+              failures.push(signal.name);
+            }
+          }
+          return {
+            clipId: clip.animationId,
+            passed,
+            failures,
+            total: (scenario.playbackSignals ?? []).length,
+          };
+        })()
+      : undefined;
   let applyOk = false;
   let applyLabel: string | undefined;
   if (result.ok) {
@@ -283,8 +374,8 @@ export async function evaluateScenario(
   const historyAfter = bus.historySnapshot().past.length;
   const afterMetrics = occupiedMetrics(
     handle.store,
-    EVAL_IDS.volumeMain,
-    scenario.scanRegion,
+    primaryScan.volumeId,
+    primaryScan.region,
   );
   const afterPreviews = renderPreviewEvidence(handle.store);
   const afterIssues = structuralIssues(handle.store);
@@ -298,12 +389,13 @@ export async function evaluateScenario(
     toolCalls: result.ok ? result.toolCalls : toolLog.length,
     commands: result.ok ? result.stagedCommands : 0,
     voxelEstimate,
-    effectiveChangedVoxels: changedVoxels(
-      beforeStore,
-      handle.store,
-      EVAL_IDS.volumeMain,
-      scenario.scanRegion,
-    ).length,
+    effectiveChangedVoxels: scans.reduce(
+      (sum, scan) =>
+        sum +
+        changedVoxels(beforeStore, handle.store, scan.volumeId, scan.region)
+          .length,
+      0,
+    ),
     before: beforeStore,
     after: handle.store,
     beforeMetrics,
@@ -311,6 +403,7 @@ export async function evaluateScenario(
     beforePreviews,
     afterPreviews,
     limitErrorCode: result.ok ? undefined : errorCodeOf(result.error),
+    playback,
   });
 
   return {
@@ -322,6 +415,9 @@ export async function evaluateScenario(
       inputDocumentHash: inputHash,
       providerId: provider.providerId,
       model: provider.defaultModel,
+      ...(scenario.playbackClipId === undefined
+        ? {}
+        : { evaluationVersion: RIG_EVALUATION_VERSION }),
     }),
     run: {
       ok: result.ok,

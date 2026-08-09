@@ -345,6 +345,9 @@ importers:
       '@voxel-maker/agent':
         specifier: workspace:*
         version: link:../agent
+      '@voxel-maker/animation':
+        specifier: workspace:*
+        version: link:../animation
       '@voxel-maker/commands':
         specifier: workspace:*
         version: link:../commands
@@ -360,6 +363,9 @@ importers:
       '@voxel-maker/renderer':
         specifier: workspace:*
         version: link:../renderer
+      '@voxel-maker/rigging':
+        specifier: workspace:*
+        version: link:../rigging
       '@voxel-maker/shared':
         specifier: workspace:*
         version: link:../shared
