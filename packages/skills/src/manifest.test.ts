@@ -3,6 +3,7 @@ import { WorkspaceError } from "@voxel-maker/shared";
 import {
   INVALID_SKILL_MANIFEST_CODE,
   SKILL_CATEGORY_CODE,
+  SKILL_KIND_CODE,
   SKILL_CONSTRAINTS_CODE,
   SKILL_DESCRIPTION_CODE,
   SKILL_EVALUATION_CODE,
@@ -39,6 +40,7 @@ interface MutableManifest {
   name: string;
   version: string;
   description: string;
+  kind: string;
   category: string;
   instructions: string;
   allowedTools: string[];
@@ -58,6 +60,7 @@ interface MutableManifest {
   };
   evaluation: {
     scenarioId: string;
+    fixtureId?: string;
     fixedPrompt: string;
     structuralChecks: { name: string; description: string; options: unknown }[];
     visualBaselines: {
@@ -83,6 +86,7 @@ function validManifest(): MutableManifest {
     name: "skill.test",
     version: "1.0.0",
     description: "test skill",
+    kind: "creation",
     category: "furniture",
     instructions: "Build the thing with the allowed tools.",
     allowedTools: [...KNOWN_TOOL_NAMES].slice(0, 4),
@@ -227,6 +231,104 @@ describe("manifest version and shape (AC1)", () => {
     const badDescription = validManifest();
     badDescription.description = "";
     expectCode(badDescription, SKILL_DESCRIPTION_CODE);
+  });
+});
+
+describe("skill kind and category (AC1, ticket #39)", () => {
+  it("rejects an unknown skill kind", () => {
+    const manifest = validManifest();
+    manifest.kind = "baking";
+    expectCode(manifest, SKILL_KIND_CODE);
+  });
+
+  it("rejects a category outside the kind's category set", () => {
+    const manifest = validManifest();
+    manifest.kind = "rigging";
+    manifest.category = "furniture";
+    expectCode(manifest, SKILL_CATEGORY_CODE);
+  });
+
+  it("accepts a rigging skill with a rigging category", () => {
+    const manifest = validManifest();
+    manifest.kind = "rigging";
+    manifest.category = "wings";
+    manifest.generators = [];
+    manifest.evaluation.fixtureId = "rig-wings";
+    manifest.evaluation.visualBaselines = [];
+    manifest.evaluation.structuralChecks = [
+      {
+        name: "pivot-count-in-range",
+        description: "pivots",
+        options: { min: 1, max: 4 },
+      },
+    ];
+    const registered = validateSkillManifest(manifest, SKILL_ENVIRONMENT);
+    expect(registered.kind).toBe("rigging");
+    expect(registered.category).toBe("wings");
+    expect(registered.evaluation.fixtureId).toBe("rig-wings");
+  });
+
+  it("accepts a motion skill with a motion category", () => {
+    const manifest = validManifest();
+    manifest.kind = "motion";
+    manifest.category = "walk";
+    manifest.generators = [];
+    manifest.evaluation.fixtureId = "motion-walk";
+    manifest.evaluation.visualBaselines = [];
+    manifest.evaluation.structuralChecks = [
+      {
+        name: "animation-count-in-range",
+        description: "one clip",
+        options: { min: 1, max: 2 },
+      },
+    ];
+    const registered = validateSkillManifest(manifest, SKILL_ENVIRONMENT);
+    expect(registered.kind).toBe("motion");
+    expect(registered.category).toBe("walk");
+  });
+
+  it("requires a fixture id for rigging and motion skills", () => {
+    const manifest = validManifest();
+    manifest.kind = "motion";
+    manifest.category = "idle";
+    manifest.generators = [];
+    manifest.evaluation.visualBaselines = [];
+    expectCode(manifest, SKILL_EVALUATION_CODE);
+  });
+
+  it("rejects an unknown fixture id at catalog load", () => {
+    const manifest = validManifest();
+    manifest.kind = "rigging";
+    manifest.category = "biped";
+    manifest.generators = [];
+    manifest.evaluation.fixtureId = "rig-bogus";
+    manifest.evaluation.visualBaselines = [];
+    const error = expectCode(manifest, SKILL_EVALUATION_CODE);
+    expect(error.context).toMatchObject({ cause: "UNKNOWN_FIXTURE_ID" });
+
+    // Creation skills that name a fixture must also resolve it.
+    const creation = validManifest();
+    creation.evaluation.fixtureId = "motion-bogus";
+    expectCode(creation, SKILL_EVALUATION_CODE);
+  });
+
+  it("rejects generators and visual baselines on rigging and motion skills", () => {
+    const manifest = validManifest();
+    manifest.kind = "rigging";
+    manifest.category = "biped";
+    manifest.evaluation.fixtureId = "rig-biped";
+    manifest.evaluation.visualBaselines = [];
+    expectCode(manifest, SKILL_GENERATOR_CODE);
+
+    const withBaselines = validManifest();
+    withBaselines.kind = "motion";
+    withBaselines.category = "run";
+    withBaselines.generators = [];
+    withBaselines.evaluation.fixtureId = "motion-run";
+    withBaselines.evaluation.visualBaselines = [
+      { view: "front", description: "visible" },
+    ];
+    expectCode(withBaselines, SKILL_EVALUATION_CODE);
   });
 });
 

@@ -10,8 +10,17 @@ import {
 import { createGeneratorFixture, FIXTURE_IDS } from "./fixtures.js";
 import type { Vec3i } from "./geometry.js";
 import type { CheckResult } from "./checks.js";
-import { fillBoxCommand, type Command } from "@voxel-maker/commands";
-import { commandId, transactionId } from "@voxel-maker/shared";
+import type { VoxelDocument } from "@voxel-maker/model";
+import {
+  addConstraintCommand,
+  addJointCommand,
+  fillBoxCommand,
+  setPivotCommand,
+  type Command,
+} from "@voxel-maker/commands";
+import { createDocumentStore } from "@voxel-maker/document";
+import { commandId, componentId, transactionId } from "@voxel-maker/shared";
+import { rigMotionFixtureById } from "./rig-motion-fixtures.js";
 
 /**
  * Structural-check tests (ticket #38 AC3): the generic checks resolve by
@@ -321,5 +330,203 @@ describe("symmetric-along-axis", () => {
     );
     expect(results[0]?.passed).toBe(false);
     expect(results[0]?.evidence).toContain("asymmetric");
+  });
+});
+
+describe("rig and animation state checks (ticket #39 AC3)", () => {
+  it("counts pivots, joints, constraints, and parented nodes", () => {
+    // The fixture store has one root and one body node; the body gets a
+    // pivot, a joint, and a constraint through the command bus.
+    const fixture = createGeneratorFixture();
+    let revision = 0;
+    const commit = (command: Command) => {
+      const result = fixture.bus.execute(command, {
+        transactionId: transactionId(
+          `transaction:check:rig:${String(revision)}`,
+        ),
+        expectedRevision: revision,
+        source: "ui",
+      });
+      if (!result.ok) throw new Error("rig commit failed");
+      revision = result.value.revisionAfter;
+    };
+    commit(
+      setPivotCommand(commandId("command:check:pivot"), {
+        nodeId: FIXTURE_IDS.body,
+        pivot: [1, 1, 1],
+      }),
+    );
+    commit(
+      addJointCommand(commandId("command:check:joint"), {
+        nodeId: FIXTURE_IDS.body,
+      }),
+    );
+    commit(
+      addConstraintCommand(commandId("command:check:constraint"), {
+        nodeId: FIXTURE_IDS.body,
+        componentId: componentId("component:check:limit"),
+        limits: { min: [-1, 0, 0], max: [1, 0, 0] },
+        before: null,
+      }),
+    );
+
+    const results = runStructuralChecks(
+      [
+        {
+          name: "pivot-count-in-range",
+          options: { min: 1, max: 2 },
+        },
+        {
+          name: "joint-count-in-range",
+          options: { min: 1, max: 2 },
+        },
+        {
+          name: "constraint-count-in-range",
+          options: { min: 1, max: 2 },
+        },
+        {
+          name: "parented-node-count-in-range",
+          options: { min: 1, max: 2 },
+        },
+      ],
+      fixture.store,
+      CONTEXT,
+    );
+    for (const result of results) {
+      expect(result.passed, result.evidence).toBe(true);
+    }
+    expect(results[0]?.evidence).toContain("pivots=1");
+    expect(results[2]?.evidence).toContain("constraints=1");
+  });
+
+  it("node-present resolves against the document nodes", () => {
+    const { store } = commitBoxes([{ min: [0, 0, 0], max: [2, 2, 2] }]);
+    const present = runStructuralChecks(
+      [{ name: "node-present", options: { nodeId: FIXTURE_IDS.body } }],
+      store,
+      CONTEXT,
+    );
+    expect(present[0]?.passed).toBe(true);
+    const missing = runStructuralChecks(
+      [{ name: "node-present", options: { nodeId: "node:not-there" } }],
+      store,
+      CONTEXT,
+    );
+    expect(missing[0]?.passed).toBe(false);
+  });
+
+  it("counts animations, tracks, and keyframes", () => {
+    const { store } = commitBoxes([{ min: [0, 0, 0], max: [2, 2, 2] }]);
+    const empty = runStructuralChecks(
+      [
+        { name: "animation-count-in-range", options: { min: 1, max: 1 } },
+        { name: "track-count-in-range", options: { min: 1, max: 4 } },
+        { name: "keyframe-count-in-range", options: { min: 1, max: 8 } },
+      ],
+      store,
+      CONTEXT,
+    );
+    for (const result of empty) {
+      expect(result.passed, result.evidence).toBe(false);
+    }
+  });
+
+  it("validates the fixed fixture documents through the new checks", () => {
+    // The rigged end states of the fixed fixtures satisfy the rig and
+    // motion checks; the unrigged starts do not.
+    const biped = rigMotionFixtureById("rig-biped");
+    expect(biped).toBeDefined();
+    const { store: endStore } = createDocumentStore({
+      document: biped?.end as VoxelDocument,
+    });
+    const results = runStructuralChecks(
+      [
+        { name: "pivot-count-in-range", options: { min: 8, max: 12 } },
+        { name: "joint-count-in-range", options: { min: 8, max: 12 } },
+        { name: "constraint-count-in-range", options: { min: 2, max: 8 } },
+        { name: "parented-node-count-in-range", options: { min: 8, max: 16 } },
+        { name: "animation-count-in-range", options: { min: 0, max: 0 } },
+      ],
+      endStore,
+      CONTEXT,
+    );
+    for (const result of results) {
+      expect(result.passed, result.evidence).toBe(true);
+    }
+
+    const { store: startStore } = createDocumentStore({
+      document: biped?.start as VoxelDocument,
+    });
+    const startResults = runStructuralChecks(
+      [
+        { name: "pivot-count-in-range", options: { min: 1, max: 100 } },
+        { name: "joint-count-in-range", options: { min: 1, max: 100 } },
+      ],
+      startStore,
+      CONTEXT,
+    );
+    for (const result of startResults) {
+      expect(result.passed, result.evidence).toBe(false);
+    }
+  });
+
+  it("animation duration and loop policy require at least one animation", () => {
+    const fixture = rigMotionFixtureById("motion-walk");
+    expect(fixture).toBeDefined();
+    const { store } = createDocumentStore({
+      document: fixture?.end as VoxelDocument,
+    });
+    const results = runStructuralChecks(
+      [
+        { name: "animation-duration-in-range", options: { min: 1.5, max: 3 } },
+        { name: "animation-loop-policy", options: { policy: "loop" } },
+        { name: "animation-count-in-range", options: { min: 1, max: 2 } },
+        { name: "track-count-in-range", options: { min: 4, max: 12 } },
+        { name: "keyframe-count-in-range", options: { min: 8, max: 48 } },
+      ],
+      store,
+      CONTEXT,
+    );
+    for (const result of results) {
+      expect(result.passed, result.evidence).toBe(true);
+    }
+
+    const { store: startStore } = createDocumentStore({
+      document: fixture?.start as VoxelDocument,
+    });
+    const startResults = runStructuralChecks(
+      [
+        { name: "animation-duration-in-range", options: { min: 1.5, max: 3 } },
+        { name: "animation-loop-policy", options: { policy: "loop" } },
+      ],
+      startStore,
+      CONTEXT,
+    );
+    for (const result of startResults) {
+      expect(result.passed, result.evidence).toBe(false);
+    }
+  });
+
+  it("rejects malformed rig/animation check options", () => {
+    const expectCode = (run: () => void): void => {
+      let caught: unknown;
+      try {
+        run();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const error = caught as { readonly code?: unknown };
+      expect(error.code).toBe(INVALID_CHECK_OPTIONS_CODE);
+    };
+    expectCode(() => {
+      validateStructuralCheck("pivot-count-in-range", { min: -1 });
+    });
+    expectCode(() => {
+      validateStructuralCheck("animation-loop-policy", { policy: "bounce" });
+    });
+    expectCode(() => {
+      validateStructuralCheck("node-present", { nodeId: 7 });
+    });
   });
 });

@@ -80,6 +80,8 @@ const MANIFEST: SkillManifest = {
   version: "1.0.0",
   description:
     "Creation skill for representative vegetation: trees with trunks and canopies, bushes, and branching plants built from generic repetition and branching generators.",
+
+  kind: "creation",
   category: "vegetation",
   instructions: INSTRUCTIONS,
   allowedTools: CREATION_TOOLS,

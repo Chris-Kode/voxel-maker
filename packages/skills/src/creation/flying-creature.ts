@@ -90,6 +90,8 @@ const MANIFEST: SkillManifest = {
   version: "1.0.0",
   description:
     "Creation skill for representative flying creatures: body, head, two wings, and a tail built from generic symmetry and branch generators.",
+
+  kind: "creation",
   category: "flying-creature",
   instructions: INSTRUCTIONS,
   allowedTools: CREATION_TOOLS,

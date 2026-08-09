@@ -85,6 +85,8 @@ const MANIFEST: SkillManifest = {
   version: "1.0.0",
   description:
     "Creation skill for representative furniture pieces: chairs, tables, benches, and beds built from generic voxel/region commands and deterministic generators.",
+
+  kind: "creation",
   category: "furniture",
   instructions: INSTRUCTIONS,
   allowedTools: CREATION_TOOLS,

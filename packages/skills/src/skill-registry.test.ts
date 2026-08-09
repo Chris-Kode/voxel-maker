@@ -1,21 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { SKILL_CATEGORIES } from "./manifest.js";
 import {
+  MOTION_CATEGORIES,
+  RIGGING_CATEGORIES,
+  SKILL_CATEGORIES,
+} from "./manifest.js";
+import {
+  ALL_SKILLS,
   CREATION_SKILLS,
+  MOTION_SKILLS,
+  RIGGING_SKILLS,
   registerSkill,
   skillByName,
   skillForCategory,
+  skillsByKind,
 } from "./skill-registry.js";
 import { KNOWN_GENERATOR_NAMES, KNOWN_TOOL_NAMES } from "./environment.js";
 import { GENERATOR_DEFINITIONS } from "./registry.js";
 import { STRUCTURAL_CHECKS } from "./checks.js";
+import { RIGGING_TOOLS } from "./rigging/define.js";
+import { MOTION_TOOLS } from "./motion/define.js";
+import { rigMotionFixtureById } from "./rig-motion-fixtures.js";
 
 /**
- * Registry tests (ticket #38 AC2/AC3): the creation-skill catalog covers
- * all seven asset categories; every skill carries fixed prompts,
- * structural checks, visual baselines, and command/tool efficiency
- * limits; allowed tools and generators resolve against the live
- * registries; and the catalog is the single validated entry point.
+ * Registry tests (tickets #38 and #39): the creation-skill catalog
+ * covers all seven asset categories; the rigging catalog covers bipeds,
+ * quadrupeds, wings, and mechanical linkages; the motion catalog covers
+ * walk, run, jump, idle, fly, and mechanical motion. Every skill carries
+ * fixed prompts, structural/rig/animation checks, visual baselines (or
+ * none for rig/motion), and command/tool efficiency limits; allowed
+ * tools and generators resolve against the live registries; and the
+ * catalog is the single validated entry point.
  */
 
 describe("creation-skill catalog (AC2)", () => {
@@ -58,6 +72,107 @@ describe("creation-skill catalog (AC2)", () => {
       expect(Object.isFrozen(skill)).toBe(true);
       expect(Object.isFrozen(skill.evaluation)).toBe(true);
       expect(Object.isFrozen(skill.allowedTools)).toBe(true);
+    }
+  });
+});
+
+describe("rigging and motion catalogs (AC1/AC2, ticket #39)", () => {
+  it("covers every rigging category exactly once", () => {
+    expect(RIGGING_SKILLS).toHaveLength(RIGGING_CATEGORIES.length);
+    const categories = RIGGING_SKILLS.map((skill) => skill.category);
+    expect(new Set(categories).size).toBe(RIGGING_CATEGORIES.length);
+    for (const category of RIGGING_CATEGORIES) {
+      expect(categories).toContain(category);
+    }
+    for (const skill of RIGGING_SKILLS) {
+      expect(skill.kind).toBe("rigging");
+      expect(skill.name).toMatch(/^skill\.[a-z0-9-]+$/u);
+      expect(skill.version).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/u);
+      expect(skill.generators).toHaveLength(0);
+      expect(skill.evaluation.visualBaselines).toHaveLength(0);
+      expect(skill.evaluation.fixtureId).toBeDefined();
+      expect(
+        rigMotionFixtureById(skill.evaluation.fixtureId ?? ""),
+      ).toBeDefined();
+    }
+  });
+
+  it("covers every motion category exactly once", () => {
+    expect(MOTION_SKILLS).toHaveLength(MOTION_CATEGORIES.length);
+    const categories = MOTION_SKILLS.map((skill) => skill.category);
+    expect(new Set(categories).size).toBe(MOTION_CATEGORIES.length);
+    for (const category of MOTION_CATEGORIES) {
+      expect(categories).toContain(category);
+    }
+    for (const skill of MOTION_SKILLS) {
+      expect(skill.kind).toBe("motion");
+      expect(skill.name).toMatch(/^skill\.[a-z0-9-]+$/u);
+      expect(skill.generators).toHaveLength(0);
+      expect(skill.evaluation.visualBaselines).toHaveLength(0);
+      expect(skill.evaluation.fixtureId).toBeDefined();
+      expect(
+        rigMotionFixtureById(skill.evaluation.fixtureId ?? ""),
+      ).toBeDefined();
+    }
+  });
+
+  it("rigging skills use only generic hierarchy/pivot/joint/constraint tools", () => {
+    const forbidden = new Set<string>([
+      "fillBox",
+      "setVoxelBatch",
+      "createAnimation",
+      "setKeyframe",
+    ]);
+    for (const skill of RIGGING_SKILLS) {
+      for (const tool of skill.allowedTools) {
+        expect(RIGGING_TOOLS.includes(tool), `${skill.name}: ${tool}`).toBe(
+          true,
+        );
+        expect(forbidden.has(tool), `${skill.name}: ${tool}`).toBe(false);
+      }
+    }
+  });
+
+  it("motion skills use only generic clips/tracks/keyframes tools", () => {
+    const forbidden = new Set<string>([
+      "fillBox",
+      "setNodePivot",
+      "addNodeJoint",
+      "addConstraint",
+    ]);
+    for (const skill of MOTION_SKILLS) {
+      for (const tool of skill.allowedTools) {
+        expect(MOTION_TOOLS.includes(tool), `${skill.name}: ${tool}`).toBe(
+          true,
+        );
+        expect(forbidden.has(tool), `${skill.name}: ${tool}`).toBe(false);
+      }
+    }
+  });
+
+  it("exposes every skill through the unified registry", () => {
+    expect(ALL_SKILLS).toHaveLength(
+      CREATION_SKILLS.length + RIGGING_SKILLS.length + MOTION_SKILLS.length,
+    );
+    expect(skillByName("skill.biped-rig")?.kind).toBe("rigging");
+    expect(skillByName("skill.walk")?.kind).toBe("motion");
+    expect(skillByName("skill.furniture")?.kind).toBe("creation");
+    expect(skillForCategory("wings")?.name).toBe("skill.wings-rig");
+    expect(skillForCategory("mechanical-linkage")?.name).toBe(
+      "skill.mechanical-linkage-rig",
+    );
+    expect(skillForCategory("fly")?.name).toBe("skill.fly");
+    expect(skillsByKind("creation")).toHaveLength(CREATION_SKILLS.length);
+    expect(skillsByKind("rigging")).toHaveLength(RIGGING_SKILLS.length);
+    expect(skillsByKind("motion")).toHaveLength(MOTION_SKILLS.length);
+  });
+
+  it("keeps every rigging and motion skill deep-frozen", () => {
+    for (const skill of [...RIGGING_SKILLS, ...MOTION_SKILLS]) {
+      expect(Object.isFrozen(skill)).toBe(true);
+      expect(Object.isFrozen(skill.evaluation)).toBe(true);
+      expect(Object.isFrozen(skill.allowedTools)).toBe(true);
+      expect(Object.isFrozen(skill.evaluation.structuralChecks)).toBe(true);
     }
   });
 });
@@ -235,6 +350,7 @@ describe("registration of new skills (AC1)", () => {
       name: "skill.custom",
       version: "1.0.0",
       description: "custom creation skill",
+      kind: "creation",
       category: "furniture",
       instructions: "Use the tools.",
       allowedTools: ["fillBox", "queryVoxels"],

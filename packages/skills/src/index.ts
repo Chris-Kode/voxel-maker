@@ -1,13 +1,17 @@
 /**
  * Public entry point of the skills package: removable versioned domain
- * knowledge above the generic engine (plan S14, tickets #37 and #38).
+ * knowledge above the generic engine (plan S14, tickets #37-#39).
  * The surface ships deterministic procedural generators (each versioned
  * definition maps validated parameters plus an explicit seed to a
  * bounded list of proposed generic commands with a preflighted voxel
- * cost) and the versioned creation-skill catalog: validated manifests
- * with fixed instructions, allowed tools, constraints, generator
- * compatibility, provenance, and evaluation metadata (fixed prompts,
- * structural checks, visual baselines, command/tool efficiency limits).
+ * cost) and the versioned skill catalog: validated manifests with fixed
+ * instructions, allowed tools, constraints, generator compatibility,
+ * provenance, and evaluation metadata (fixed prompts, fixture
+ * references, structural/rig/animation checks, visual baselines,
+ * command/tool efficiency limits) for the creation, rigging, and motion
+ * knowledge kinds. Rigging skills articulate assets with the generic
+ * hierarchy/pivot/joint/constraint surface only; motion skills animate
+ * rigged assets with the generic clips/tracks/keyframes surface only.
  * Skills know nothing about renderers or the document; proposals are
  * staged, inspected, applied, discarded, undone, saved, and replayed
  * through the existing agent preview session and command bus seams, and
@@ -56,12 +60,17 @@ export type { LinkageParams, LinkagePattern } from "./patterns/linkage.js";
 
 export {
   SKILL_MANIFEST_VERSION,
+  SKILL_KINDS,
   SKILL_CATEGORIES,
+  RIGGING_CATEGORIES,
+  MOTION_CATEGORIES,
+  CATEGORIES_BY_KIND,
   BASELINE_VIEWS,
   SKILL_CONSTRAINT_CAPS,
   INVALID_SKILL_MANIFEST_CODE,
   SKILL_MANIFEST_VERSION_CODE,
   SKILL_NAME_CODE,
+  SKILL_KIND_CODE,
   SKILL_VERSION_CODE,
   SKILL_INSTRUCTIONS_CODE,
   SKILL_TOOLS_CODE,
@@ -71,11 +80,15 @@ export {
   SKILL_EVALUATION_CODE,
   validateSkillManifest,
   type BaselineView,
+  type MotionCategory,
+  type RiggingCategory,
   type SkillCategory,
+  type SkillCategoryOfKind,
   type SkillConstraints,
   type SkillEfficiencyLimits,
   type SkillEnvironment,
   type SkillEvaluationMetadata,
+  type SkillKind,
   type SkillManifest,
   type SkillProvenance,
   type SkillStructuralCheck,
@@ -113,10 +126,14 @@ export {
   provenanceLabel,
 } from "./provenance.js";
 export {
+  ALL_SKILLS,
   CREATION_SKILLS,
+  MOTION_SKILLS,
+  RIGGING_SKILLS,
   registerSkill,
   skillByName,
   skillForCategory,
+  skillsByKind,
 } from "./skill-registry.js";
 export {
   KNOWN_GENERATOR_NAMES,
@@ -137,3 +154,22 @@ export { VEHICLE_SKILL_MANIFEST } from "./creation/vehicle.js";
 export { HUMANOID_SKILL_MANIFEST } from "./creation/humanoid.js";
 export { QUADRUPED_SKILL_MANIFEST } from "./creation/quadruped.js";
 export { FLYING_CREATURE_SKILL_MANIFEST } from "./creation/flying-creature.js";
+export { RIGGING_TOOLS } from "./rigging/define.js";
+export { BIPED_RIG_SKILL_MANIFEST } from "./rigging/biped.js";
+export { QUADRUPED_RIG_SKILL_MANIFEST } from "./rigging/quadruped.js";
+export { WINGS_RIG_SKILL_MANIFEST } from "./rigging/wings.js";
+export { MECHANICAL_LINKAGE_RIG_SKILL_MANIFEST } from "./rigging/mechanical-linkage.js";
+export { MOTION_TOOLS } from "./motion/define.js";
+export { WALK_SKILL_MANIFEST } from "./motion/walk.js";
+export { RUN_SKILL_MANIFEST } from "./motion/run.js";
+export { JUMP_SKILL_MANIFEST } from "./motion/jump.js";
+export { IDLE_SKILL_MANIFEST } from "./motion/idle.js";
+export { FLY_SKILL_MANIFEST } from "./motion/fly.js";
+export { MECHANICAL_MOTION_SKILL_MANIFEST } from "./motion/mechanical.js";
+export {
+  RIG_MOTION_FIXTURES,
+  RIG_MOTION_FIXTURE_IDS,
+  rigMotionFixtureById,
+  type RigMotionFixture,
+  type RigMotionFixtureId,
+} from "./rig-motion-fixtures.js";
