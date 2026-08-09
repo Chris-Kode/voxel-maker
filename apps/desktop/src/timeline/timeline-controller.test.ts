@@ -14,7 +14,10 @@ import {
   registerNodeCommands,
   setNodeTransformCommand,
 } from "@voxel-maker/commands";
-import { createDocumentSession, type DocumentSession } from "@voxel-maker/session";
+import {
+  createDocumentSession,
+  type DocumentSession,
+} from "@voxel-maker/session";
 import { writeVxlProject, readVxlProject } from "@voxel-maker/formats";
 import { createEditorStore } from "@voxel-maker/editor";
 import {
@@ -25,11 +28,23 @@ import {
 /** Narrow helper: treats a keyframe.set command as its payload. */
 function keyPayload(
   command: { readonly type: string; readonly payload: unknown } | undefined,
-): { readonly time: number; readonly property: { readonly channel: string; readonly value: readonly number[] } } | undefined {
-  if (command === undefined || command.type !== "keyframe.set") return undefined;
+):
+  | {
+      readonly time: number;
+      readonly property: {
+        readonly channel: string;
+        readonly value: readonly number[];
+      };
+    }
+  | undefined {
+  if (command === undefined || command.type !== "keyframe.set")
+    return undefined;
   return command.payload as {
     readonly time: number;
-    readonly property: { readonly channel: string; readonly value: readonly number[] };
+    readonly property: {
+      readonly channel: string;
+      readonly value: readonly number[];
+    };
   };
 }
 
@@ -99,7 +114,9 @@ function fixtureDocument(): VoxelDocument {
         emissive: 0,
       },
     ],
-    volumes: [{ volumeId: VOLUME, bounds: { min: [-4, -4, -4], max: [4, 4, 4] } }],
+    volumes: [
+      { volumeId: VOLUME, bounds: { min: [-4, -4, -4], max: [4, 4, 4] } },
+    ],
   });
 }
 
@@ -109,9 +126,7 @@ function makeSession(): DocumentSession {
   });
 }
 
-function controller(
-  session: DocumentSession,
-): TimelineController {
+function controller(session: DocumentSession): TimelineController {
   const editor = createEditorStore();
   const timeline = createTimelineController({ session, editor });
   return timeline;
@@ -245,7 +260,9 @@ describe("timeline controller", () => {
     expect(clip?.tracks[0]?.keyframes).toHaveLength(1);
     expect(timeline.undo()).toBeUndefined();
     clip = state(timeline).selectedClip;
-    expect(clip?.tracks[0]?.keyframes[0]?.property.value).toEqual([0, 0.7071067811865476, 0, 0.7071067811865476]);
+    expect(clip?.tracks[0]?.keyframes[0]?.property.value).toEqual([
+      0, 0.7071067811865476, 0, 0.7071067811865476,
+    ]);
     expect(timeline.undo()).toBeUndefined();
     clip = state(timeline).selectedClip;
     expect(clip?.tracks[0]?.keyframes[0]?.time).toBe(0.5);
@@ -263,8 +280,12 @@ describe("timeline controller", () => {
     timeline.addTracks([WHEEL], "rotation");
     const trackIdValue = state(timeline).tracks[0]?.track.trackId;
     if (trackIdValue === undefined) throw new Error("missing track");
-    expect(timeline.setInterpolation(trackIdValue, "smoothstep")).toBeUndefined();
-    expect(timeline.updateClip({ name: "wheel-spin", duration: 4, loop: "once" })).toBeUndefined();
+    expect(
+      timeline.setInterpolation(trackIdValue, "smoothstep"),
+    ).toBeUndefined();
+    expect(
+      timeline.updateClip({ name: "wheel-spin", duration: 4, loop: "once" }),
+    ).toBeUndefined();
     const clip = state(timeline).selectedClip;
     expect(clip?.name).toBe("wheel-spin");
     expect(clip?.duration).toBe(4);
@@ -299,7 +320,9 @@ describe("timeline controller", () => {
       channel: "rotation",
       value: [0, 0, 0, 1],
     });
-    timeline.selectKeyframes([state(timeline).selectedKeyframeIds[0] ?? keyframeId("x")]);
+    timeline.selectKeyframes([
+      state(timeline).selectedKeyframeIds[0] ?? keyframeId("x"),
+    ]);
     // Delete the whole clip through the bus; the controller must clear
     // track/keyframe selection.
     expect(timeline.deleteClip()).toBeUndefined();
@@ -357,10 +380,14 @@ describe("timeline controller", () => {
     openFixture(timeline, session);
     timeline.createClip("spin", 2, "loop");
     timeline.addTracks([WHEEL], "rotation");
-    timeline.setKeyframe(state(timeline).tracks[0]?.track.trackId ?? trackId("x"), 0, {
-      channel: "rotation",
-      value: [0, 0, 0, 1],
-    });
+    timeline.setKeyframe(
+      state(timeline).tracks[0]?.track.trackId ?? trackId("x"),
+      0,
+      {
+        channel: "rotation",
+        value: [0, 0, 0, 1],
+      },
+    );
     timeline.scrub(1);
     // Manual mode: the transaction passes through unchanged.
     const manualCommands = [
@@ -457,7 +484,9 @@ describe("timeline controller", () => {
       },
     );
     expect(keyError).toBeUndefined();
-    expect(reloadedController.state.selectedClip?.tracks[0]?.keyframes).toHaveLength(2);
+    expect(
+      reloadedController.state.selectedClip?.tracks[0]?.keyframes,
+    ).toHaveLength(2);
     reloadedController.dispose();
     timeline.dispose();
   });

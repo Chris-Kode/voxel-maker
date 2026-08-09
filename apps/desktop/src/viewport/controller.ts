@@ -181,7 +181,9 @@ class ViewportControllerImpl implements ViewportController {
   readonly #rig: CameraRig;
   readonly #overlays: OverlayManager;
   readonly #gizmo: GizmoOverlay;
-  readonly #autoKey: ((commands: readonly Command[]) => readonly Command[]) | undefined;
+  readonly #autoKey:
+    | ((commands: readonly Command[]) => readonly Command[])
+    | undefined;
   readonly #transform: NodeTransformTool;
   readonly #select: ReturnType<typeof createSelectTool>;
   readonly #pencil: StrokeTool;

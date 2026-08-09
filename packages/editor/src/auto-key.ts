@@ -8,10 +8,7 @@ import {
   setKeyframeCommand,
   type Command,
 } from "@voxel-maker/commands";
-import type {
-  AnimationDescriptor,
-  TrackProperty,
-} from "@voxel-maker/model";
+import type { AnimationDescriptor, TrackProperty } from "@voxel-maker/model";
 import type { SetNodeTransformPayload } from "@voxel-maker/commands";
 
 /**
@@ -105,19 +102,14 @@ export function buildAutoKeyCommands(
       const edit = edits.get(nodeId);
       if (edit === undefined) continue;
       const payload = edit.command.payload as SetNodeTransformPayload;
-      const parked = track.keyframes.find(
-        (keyframe) => keyframe.time === time,
-      );
+      const parked = track.keyframes.find((keyframe) => keyframe.time === time);
       keyCommands.push(
         setKeyframeCommand(keyframeCommandId(nextKeyframeId(track.trackId)), {
           animationId: clip.animationId,
           trackId: track.trackId,
           keyframeId: parked?.keyframeId ?? nextKeyframeId(track.trackId),
           time: parked?.time ?? time,
-          property: channelProperty(
-            first.property.channel,
-            payload.transform,
-          ),
+          property: channelProperty(first.property.channel, payload.transform),
         }),
       );
     }

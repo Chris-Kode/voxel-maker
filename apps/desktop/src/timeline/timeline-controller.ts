@@ -34,7 +34,10 @@ import {
   updateAnimationCommand,
   type Command,
 } from "@voxel-maker/commands";
-import { createPlaybackController, type PlaybackClock } from "@voxel-maker/animation";
+import {
+  createPlaybackController,
+  type PlaybackClock,
+} from "@voxel-maker/animation";
 import {
   buildAutoKeyCommands,
   createTimelineStore,
@@ -145,7 +148,11 @@ export interface TimelineController {
   setKeyMode(mode: KeyMode): void;
 
   // Clip editing (S10.13).
-  createClip(name: string | undefined, duration: number, loop: LoopPolicy): WorkspaceError | undefined;
+  createClip(
+    name: string | undefined,
+    duration: number,
+    loop: LoopPolicy,
+  ): WorkspaceError | undefined;
   updateClip(changes: {
     readonly name?: string | null;
     readonly duration?: number;
@@ -154,9 +161,15 @@ export interface TimelineController {
   deleteClip(): WorkspaceError | undefined;
 
   // Track editing (S10.10/S10.11).
-  addTracks(nodeIds: readonly NodeId[], channel: TrackChannel): WorkspaceError | undefined;
+  addTracks(
+    nodeIds: readonly NodeId[],
+    channel: TrackChannel,
+  ): WorkspaceError | undefined;
   removeTrack(trackId: TrackId): WorkspaceError | undefined;
-  setInterpolation(trackId: TrackId, interpolation: Interpolation): WorkspaceError | undefined;
+  setInterpolation(
+    trackId: TrackId,
+    interpolation: Interpolation,
+  ): WorkspaceError | undefined;
 
   // Keyframe editing (S10.11).
   /**
@@ -230,8 +243,6 @@ export function createTimelineController(
   let commandSequence = 0;
   let transactionSequence = 0;
   /** Fresh ids for authored clips/tracks/keyframes. */
-  let animationSequence = 0;
-  let trackSequence = 0;
   let keyframeSequence = 0;
   /** Runtime-only channel intent for tracks whose channel is not pinned. */
   const pendingChannels = new Map<TrackId, TrackChannel>();
@@ -309,7 +320,11 @@ export function createTimelineController(
     }
     const document = current.store.getDocument();
     const clips = Object.values(document.animations).sort((a, b) =>
-      a.animationId < b.animationId ? -1 : a.animationId > b.animationId ? 1 : 0,
+      a.animationId < b.animationId
+        ? -1
+        : a.animationId > b.animationId
+          ? 1
+          : 0,
     );
     const selectedClipId = timeline.snapshot().selectedClipId;
     const selectedClip =
@@ -319,7 +334,9 @@ export function createTimelineController(
     const tracks = selectedClip?.tracks ?? [];
     const selectedTrackIds = timeline
       .snapshot()
-      .selectedTrackIds.filter((id) => tracks.some((track) => track.trackId === id));
+      .selectedTrackIds.filter((id) =>
+        tracks.some((track) => track.trackId === id),
+      );
     const selectedKeyframeIds = timeline
       .snapshot()
       .selectedKeyframeIds.filter((id) =>
@@ -350,7 +367,9 @@ export function createTimelineController(
       selectedClip,
       tracks: tracks.map((track) => ({
         track,
-        nodeName: document.nodes[track.targetNodeId]?.name ?? String(track.targetNodeId),
+        nodeName:
+          document.nodes[track.targetNodeId]?.name ??
+          String(track.targetNodeId),
       })),
       selectedTrackIds,
       selectedKeyframeIds,
@@ -412,7 +431,9 @@ export function createTimelineController(
     const clip = stateValue.selectedClip;
     const max = clip === undefined ? Number.MAX_SAFE_INTEGER : clip.duration;
     const raw = Math.min(Math.max(Number.isFinite(time) ? time : 0, 0), max);
-    return stateValue.snapEnabled ? snapTime(raw, stateValue.snapIncrement) : raw;
+    return stateValue.snapEnabled
+      ? snapTime(raw, stateValue.snapIncrement)
+      : raw;
   };
 
   const trackOf = (trackIdValue: TrackId): AnimationTrack | undefined =>
@@ -421,23 +442,23 @@ export function createTimelineController(
     );
 
   /** Builds the typed track property for a channel/value pair. */
-function channelProperty(
-  channel: TrackChannel,
-  value: readonly number[],
-): TrackProperty {
-  if (channel === "rotation") {
+  function channelProperty(
+    channel: TrackChannel,
+    value: readonly number[],
+  ): TrackProperty {
+    if (channel === "rotation") {
+      return {
+        channel,
+        value: [...value] as unknown as [number, number, number, number],
+      };
+    }
     return {
       channel,
-      value: [...value] as unknown as [number, number, number, number],
+      value: [...value] as unknown as [number, number, number],
     };
   }
-  return {
-    channel,
-    value: [...value] as unknown as [number, number, number],
-  };
-}
 
-/** The transform value of a node for a channel (manual/auto keys). */
+  /** The transform value of a node for a channel (manual/auto keys). */
   const channelValueOf = (
     document: VoxelDocument,
     nodeId: NodeId,
@@ -515,7 +536,9 @@ function channelProperty(
         updateAnimationCommand(nextCommandId(), {
           animationId: clip.animationId,
           ...(changes.name === undefined ? {} : { name: changes.name }),
-          ...(changes.duration === undefined ? {} : { duration: changes.duration }),
+          ...(changes.duration === undefined
+            ? {}
+            : { duration: changes.duration }),
           ...(changes.loop === undefined ? {} : { loop: changes.loop }),
         }),
       ],
@@ -645,7 +668,7 @@ function channelProperty(
         }),
       );
     }
-    let resolved: TrackProperty = property as TrackProperty;
+    let resolved: TrackProperty | undefined = property;
     if (resolved === undefined) {
       const channel = channelForTrack(trackIdValue);
       if (channel === undefined) {
@@ -662,11 +685,17 @@ function channelProperty(
       if (current === undefined) return fail(notOpen());
       resolved = channelProperty(
         channel,
-        channelValueOf(current.store.getDocument(), track.targetNodeId, channel),
+        channelValueOf(
+          current.store.getDocument(),
+          track.targetNodeId,
+          channel,
+        ),
       );
     }
     const bounded = boundTime(time);
-    const parked = track.keyframes.find((keyframe) => keyframe.time === bounded);
+    const parked = track.keyframes.find(
+      (keyframe) => keyframe.time === bounded,
+    );
     const keyframeIdValue = parked?.keyframeId ?? nextKeyframeId();
     const error = execute(
       [
@@ -717,11 +746,10 @@ function channelProperty(
     if (current === undefined) return fail(notOpen());
     const document = current.store.getDocument();
     const selected = new Set(stateValue.selectedTrackIds);
-    const targets = clip.tracks.filter(
-      (track) =>
-        selected.size === 0
-          ? stateValue.selectedNodeIds.includes(track.targetNodeId)
-          : selected.has(track.trackId),
+    const targets = clip.tracks.filter((track) =>
+      selected.size === 0
+        ? stateValue.selectedNodeIds.includes(track.targetNodeId)
+        : selected.has(track.trackId),
     );
     const time = boundTime(playback.state.time);
     const commands: Command[] = [];
@@ -810,7 +838,9 @@ function channelProperty(
    * input commands unchanged when auto-key is off or no clip is selected,
    * so the viewport can always commit the function's result.
    */
-  const autoKeyCommands = (commands: readonly Command[]): readonly Command[] => {
+  const autoKeyCommands = (
+    commands: readonly Command[],
+  ): readonly Command[] => {
     if (
       !stateValue.open ||
       stateValue.keyMode !== "auto" ||
@@ -831,7 +861,10 @@ function channelProperty(
   // ---- wiring ----------------------------------------------------------
 
   const unsubscribeSession = session.subscribe((event) => {
-    if (event.kind === "document-opened" || event.kind === "document-replaced") {
+    if (
+      event.kind === "document-opened" ||
+      event.kind === "document-replaced"
+    ) {
       seedSeenIds(event.store.getDocument());
       unsubscribeStore?.();
       unsubscribeStore = event.store.subscribe(() => {

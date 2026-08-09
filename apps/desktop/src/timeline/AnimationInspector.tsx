@@ -10,8 +10,10 @@ import {
   parseScaleInput,
   parseVec3Input,
 } from "@voxel-maker/editor";
-import type { TrackChannel } from "./timeline-controller.js";
-import type { TimelineController } from "./timeline-controller.js";
+import type {
+  TrackChannel,
+  TimelineController,
+} from "./timeline-controller.js";
 
 /**
  * Animation inspector (plan S10.13, ticket #29): clip name/duration/loop
@@ -27,7 +29,10 @@ export interface AnimationInspectorProps {
   readonly editor: EditorStore;
 }
 
-const LOOPS: readonly { readonly id: "once" | "loop"; readonly label: string }[] = [
+const LOOPS: readonly {
+  readonly id: "once" | "loop";
+  readonly label: string;
+}[] = [
   { id: "once", label: "Once" },
   { id: "loop", label: "Loop" },
 ];
@@ -62,16 +67,19 @@ export function AnimationInspector({
   );
 
   const clip = state.selectedClip;
-  const single = state.selectedKeyframes.length === 1
-    ? (state.selectedKeyframes[0] as {
-        readonly trackId: TrackId;
-        readonly keyframe: {
-          readonly keyframeId: string;
-          readonly time: number;
-          readonly property: TrackProperty;
-        };
-      } | undefined)
-    : undefined;
+  const single =
+    state.selectedKeyframes.length === 1
+      ? (state.selectedKeyframes[0] as
+          | {
+              readonly trackId: TrackId;
+              readonly keyframe: {
+                readonly keyframeId: string;
+                readonly time: number;
+                readonly property: TrackProperty;
+              };
+            }
+          | undefined)
+      : undefined;
 
   // Seed the local editors whenever the selection changes.
   useEffect(() => {
@@ -88,8 +96,9 @@ export function AnimationInspector({
       setValues(formatRotationDegrees(property.value).split(", "));
     } else {
       setValues(
-        property.value.map((component) =>
-          formatVec3([component, 0, 0]).split(", ")[0] ?? String(component),
+        property.value.map(
+          (component) =>
+            formatVec3([component, 0, 0]).split(", ")[0] ?? String(component),
         ),
       );
     }
@@ -134,7 +143,11 @@ export function AnimationInspector({
             ? { channel: "scale", value: value as Vec3 }
             : { channel: "translation", value: value as Vec3 };
       report(
-        controller.setKeyframe(single.trackId, single.keyframe.time, nextProperty),
+        controller.setKeyframe(
+          single.trackId,
+          single.keyframe.time,
+          nextProperty,
+        ),
       );
     } catch (caught) {
       const message =
@@ -147,8 +160,8 @@ export function AnimationInspector({
   const label = (index: number): string => {
     if (single === undefined) return String(index);
     return single.keyframe.property.channel === "rotation"
-      ? ["X", "Y", "Z"][index] ?? String(index)
-      : ["X", "Y", "Z"][index] ?? String(index);
+      ? (["X", "Y", "Z"][index] ?? String(index))
+      : (["X", "Y", "Z"][index] ?? String(index));
   };
 
   return (
@@ -156,8 +169,8 @@ export function AnimationInspector({
       <h2>Animation</h2>
       {clip === undefined ? (
         <p className="panel-empty">
-          Select a clip in the timeline to edit its name, duration, loop,
-          and keyframe values.
+          Select a clip in the timeline to edit its name, duration, loop, and
+          keyframe values.
         </p>
       ) : (
         <div className="animation-inspector">
@@ -166,8 +179,12 @@ export function AnimationInspector({
             <input
               value={name}
               placeholder="Unnamed clip"
-              onChange={(event) => setName(event.target.value)}
-              onBlur={commitClip}
+              onChange={(event) => {
+                setName(event.target.value);
+              }}
+              onBlur={() => {
+                commitClip();
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") commitClip();
               }}
@@ -180,8 +197,12 @@ export function AnimationInspector({
               min="0"
               step="0.1"
               value={duration}
-              onChange={(event) => setDuration(event.target.value)}
-              onBlur={commitClip}
+              onChange={(event) => {
+                setDuration(event.target.value);
+              }}
+              onBlur={() => {
+                commitClip();
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") commitClip();
               }}
@@ -194,7 +215,9 @@ export function AnimationInspector({
               onChange={(event) => {
                 setLoop(event.target.value as "once" | "loop");
               }}
-              onBlur={commitClip}
+              onBlur={() => {
+                commitClip();
+              }}
             >
               {LOOPS.map((candidate) => (
                 <option key={candidate.id} value={candidate.id}>
@@ -206,7 +229,9 @@ export function AnimationInspector({
           <button
             type="button"
             className="danger"
-            onClick={() => report(controller.deleteClip())}
+            onClick={() => {
+              report(controller.deleteClip());
+            }}
           >
             Delete clip
           </button>
@@ -234,7 +259,9 @@ export function AnimationInspector({
                         next[index] = event.target.value;
                         setValues(next);
                       }}
-                      onBlur={commitValue}
+                      onBlur={() => {
+                        commitValue();
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") commitValue();
                       }}

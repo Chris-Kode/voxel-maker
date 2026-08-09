@@ -2,12 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
-import {
-  documentId,
-  materialId,
-  nodeId,
-  volumeId,
-} from "@voxel-maker/shared";
+import { documentId, materialId, nodeId, volumeId } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import {
   createDesktopComposition,
@@ -56,7 +51,10 @@ function fixtureDocument(): VoxelDocument {
         name: "Wheel",
         parentId: ROOT,
         children: [],
-        transform: { ...IDENTITY, rotation: [0, 0.7071067811865476, 0, 0.7071067811865476] },
+        transform: {
+          ...IDENTITY,
+          rotation: [0, 0.7071067811865476, 0, 0.7071067811865476],
+        },
         components: [{ kind: "voxel", schemaVersion: 1, volumeId: VOLUME }],
       },
     ],
@@ -71,7 +69,9 @@ function fixtureDocument(): VoxelDocument {
         emissive: 0,
       },
     ],
-    volumes: [{ volumeId: VOLUME, bounds: { min: [-4, -4, -4], max: [4, 4, 4] } }],
+    volumes: [
+      { volumeId: VOLUME, bounds: { min: [-4, -4, -4], max: [4, 4, 4] } },
+    ],
   });
 }
 
@@ -96,7 +96,10 @@ function mountInspector(): {
   const root = createRoot(container);
   act(() => {
     root.render(
-      <AnimationInspector controller={composition.timeline} editor={composition.editor} />,
+      <AnimationInspector
+        controller={composition.timeline}
+        editor={composition.editor}
+      />,
     );
   });
   const section = container.querySelector<HTMLElement>("section");
@@ -105,7 +108,9 @@ function mountInspector(): {
     composition,
     root: section,
     unmount: () => {
-      act(() => root.unmount());
+      act(() => {
+        root.unmount();
+      });
       container.remove();
       composition.dispose();
     },
@@ -115,13 +120,14 @@ function mountInspector(): {
 /** Sets a controlled input value through the native setter so React's
  * value tracker sees the change (happy-dom quirk). */
 function setInputValue(input: HTMLInputElement, value: string): void {
-  const prototype = Object.getPrototypeOf(input);
-  const setter = Object.getOwnPropertyDescriptor(
-    prototype,
+  const descriptor = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
     "value",
-  )?.set;
-  if (setter === undefined) throw new Error("no native value setter");
-  setter.call(input, value);
+  );
+  if (descriptor === undefined || typeof descriptor.set !== "function") {
+    throw new Error("no native value setter");
+  }
+  descriptor.set.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -129,7 +135,7 @@ function field(root: HTMLElement, label: string): HTMLInputElement {
   const labels = Array.from(root.querySelectorAll("label.field"));
   const found = labels.find(
     (candidate) =>
-      candidate.querySelector("span")?.textContent?.trim() === label,
+      candidate.querySelector("span")?.textContent.trim() === label,
   );
   const input = found?.querySelector<HTMLInputElement>("input");
   if (input === null || input === undefined) {
@@ -149,7 +155,9 @@ describe("animation inspector", () => {
     const mounted = mountInspector();
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
     });
     expect(field(mounted.root, "Name").value).toBe("spin");
     const name = field(mounted.root, "Name");
@@ -171,8 +179,12 @@ describe("animation inspector", () => {
     const mounted = mountInspector();
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
-      expect(composition.timeline.addTracks([WHEEL], "rotation")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL], "rotation"),
+      ).toBeUndefined();
       const trackId = composition.timeline.state.tracks[0]?.track.trackId;
       if (trackId === undefined) throw new Error("missing track");
       // 90 degrees about Y.
@@ -187,13 +199,13 @@ describe("animation inspector", () => {
     const xField = field(mounted.root, "X");
     expect(xField.value).toBe("0");
     const yField = field(mounted.root, "Y");
-    if (yField === null) throw new Error("missing y field");
     expect(yField.value).toBe("90");
     act(() => {
       setInputValue(yField, "180");
       yField.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     });
-    const keyframe = composition.timeline.state.selectedClip?.tracks[0]?.keyframes[0];
+    const keyframe =
+      composition.timeline.state.selectedClip?.tracks[0]?.keyframes[0];
     const value = keyframe?.property.value ?? [];
     expect(value[0]).toBeCloseTo(0, 12);
     expect(value[1]).toBeCloseTo(1, 12);
@@ -216,11 +228,13 @@ describe("animation inspector", () => {
     const mounted = mountInspector();
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
     });
     const deleteButton = Array.from(
       mounted.root.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((candidate) => candidate.textContent?.includes("Delete clip"));
+    ).find((candidate) => candidate.textContent.includes("Delete clip"));
     if (deleteButton === undefined) throw new Error("no delete button");
     act(() => {
       deleteButton.click();

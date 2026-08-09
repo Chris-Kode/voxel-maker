@@ -2,15 +2,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
-import {
-  documentId,
-  materialId,
-  nodeId,
-  volumeId,
-} from "@voxel-maker/shared";
+import { documentId, materialId, nodeId, volumeId } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentSession, type DocumentSession } from "@voxel-maker/session";
-import { createEditorStore, type EditorStore } from "@voxel-maker/editor";
+import type { DocumentSession } from "@voxel-maker/session";
+import type { EditorStore } from "@voxel-maker/editor";
 import {
   createDesktopComposition,
   type DesktopComposition,
@@ -85,7 +80,9 @@ function fixtureDocument(): VoxelDocument {
         emissive: 0,
       },
     ],
-    volumes: [{ volumeId: VOLUME, bounds: { min: [-4, -4, -4], max: [4, 4, 4] } }],
+    volumes: [
+      { volumeId: VOLUME, bounds: { min: [-4, -4, -4], max: [4, 4, 4] } },
+    ],
   });
 }
 
@@ -116,7 +113,10 @@ function mountPanel(withDocument: boolean): Mounted {
   const root = createRoot(container);
   act(() => {
     root.render(
-      <TimelinePanel controller={composition.timeline} editor={composition.editor} />,
+      <TimelinePanel
+        controller={composition.timeline}
+        editor={composition.editor}
+      />,
     );
   });
   const panel = container.querySelector<HTMLElement>(".timeline-panel");
@@ -127,7 +127,9 @@ function mountPanel(withDocument: boolean): Mounted {
     editor: composition.editor,
     panel,
     unmount: () => {
-      act(() => root.unmount());
+      act(() => {
+        root.unmount();
+      });
       container.remove();
       composition.dispose();
     },
@@ -135,9 +137,11 @@ function mountPanel(withDocument: boolean): Mounted {
 }
 
 function button(panel: HTMLElement, label: string): HTMLButtonElement {
-  const found = Array.from(panel.querySelectorAll<HTMLButtonElement>("button")).find(
+  const found = Array.from(
+    panel.querySelectorAll<HTMLButtonElement>("button"),
+  ).find(
     (candidate) =>
-      candidate.textContent?.trim() === label ||
+      candidate.textContent.trim() === label ||
       candidate.getAttribute("aria-label") === label,
   );
   if (found === undefined) throw new Error(`button not found: ${label}`);
@@ -145,10 +149,12 @@ function button(panel: HTMLElement, label: string): HTMLButtonElement {
 }
 
 function select(panel: HTMLElement, ariaLabel: string): HTMLSelectElement {
-  const found = Array.from(panel.querySelectorAll<HTMLSelectElement>("select")).find(
+  const found = Array.from(
+    panel.querySelectorAll<HTMLSelectElement>("select"),
+  ).find(
     (candidate) =>
       candidate.getAttribute("aria-label") === ariaLabel ||
-      candidate.closest("label")?.textContent?.includes(ariaLabel) === true,
+      candidate.closest("label")?.textContent.includes(ariaLabel) === true,
   );
   if (found === undefined) throw new Error(`select not found: ${ariaLabel}`);
   return found;
@@ -180,9 +186,10 @@ function keyframesOf(composition: DesktopComposition): readonly {
   readonly time: number;
 }[] {
   const document = composition.session.current?.store.getDocument();
-  const clip = document?.animations[
-    composition.timeline.state.selectedClipId ?? ("none" as never)
-  ];
+  const clip =
+    document?.animations[
+      composition.timeline.state.selectedClipId ?? ("none" as never)
+    ];
   if (clip === undefined) return [];
   return clip.tracks.flatMap((track) =>
     track.keyframes.map((keyframe) => ({
@@ -208,8 +215,12 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
-      expect(composition.timeline.addTracks([WHEEL, ARM], "rotation")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL, ARM], "rotation"),
+      ).toBeUndefined();
     });
     expect(mounted.panel.textContent).toContain("spin");
     expect(mounted.panel.textContent).toContain("Wheel");
@@ -221,8 +232,12 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
-      expect(composition.timeline.addTracks([WHEEL], "translation")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL], "translation"),
+      ).toBeUndefined();
       composition.timeline.scrub(0.5);
     });
     act(() => {
@@ -238,8 +253,12 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
-      expect(composition.timeline.addTracks([WHEEL], "rotation")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL], "rotation"),
+      ).toBeUndefined();
     });
     const row = mounted.panel.querySelector<HTMLElement>(".timeline-row");
     if (row === null) throw new Error("no lane row");
@@ -262,8 +281,12 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
-      expect(composition.timeline.addTracks([WHEEL], "rotation")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL], "rotation"),
+      ).toBeUndefined();
       const trackId = composition.timeline.state.tracks[0]?.track.trackId;
       if (trackId === undefined) throw new Error("missing track");
       expect(
@@ -273,9 +296,8 @@ describe("timeline panel", () => {
         }),
       ).toBeUndefined();
     });
-    const keyframe = mounted.panel.querySelector<HTMLButtonElement>(
-      ".timeline-keyframe",
-    );
+    const keyframe =
+      mounted.panel.querySelector<HTMLButtonElement>(".timeline-keyframe");
     if (keyframe === null) throw new Error("no keyframe rendered");
     act(() => {
       dispatchPointer(keyframe, "pointerdown", 100); // 1.0s
@@ -291,8 +313,12 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
-      expect(composition.timeline.addTracks([WHEEL], "rotation")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL], "rotation"),
+      ).toBeUndefined();
       const trackId = composition.timeline.state.tracks[0]?.track.trackId;
       if (trackId === undefined) throw new Error("missing track");
       expect(
@@ -308,9 +334,8 @@ describe("timeline panel", () => {
         }),
       ).toBeUndefined();
     });
-    const keyframes = mounted.panel.querySelectorAll<HTMLButtonElement>(
-      ".timeline-keyframe",
-    );
+    const keyframes =
+      mounted.panel.querySelectorAll<HTMLButtonElement>(".timeline-keyframe");
     expect(keyframes).toHaveLength(2);
     act(() => {
       dispatchPointer(keyframes[0] as HTMLButtonElement, "pointerdown", 50);
@@ -336,7 +361,9 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
     });
     const toggle = button(mounted.panel, "Auto-key");
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
@@ -353,8 +380,12 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
-      expect(composition.timeline.addTracks([WHEEL], "rotation")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
+      expect(
+        composition.timeline.addTracks([WHEEL], "rotation"),
+      ).toBeUndefined();
     });
     const interpolation = select(mounted.panel, "Interpolation of Wheel");
     act(() => {
@@ -376,7 +407,9 @@ describe("timeline panel", () => {
     const mounted = mountPanel(true);
     const { composition } = mounted;
     act(() => {
-      expect(composition.timeline.createClip("spin", 2, "loop")).toBeUndefined();
+      expect(
+        composition.timeline.createClip("spin", 2, "loop"),
+      ).toBeUndefined();
     });
     const ruler = mounted.panel.querySelector<HTMLElement>(".timeline-ruler");
     if (ruler === null) throw new Error("no ruler");

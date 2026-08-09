@@ -15,12 +15,12 @@ import {
 } from "@voxel-maker/commands";
 import { buildAutoKeyCommands } from "./auto-key.js";
 
-
 /** Narrow helper: treats a keyframe.set command as its payload. */
 function keyPayload(
   command: Command | undefined,
 ): SetKeyframePayload | undefined {
-  if (command === undefined || command.type !== "keyframe.set") return undefined;
+  if (command === undefined || command.type !== "keyframe.set")
+    return undefined;
   return command.payload as SetKeyframePayload;
 }
 

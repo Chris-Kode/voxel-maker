@@ -64,7 +64,9 @@ export interface InspectorPanelProps {
    * selected clip, so "transform changes target base or selected clip"
    * stays true for every transform edit surface.
    */
-  readonly transformAugment?: (commands: readonly Command[]) => readonly Command[];
+  readonly transformAugment?: (
+    commands: readonly Command[],
+  ) => readonly Command[];
 }
 
 const FIELDS: readonly {

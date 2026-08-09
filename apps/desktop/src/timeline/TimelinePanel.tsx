@@ -1,17 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  AnimationId,
-  KeyframeId,
-  NodeId,
-  TrackId,
-} from "@voxel-maker/shared";
+import type { AnimationId, KeyframeId, TrackId } from "@voxel-maker/shared";
 import type { EditorStore } from "@voxel-maker/editor";
-import {
-  pixelToTime,
-  timeToPixel,
-  type TimelineStoreSnapshot,
-} from "@voxel-maker/editor";
-import type { AnimationDescriptor, Interpolation, TrackProperty } from "@voxel-maker/model";
+import { pixelToTime, timeToPixel } from "@voxel-maker/editor";
+import type { Interpolation } from "@voxel-maker/model";
 import type {
   TimelineController,
   TrackChannel,
@@ -34,13 +25,19 @@ export interface TimelinePanelProps {
   readonly editor: EditorStore;
 }
 
-const INTERPOLATIONS: readonly { readonly id: Interpolation; readonly label: string }[] = [
+const INTERPOLATIONS: readonly {
+  readonly id: Interpolation;
+  readonly label: string;
+}[] = [
   { id: "step", label: "Step" },
   { id: "linear", label: "Linear" },
   { id: "smoothstep", label: "Smooth" },
 ];
 
-const CHANNELS: readonly { readonly id: TrackChannel; readonly label: string }[] = [
+const CHANNELS: readonly {
+  readonly id: TrackChannel;
+  readonly label: string;
+}[] = [
   { id: "translation", label: "Position" },
   { id: "rotation", label: "Rotation" },
   { id: "scale", label: "Scale" },
@@ -70,7 +67,11 @@ export function TimelinePanel({
   const [state, setState] = useState(() => controller.state);
   const [channel, setChannel] = useState<TrackChannel>("translation");
   const [dragPreview, setDragPreview] = useState<
-    readonly { readonly trackId: TrackId; readonly keyframeId: KeyframeId; readonly time: number }[]
+    readonly {
+      readonly trackId: TrackId;
+      readonly keyframeId: KeyframeId;
+      readonly time: number;
+    }[]
   >([]);
   const lanesRef = useRef<HTMLDivElement>(null);
   const [lanesWidth, setLanesWidth] = useState(800);
@@ -92,7 +93,9 @@ export function TimelinePanel({
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   }, [state.selectedClipId]);
 
   const report = (error: Error | undefined): void => {
@@ -109,15 +112,28 @@ export function TimelinePanel({
     timeToPixel(duration, zoom, scroll) + 40,
   );
 
-  const play = (): void => controller.play();
-  const pause = (): void => controller.pause();
-  const stop = (): void => controller.stop();
-  const toggleLoop = (): void => controller.toggleLoop();
-  const toggleSnap = (): void => controller.setSnapEnabled(!state.snapEnabled);
-  const toggleAutoKey = (): void =>
+  const play = (): void => {
+    controller.play();
+  };
+  const pause = (): void => {
+    controller.pause();
+  };
+  const stop = (): void => {
+    controller.stop();
+  };
+  const toggleLoop = (): void => {
+    controller.toggleLoop();
+  };
+  const toggleSnap = (): void => {
+    controller.setSnapEnabled(!state.snapEnabled);
+  };
+  const toggleAutoKey = (): void => {
     controller.setKeyMode(state.keyMode === "auto" ? "manual" : "auto");
+  };
 
-  const onRulerPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const onRulerPointerDown = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ): void => {
     const element = event.currentTarget;
     element.setPointerCapture(event.pointerId);
     const scrubTo = (clientX: number): void => {
@@ -175,7 +191,16 @@ export function TimelinePanel({
       }
       return [];
     });
-    console.log("DBG pointerdown", keyframeIdValue, "multi", event.shiftKey, "next", JSON.stringify(nextSelection), "originals", JSON.stringify(originals));
+    console.log(
+      "DBG pointerdown",
+      keyframeIdValue,
+      "multi",
+      event.shiftKey,
+      "next",
+      JSON.stringify(nextSelection),
+      "originals",
+      JSON.stringify(originals),
+    );
     const session = {
       startX: event.clientX,
       lastX: event.clientX,
@@ -200,8 +225,7 @@ export function TimelinePanel({
         time: Math.max(0, original.time + delta),
       }));
       const moves = preview.filter(
-        (candidate, index) =>
-          candidate.time !== session.originals[index]?.time,
+        (candidate, index) => candidate.time !== session.originals[index]?.time,
       );
       if (moves.length > 0) {
         report(controller.moveKeyframes(moves));
@@ -233,9 +257,7 @@ export function TimelinePanel({
       controller.setZoom(zoom * factor);
       return;
     }
-    controller.setScrollSeconds(
-      scroll + (event.deltaY + event.deltaX) / zoom,
-    );
+    controller.setScrollSeconds(scroll + (event.deltaY + event.deltaX) / zoom);
   };
 
   const ticks = useMemo(() => {
@@ -277,14 +299,18 @@ export function TimelinePanel({
     report(controller.keySelection());
   };
 
-  const visibleKeyframes = (trackIdValue: TrackId): readonly {
+  const visibleKeyframes = (
+    trackIdValue: TrackId,
+  ): readonly {
     readonly keyframeId: KeyframeId;
     readonly time: number;
   }[] => {
     const preview = dragPreview
       .filter((entry) => entry.trackId === trackIdValue)
       .map((entry) => ({ keyframeId: entry.keyframeId, time: entry.time }));
-    const track = clip?.tracks.find((candidate) => candidate.trackId === trackIdValue);
+    const track = clip?.tracks.find(
+      (candidate) => candidate.trackId === trackIdValue,
+    );
     if (track === undefined) return preview;
     const previewIds = new Set(preview.map((entry) => entry.keyframeId));
     return [
@@ -315,7 +341,9 @@ export function TimelinePanel({
             value={state.selectedClipId ?? ""}
             onChange={(event) => {
               const value = event.target.value;
-              controller.selectClip(value === "" ? undefined : (value as AnimationId));
+              controller.selectClip(
+                value === "" ? undefined : (value as AnimationId),
+              );
             }}
           >
             <option value="">No clip — base state</option>
@@ -373,7 +401,9 @@ export function TimelinePanel({
           <span className="sr-only">New track channel</span>
           <select
             value={channel}
-            onChange={(event) => setChannel(event.target.value as TrackChannel)}
+            onChange={(event) => {
+              setChannel(event.target.value as TrackChannel);
+            }}
           >
             {CHANNELS.map((candidate) => (
               <option key={candidate.id} value={candidate.id}>
@@ -392,7 +422,9 @@ export function TimelinePanel({
         </button>
         <button
           type="button"
-          onClick={() => report(controller.deleteSelectedKeyframes())}
+          onClick={() => {
+            report(controller.deleteSelectedKeyframes());
+          }}
           disabled={state.selectedKeyframeIds.length === 0}
         >
           Delete keys
@@ -409,14 +441,18 @@ export function TimelinePanel({
         <button
           type="button"
           aria-label="Zoom out"
-          onClick={() => controller.setZoom(zoom / 1.5)}
+          onClick={() => {
+            controller.setZoom(zoom / 1.5);
+          }}
         >
           −
         </button>
         <button
           type="button"
           aria-label="Zoom in"
-          onClick={() => controller.setZoom(zoom * 1.5)}
+          onClick={() => {
+            controller.setZoom(zoom * 1.5);
+          }}
         >
           +
         </button>
@@ -426,7 +462,9 @@ export function TimelinePanel({
           <p>Create a clip to start animating.</p>
           <button
             type="button"
-            onClick={() => report(controller.createClip("Clip 1", 2, "loop"))}
+            onClick={() => {
+              report(controller.createClip("Clip 1", 2, "loop"));
+            }}
           >
             New clip
           </button>
@@ -436,7 +474,8 @@ export function TimelinePanel({
           <div className="timeline-tracks" aria-label="Tracks">
             {state.tracks.length === 0 ? (
               <p className="timeline-empty">
-                Select a node, then + Track. {state.keyMode === "auto" ? "Auto-key is on." : ""}
+                Select a node, then + Track.{" "}
+                {state.keyMode === "auto" ? "Auto-key is on." : ""}
               </p>
             ) : (
               state.tracks.map((entry) => (
@@ -446,7 +485,9 @@ export function TimelinePanel({
                     "timeline-track" +
                     (trackSelected(entry.track.trackId) ? " selected" : "")
                   }
-                  onClick={(event) => onTrackClick(event, entry.track.trackId)}
+                  onClick={(event) => {
+                    onTrackClick(event, entry.track.trackId);
+                  }}
                 >
                   <span className="timeline-track-name" title={entry.nodeName}>
                     {entry.nodeName}
@@ -462,7 +503,9 @@ export function TimelinePanel({
                   <select
                     aria-label={`Interpolation of ${entry.nodeName}`}
                     value={entry.track.interpolation}
-                    onClick={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                    }}
                     onChange={(event) => {
                       report(
                         controller.setInterpolation(
@@ -495,7 +538,7 @@ export function TimelinePanel({
                 <span
                   key={tick.time}
                   className="timeline-tick"
-                  style={{ left: `${tick.x}px` }}
+                  style={{ left: `${String(tick.x)}px` }}
                 >
                   {tick.time.toFixed(tickInterval(zoom) < 1 ? 2 : 0)}
                 </span>
@@ -503,13 +546,13 @@ export function TimelinePanel({
             </div>
             <div
               className="timeline-lane-content"
-              style={{ width: `${contentWidth}px` }}
+              style={{ width: `${String(contentWidth)}px` }}
             >
               {state.tracks.map((entry, row) => (
                 <div
                   key={entry.track.trackId}
                   className="timeline-row"
-                  style={{ top: `${row * 26}px` }}
+                  style={{ top: `${String(row * 26)}px` }}
                   onDoubleClick={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
                     onCreateKeyframe(
@@ -528,22 +571,22 @@ export function TimelinePanel({
                           ? " selected"
                           : "")
                       }
-                      style={{ left: `${laneX(keyframe.time) - 6}px` }}
+                      style={{ left: `${String(laneX(keyframe.time) - 6)}px` }}
                       aria-label={`Keyframe at ${keyframe.time.toFixed(2)}s`}
-                      onPointerDown={(event) =>
+                      onPointerDown={(event) => {
                         onKeyframePointerDown(
                           event,
                           entry.track.trackId,
                           keyframe.keyframeId,
-                        )
-                      }
+                        );
+                      }}
                     />
                   ))}
                 </div>
               ))}
               <div
                 className="timeline-playhead"
-                style={{ left: `${laneX(state.playhead)}px` }}
+                style={{ left: `${String(laneX(state.playhead))}px` }}
                 aria-hidden="true"
               />
             </div>

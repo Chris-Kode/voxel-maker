@@ -209,9 +209,9 @@ describe("auto-key transform wiring", () => {
     timeline.scrub(0.5);
 
     // Manual mode: the drag touches only base state.
-    const before = composition.session.current?.store.getDocument().nodes[
-      CHILD
-    ]?.transform.translation;
+    const before =
+      composition.session.current?.store.getDocument().nodes[CHILD]?.transform
+        .translation;
     if (before === undefined) throw new Error("missing baseline");
     dragTranslateX(composition, tip);
     const afterManual =
