@@ -53,6 +53,14 @@ interface PersistenceOutput {
     valueAfterUndo: number[] | null;
     valueEditUndone: boolean;
     undoValueAccepted: boolean;
+    deleteKeyAccepted: boolean;
+    keyframesAfterDelete: number;
+    undoDeleteKeyAccepted: boolean;
+    keyframesAfterUndoDelete: number;
+    deleteClipAccepted: boolean;
+    clipsAfterDelete: number;
+    undoDeleteClipAccepted: boolean;
+    clipsAfterUndoDelete: number;
     reloadedRevision: number;
   };
   durable: {
@@ -174,6 +182,16 @@ describe("headless persistence tracer", () => {
     );
     expect(output.animationReload.valueEditUndone).toBe(true);
     expect(output.animationReload.undoValueAccepted).toBe(true);
+    // Deleting works after reload too: keyframe delete + undo restores
+    // the two-keyframe track, clip delete + undo restores the clip.
+    expect(output.animationReload.deleteKeyAccepted).toBe(true);
+    expect(output.animationReload.keyframesAfterDelete).toBe(1);
+    expect(output.animationReload.undoDeleteKeyAccepted).toBe(true);
+    expect(output.animationReload.keyframesAfterUndoDelete).toBe(2);
+    expect(output.animationReload.deleteClipAccepted).toBe(true);
+    expect(output.animationReload.clipsAfterDelete).toBe(1);
+    expect(output.animationReload.undoDeleteClipAccepted).toBe(true);
+    expect(output.animationReload.clipsAfterUndoDelete).toBe(2);
   });
 
   it("serializes byte-identically across fresh processes", () => {

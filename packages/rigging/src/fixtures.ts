@@ -465,7 +465,7 @@ export function createSimpleCharacterFixture(): VoxelDocument {
     {
       nodeId: nodeId("node:rig:character:head"),
       name: "Head",
-      parentId: null,
+      parentId: nodeId("node:rig:character:torso"),
       transform: { ...identity, translation: [0, 3, 0] },
       components: [
         voxel(volumeId("volume:rig:character:head")),
@@ -488,7 +488,7 @@ export function createSimpleCharacterFixture(): VoxelDocument {
     {
       nodeId: nodeId("node:rig:character:left-arm"),
       name: "Left Arm",
-      parentId: null,
+      parentId: nodeId("node:rig:character:torso"),
       transform: { ...identity, translation: [-2, 2, 0] },
       components: [
         voxel(volumeId("volume:rig:character:left-arm")),
@@ -511,7 +511,7 @@ export function createSimpleCharacterFixture(): VoxelDocument {
     {
       nodeId: nodeId("node:rig:character:right-arm"),
       name: "Right Arm",
-      parentId: null,
+      parentId: nodeId("node:rig:character:torso"),
       transform: { ...identity, translation: [2, 2, 0] },
       components: [
         voxel(volumeId("volume:rig:character:right-arm")),
@@ -534,7 +534,7 @@ export function createSimpleCharacterFixture(): VoxelDocument {
     {
       nodeId: nodeId("node:rig:character:left-leg"),
       name: "Left Leg",
-      parentId: null,
+      parentId: nodeId("node:rig:character:torso"),
       transform: { ...identity, translation: [-1, 0, 0] },
       components: [
         voxel(volumeId("volume:rig:character:left-leg")),
@@ -557,7 +557,7 @@ export function createSimpleCharacterFixture(): VoxelDocument {
     {
       nodeId: nodeId("node:rig:character:right-leg"),
       name: "Right Leg",
-      parentId: null,
+      parentId: nodeId("node:rig:character:torso"),
       transform: { ...identity, translation: [1, 0, 0] },
       components: [
         voxel(volumeId("volume:rig:character:right-leg")),

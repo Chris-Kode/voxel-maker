@@ -7,6 +7,7 @@ import {
 } from "@voxel-maker/model";
 import { applyMatrix } from "@voxel-maker/math";
 import { validateRigAnnotations } from "@voxel-maker/rigging";
+import type { AnimationDescriptor } from "@voxel-maker/model";
 import { hasValidAnimationSemantics } from "./validate.js";
 import {
   evaluateAnimationRuntime,
@@ -14,6 +15,7 @@ import {
 } from "./runtime.js";
 import {
   ANIMATED_DEMOS,
+  type AnimatedDemo,
   createAbstractAnimationDocument,
   createCharacterWaveDocument,
   createConstrainedChestLidDocument,
@@ -35,6 +37,16 @@ import {
  */
 
 const nodeIdOf = (id: string): NodeId => id as NodeId;
+
+/** Looks up one demo category from the registry by its stable kind. */
+function demoOf(kind: AnimatedDemo["kind"]): {
+  document: VoxelDocument;
+  clip: AnimationDescriptor;
+} {
+  const demo = ANIMATED_DEMOS.find((entry) => entry.kind === kind);
+  if (demo === undefined) throw new Error(`${kind} demo missing`);
+  return demo.create();
+}
 
 /** Deterministic snapshot of a runtime state (maps serialized in order). */
 const stateJson = (state: AnimationRuntimeState): string =>
@@ -237,9 +249,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
   }
 
   describe("constrained chest lid demo", () => {
-    const demo = ANIMATED_DEMOS.find((entry) => entry.kind === "chest-lid");
-    if (demo === undefined) throw new Error("chest-lid demo missing");
-    const { document, clip } = demo.create();
+    const { document, clip } = demoOf("chest-lid");
     const lid = nodeIdOf("node:rig:chest-lid:lid");
 
     it("opens the lid but clamps the 60-degree clip at the 45-degree hinge limit", () => {
@@ -272,9 +282,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
   });
 
   describe("continuous wheel demo", () => {
-    const demo = ANIMATED_DEMOS.find((entry) => entry.kind === "wheel");
-    if (demo === undefined) throw new Error("wheel demo missing");
-    const { document, clip } = demo.create();
+    const { document, clip } = demoOf("wheel");
     const wheel = nodeIdOf("node:rig:wheel:wheel");
 
     it("spins a full revolution per loop at constant speed", () => {
@@ -295,9 +303,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
   });
 
   describe("linked arm demo", () => {
-    const demo = ANIMATED_DEMOS.find((entry) => entry.kind === "linked-arm");
-    if (demo === undefined) throw new Error("linked-arm demo missing");
-    const { document, clip } = demo.create();
+    const { document, clip } = demoOf("linked-arm");
 
     it("clamps each over-driven joint and still reaches a golden wrist pose", () => {
       const peak = evaluateAnimationRuntime(document, clip, 1);
@@ -319,9 +325,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
   });
 
   describe("flapping wings demo", () => {
-    const demo = ANIMATED_DEMOS.find((entry) => entry.kind === "wings");
-    if (demo === undefined) throw new Error("wings demo missing");
-    const { document, clip } = demo.create();
+    const { document, clip } = demoOf("wings");
 
     it("flaps both wings and clamps the over-driven sweep at both limits", () => {
       const up = evaluateAnimationRuntime(document, clip, 0.5);
@@ -354,11 +358,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
   });
 
   describe("simple character demo", () => {
-    const demo = ANIMATED_DEMOS.find(
-      (entry) => entry.kind === "simple-character",
-    );
-    if (demo === undefined) throw new Error("simple-character demo missing");
-    const { document, clip } = demo.create();
+    const { document, clip } = demoOf("simple-character");
 
     it("waves within clamped limits and marches the legs", () => {
       const peak = evaluateAnimationRuntime(document, clip, 1);
@@ -387,9 +387,7 @@ describe("definition-of-done animation demos (ticket #30)", () => {
   });
 
   describe("abstract animation demo", () => {
-    const demo = ANIMATED_DEMOS.find((entry) => entry.kind === "abstract");
-    if (demo === undefined) throw new Error("abstract demo missing");
-    const { document, clip } = demo.create();
+    const { document, clip } = demoOf("abstract");
 
     it("turns the sculpture with no constraints interfering", () => {
       const half = evaluateAnimationRuntime(document, clip, 2);

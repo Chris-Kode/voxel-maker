@@ -26,6 +26,8 @@ import {
   CommandRegistry,
   addTrackCommand,
   createAnimationCommand,
+  deleteAnimationCommand,
+  deleteKeyframeCommand,
   createMaterialCommand,
   createNodeCommand,
   fillBoxCommand,
@@ -332,6 +334,43 @@ export async function runPersistenceTrace(): Promise<string> {
     reloadedRevision = undoValueResult.value.revisionAfter;
   }
   const valueAfterUndo = bounceKeyValue();
+  // Deleting clips and keyframes after save and reload (S10.6 CRUD):
+  // deleting the second keyframe and undoing restores it exactly, then
+  // deleting the authored clip and undoing restores the full clip.
+  const keyframeCount = (): number =>
+    reloadedStore.getDocument().animations[bounceId]?.tracks[0]?.keyframes
+      .length ?? 0;
+  const clipCount = (): number =>
+    Object.keys(reloadedStore.getDocument().animations).length;
+  const deleteKeyAccepted = reloadedExecute(
+    deleteKeyframeCommand(commandId("command:demo:persist-reload:delete-key"), {
+      animationId: bounceId,
+      trackId: bounceTrack,
+      keyframeId: bounceKey1,
+    }),
+  );
+  const keyframesAfterDelete = keyframeCount();
+  const undoDeleteKeyResult = reloadedBus.undo(reloadedTx());
+  const undoDeleteKeyAccepted = undoDeleteKeyResult.ok;
+  if (undoDeleteKeyAccepted) {
+    reloadedRevision = undoDeleteKeyResult.value.revisionAfter;
+  }
+  const keyframesAfterUndoDelete = keyframeCount();
+  const deleteClipAccepted = reloadedExecute(
+    deleteAnimationCommand(
+      commandId("command:demo:persist-reload:delete-clip"),
+      {
+        animationId: bounceId,
+      },
+    ),
+  );
+  const clipsAfterDelete = clipCount();
+  const undoDeleteClipResult = reloadedBus.undo(reloadedTx());
+  const undoDeleteClipAccepted = undoDeleteClipResult.ok;
+  if (undoDeleteClipAccepted) {
+    reloadedRevision = undoDeleteClipResult.value.revisionAfter;
+  }
+  const clipsAfterUndoDelete = clipCount();
   const valueEditUndone = (() => {
     if (valueAfterEdit === undefined || valueAfterUndo === undefined) {
       return false;
@@ -461,6 +500,14 @@ export async function runPersistenceTrace(): Promise<string> {
       valueAfterUndo: valueAfterUndo ?? null,
       valueEditUndone,
       undoValueAccepted,
+      deleteKeyAccepted,
+      keyframesAfterDelete,
+      undoDeleteKeyAccepted,
+      keyframesAfterUndoDelete,
+      deleteClipAccepted,
+      clipsAfterDelete,
+      undoDeleteClipAccepted,
+      clipsAfterUndoDelete,
       reloadedRevision,
     },
     durable: {

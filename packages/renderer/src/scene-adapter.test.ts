@@ -25,6 +25,10 @@ import {
 } from "@voxel-maker/document";
 import type { VoxelVolume, VoxelWriteCapability } from "@voxel-maker/voxel";
 import {
+  ANIMATED_DEMOS,
+  evaluateAnimationRuntime,
+} from "@voxel-maker/animation";
+import {
   createSceneAdapter,
   handleMeshingRequest,
   type MeshingWorkerLike,
@@ -352,6 +356,55 @@ describe("scene adapter", () => {
       nodeId("node:rig:character:left-arm"),
     );
     expect(leftArm?.matrix.elements.slice(12, 15)).toEqual([-2, 2, 0]);
+    adapter.dispose();
+    secondAdapter.dispose();
+  });
+
+  it("projects an animated definition-of-done pose deterministically without mutating the store (ticket #30)", () => {
+    const demo = ANIMATED_DEMOS.find(
+      (entry) => entry.kind === "simple-character",
+    );
+    if (demo === undefined) throw new Error("character demo missing");
+    const { document, clip } = demo.create();
+    // The renderer consumes the store's document, so install the animated
+    // locals at the wave peak (t = 1) as the authored state through the
+    // store's public commit path — the same path a future animation
+    // integration uses to drive the viewport.
+    const runtime = evaluateAnimationRuntime(document, clip, 1);
+    const animated = JSON.parse(JSON.stringify(document)) as VoxelDocument;
+    for (const [nodeId, transform] of runtime.local) {
+      const node = animated.nodes[nodeId];
+      if (node === undefined) continue;
+      (node as { transform: typeof node.transform }).transform = {
+        ...transform,
+      };
+    }
+    const handle = createDocumentStore({ document: animated });
+    const adapter = createSceneAdapter({ scene: new THREE.Scene() });
+    adapter.rebind(handle.store);
+
+    // The runtime world pass clamped the head turn (driven to 90 deg) at
+    // the 60-deg neck limit; the adapter re-evaluates the same clamped
+    // pose through its own constrained world path (column-major Ry).
+    const head = adapter.objectForNode(nodeId("node:rig:character:head"));
+    expect(head?.matrix.elements[0]).toBeCloseTo(Math.cos(Math.PI / 3), 6);
+    expect(head?.matrix.elements[2]).toBeCloseTo(-Math.sin(Math.PI / 3), 6);
+
+    // Deterministic evaluation: a fresh adapter over the same store
+    // produces bit-identical matrices for every node.
+    const secondAdapter = createSceneAdapter({ scene: new THREE.Scene() });
+    secondAdapter.rebind(handle.store);
+    for (const node of Object.values(animated.nodes)) {
+      const first = adapter.objectForNode(node.nodeId);
+      const second = secondAdapter.objectForNode(node.nodeId);
+      expect(second?.matrix.elements).toEqual(first?.matrix.elements);
+    }
+
+    // The base store state is untouched: same revision and hash.
+    expect(handle.store.revision).toBe(0);
+    expect(canonicalDocumentHash(handle.store.getDocument())).toBe(
+      canonicalDocumentHash(animated),
+    );
     adapter.dispose();
     secondAdapter.dispose();
   });

@@ -22,6 +22,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@voxel-maker/animation": "workspace:*",
     "@voxel-maker/document": "workspace:*",
     "@voxel-maker/math": "workspace:*",
     "@voxel-maker/model": "workspace:*",

@@ -30,6 +30,7 @@ import {
   createAnimatedWheelDocument,
   createPlaybackController,
   evaluateAnimationRuntime,
+  evaluateWorldTransforms,
   type AnimationRuntimeState,
 } from "@voxel-maker/animation";
 import { chunkCoordinate, localCoordinate } from "@voxel-maker/voxel";
@@ -482,18 +483,20 @@ export function runAnimationDemosTrace(): string {
               ),
       };
     };
-    // The constraint layer bites at the clip's over-driven peaks, so the
-    // clamp signal scans every sampled pose of every animated node.
-    const clampedAny = firstRun.some((state) =>
-      animatedNodes.some((nodeId) => {
-        const pose = poseOf(state, nodeId);
-        if (pose.localEuler === null || pose.worldEuler === null) return false;
-        return pose.localEuler.some(
-          (value, index) =>
-            Math.abs(value - (pose.worldEuler?.[index] ?? 0)) > 1e-3,
+    // The clamp signal is exact: the runtime's world pass applies the
+    // constraint layer to the sampled locals, so evaluating the SAME
+    // locals without the constraint layer and comparing the two world
+    // tables isolates clamping from ordinary parent composition.
+    const clampedAny = firstRun.some((state) => {
+      const unconstrained = evaluateWorldTransforms(document, state.local);
+      return [...state.world.entries()].some(([nodeId, matrix]) => {
+        const plain = unconstrained.get(nodeId);
+        if (plain === undefined) return false;
+        return matrix.some(
+          (value, index) => Math.abs(value - (plain[index] ?? 0)) > 1e-9,
         );
-      }),
-    );
+      });
+    });
     const midPose = animatedNodes.map((nodeId) => {
       const pose = poseOf(mid, nodeId);
       return { nodeId, ...pose };

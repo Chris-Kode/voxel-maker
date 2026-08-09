@@ -405,6 +405,9 @@ importers:
 
   packages/renderer:
     dependencies:
+      '@voxel-maker/animation':
+        specifier: workspace:*
+        version: link:../animation
       '@voxel-maker/document':
         specifier: workspace:*
         version: link:../document

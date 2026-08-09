@@ -142,19 +142,12 @@ describe("headless workspace tracer", () => {
         expect(pose.nodeId.length).toBeGreaterThan(0);
       }
     }
-    // The constrained categories clamp at least one animated node at an
-    // over-driven peak: the world pose differs from the raw sampled local
-    // rotation (the unconstrained wheel and abstract demos pass through).
-    const constrained = [
-      "chest-lid",
-      "linked-arm",
-      "wings",
-      "simple-character",
-    ];
+    // The clamp signal is exact and derived from the trace data: exactly
+    // the demos whose documents carry a constraint component show a world
+    // table that differs from the unconstrained composition of the same
+    // sampled locals (wheel and abstract animation pass through).
     for (const demo of output.demos) {
-      if (constrained.includes(demo.kind)) {
-        expect(demo.clampedAny).toBe(true);
-      }
+      expect(demo.clampedAny).toBe(demo.componentKinds.includes("constraint"));
     }
   });
 
