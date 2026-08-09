@@ -74,7 +74,6 @@ describe("versioned generator interface (AC1)", () => {
   it("rejects unknown generators with a stable error", () => {
     expect(() => proposeGenerator("generator.nope", {}, CONTEXT)).toThrowError(
       expect.objectContaining({ code: UNKNOWN_GENERATOR_CODE }) as Error,
-    
     );
   });
 
@@ -83,26 +82,22 @@ describe("versioned generator interface (AC1)", () => {
       proposeGenerator("generator.stairs", { ...STAIRS, count: 0 }, CONTEXT),
     ).toThrowError(
       expect.objectContaining({ code: INVALID_GENERATOR_PARAMS_CODE }) as Error,
-    
     );
     expect(() =>
       proposeGenerator("generator.stairs", { ...STAIRS, width: -1 }, CONTEXT),
     ).toThrowError(
       expect.objectContaining({ code: INVALID_GENERATOR_PARAMS_CODE }) as Error,
-    
     );
     expect(() =>
       proposeGenerator("generator.stairs", { start: [0, 0, 0] }, CONTEXT),
     ).toThrowError(
       expect.objectContaining({ code: INVALID_GENERATOR_PARAMS_CODE }) as Error,
-    
     );
     // Closed objects: unknown fields are rejected rather than guessed at.
     expect(() =>
       proposeGenerator("generator.stairs", { ...STAIRS, bogus: 1 }, CONTEXT),
     ).toThrowError(
       expect.objectContaining({ code: INVALID_GENERATOR_PARAMS_CODE }) as Error,
-    
     );
   });
 
@@ -110,8 +105,9 @@ describe("versioned generator interface (AC1)", () => {
     expect(() =>
       proposeGenerator("generator.stairs", STAIRS, { ...CONTEXT, seed: "" }),
     ).toThrowError(
-      expect.objectContaining({ code: INVALID_GENERATOR_CONTEXT_CODE }) as Error,
-    
+      expect.objectContaining({
+        code: INVALID_GENERATOR_CONTEXT_CODE,
+      }) as Error,
     );
     expect(() =>
       proposeGenerator("generator.stairs", STAIRS, {
@@ -119,8 +115,9 @@ describe("versioned generator interface (AC1)", () => {
         seed: "x".repeat(129),
       }),
     ).toThrowError(
-      expect.objectContaining({ code: INVALID_GENERATOR_CONTEXT_CODE }) as Error,
-    
+      expect.objectContaining({
+        code: INVALID_GENERATOR_CONTEXT_CODE,
+      }) as Error,
     );
     expect(() =>
       proposeGenerator("generator.stairs", STAIRS, {
@@ -128,8 +125,9 @@ describe("versioned generator interface (AC1)", () => {
         material: 0 as never,
       }),
     ).toThrowError(
-      expect.objectContaining({ code: INVALID_GENERATOR_CONTEXT_CODE }) as Error,
-    
+      expect.objectContaining({
+        code: INVALID_GENERATOR_CONTEXT_CODE,
+      }) as Error,
     );
   });
 
@@ -183,7 +181,6 @@ describe("determinism and explicit seed (AC1/AC2)", () => {
       proposeGenerator("generator.stairs", { ...STAIRS, count: 300 }, CONTEXT),
     ).toThrowError(
       expect.objectContaining({ code: INVALID_GENERATOR_PARAMS_CODE }) as Error,
-    
     );
   });
 });
@@ -197,7 +194,6 @@ describe("cost preflight and budgets (AC2)", () => {
       }),
     ).toThrowError(
       expect.objectContaining({ code: GENERATOR_COMMAND_LIMIT_CODE }) as Error,
-    
     );
   });
 
@@ -209,7 +205,6 @@ describe("cost preflight and budgets (AC2)", () => {
       }),
     ).toThrowError(
       expect.objectContaining({ code: GENERATOR_VOXEL_LIMIT_CODE }) as Error,
-    
     );
   });
 
