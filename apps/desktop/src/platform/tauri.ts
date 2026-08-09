@@ -5,6 +5,7 @@ import {
 } from "@tauri-apps/plugin-dialog";
 import type {
   AtomicWriteResult,
+  ImageStoragePort,
   ProjectStoragePort,
   RecoveryJournalPort,
 } from "@voxel-maker/storage";
@@ -122,6 +123,27 @@ function parseRecentJson(raw: string): readonly RecentProjectEntry[] {
   }
 }
 
+/**
+ * Tauri preview-image storage (plan S8.5/S15.2, ticket #25): scoped
+ * atomic image writes (temp + flush + rename, no backup) and existence
+ * checks through the shell's own allowlisted commands (`src-tauri`).
+ */
+export class TauriImageStorage implements ImageStoragePort {
+  async writeImageAtomic(
+    path: string,
+    bytes: Uint8Array,
+  ): Promise<AtomicWriteResult> {
+    return await invoke<AtomicWriteResult>("write_image_bytes_atomic", {
+      path,
+      bytes,
+    });
+  }
+
+  async exists(path: string): Promise<boolean> {
+    return await invoke<boolean>("image_exists", { path });
+  }
+}
+
 /** Native open/save dialogs via the allowlisted dialog plugin. */
 export class TauriFilePicker implements FilePicker {
   async pickOpenPath(): Promise<string | undefined> {
@@ -140,4 +162,18 @@ export class TauriFilePicker implements FilePicker {
     });
     return typeof selected === "string" ? selected : undefined;
   }
+}
+
+/**
+ * Save-dialog picker for one preview image (PNG extension); the caller
+ * derives the four standard-view names from the chosen base path.
+ */
+export async function pickPreviewImagePath(
+  suggestedName: string,
+): Promise<string | undefined> {
+  const selected = await saveDialog({
+    defaultPath: suggestedName,
+    filters: [{ name: "PNG image", extensions: ["png"] }],
+  });
+  return typeof selected === "string" ? selected : undefined;
 }

@@ -9,7 +9,9 @@ use tauri::Manager;
 /// and relative paths before any filesystem call. The project lifecycle
 /// ticket (#22) adds the adjacent recovery journal (read/append/replace/
 /// remove) and the bounded recent-project store in the app config
-/// directory. Lock handling remains a documented follow-up.
+/// directory. The preview-export ticket (#25) adds scoped atomic image
+/// writes (`write_image_bytes_atomic`, `image_exists`) with no backup.
+/// Lock handling remains a documented follow-up.
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +115,51 @@ fn remove_project(path: String) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Atomically replaces a preview image file (ticket #25): same-directory
+/// temporary file, flush, rename, best-effort directory sync — the same
+/// order as `write_project_bytes_atomic`, but WITHOUT a `.bak` backup,
+/// because preview images are always reproducible from the document and
+/// must never create sibling clutter. A failure before the rename leaves
+/// the previous destination untouched.
+#[tauri::command]
+fn write_image_bytes_atomic(path: String, bytes: Vec<u8>) -> Result<AtomicWriteResult, String> {
+    validate_path(&path)?;
+    let destination = Path::new(&path);
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "image path has no parent directory".to_string())?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "image path has no file name".to_string())?;
+    let file_name = file_name.to_string_lossy();
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
+    std::fs::write(&temp_path, &bytes).map_err(|error| error.to_string())?;
+    let file = std::fs::File::open(&temp_path).and_then(|file| file.sync_all());
+    if let Err(error) = file {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error.to_string());
+    }
+    std::fs::rename(&temp_path, destination).map_err(|error| error.to_string())?;
+    // Best-effort durability: a failed sync weakens crash durability but
+    // does not fail the write.
+    let directory_sync_succeeded = std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .is_ok();
+    Ok(AtomicWriteResult {
+        temp_path: temp_path.to_string_lossy().into_owned(),
+        backup_created: false,
+        backup_path: None,
+        directory_sync_succeeded,
+    })
+}
+
+/// Existence check for preview-image overwrite confirmation (ticket #25).
+#[tauri::command]
+fn image_exists(path: String) -> Result<bool, String> {
+    validate_path(&path)?;
+    Ok(Path::new(&path).exists())
 }
 
 /// Reads the adjacent recovery journal (`<path>.journal`); `None` when
@@ -272,6 +319,8 @@ pub fn run() {
             project_exists,
             read_backup_bytes,
             remove_project,
+            write_image_bytes_atomic,
+            image_exists,
             read_journal_bytes,
             append_journal_bytes,
             replace_journal_bytes,

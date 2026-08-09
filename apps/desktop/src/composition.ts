@@ -1,7 +1,9 @@
 import * as THREE from "three";
-import type {
-  ProjectStoragePort,
-  RecoveryJournalPort,
+import {
+  MemoryImageStorage,
+  type ImageStoragePort,
+  type ProjectStoragePort,
+  type RecoveryJournalPort,
 } from "@voxel-maker/storage";
 import {
   createDocumentSession,
@@ -41,6 +43,10 @@ import {
   createMaterialPanelController,
   type MaterialPanelController,
 } from "./materials/material-panel-controller.js";
+import {
+  createPreviewExportService,
+  type PreviewExportService,
+} from "./export/preview-export.js";
 
 /**
  * Desktop application composition root (plan S6.2, ticket #15): the single
@@ -85,11 +91,19 @@ export interface DesktopComposition {
   /** Materials panel controller (plan S7.13, ticket #21). */
   readonly materialPanel: MaterialPanelController;
   readonly fileService: FileService;
+  /** Standard preview image export (plan S8.5/S15.2, ticket #25). */
+  readonly previewExport: PreviewExportService;
   dispose(): void;
 }
 
 export interface CompositionOptions {
   readonly storage: ProjectStoragePort & RecoveryJournalPort;
+  /**
+   * Scoped atomic preview-image writes (plan S8.5, ticket #25). Defaults
+   * to the in-memory adapter (browser shells and tests); the Tauri shell
+   * injects the native adapter from the platform services.
+   */
+  readonly imageStorage?: ImageStoragePort;
   readonly picker: FilePicker;
   /**
    * User confirmations for dirty-close, overwrite, and recovery choices.
@@ -214,6 +228,12 @@ export function createDesktopComposition(
       : { autosaveDelayMs: options.autosaveDelayMs }),
   });
   const materialPanel = createMaterialPanelController({ session, editor });
+  const previewExport = createPreviewExportService({
+    session,
+    imageStorage: options.imageStorage ?? new MemoryImageStorage(),
+    picker: options.picker,
+    prompts: options.prompts ?? createDefaultPrompts(),
+  });
 
   // Lifecycle rebinding: opening, replacing, and closing a document fully
   // dispose and rebind scene resources through lifecycle events (plan S6.3).
@@ -276,11 +296,13 @@ export function createDesktopComposition(
     draftOverlay,
     materialPanel,
     fileService,
+    previewExport,
     dispose() {
       materialPanel.dispose();
       viewport.dispose();
       draftOverlay.dispose();
       fileService.dispose();
+      previewExport.dispose();
       adapter.dispose();
       session.dispose();
     },

@@ -4,8 +4,10 @@
  * (copied chunk-and-halo DTOs S6.4, worker pool S6.6, dirty-chunk
  * scheduler S6.8, worker protocol and scope glue), the face-culling
  * mesher (S6.5), the material adapter (S6.9), viewport diagnostics
- * (S6.14), and deterministic viewport picking plus world-bounds queries
- * (S6.12, ADR-0005). Core semantic packages never import this module.
+ * (S6.14), deterministic viewport picking plus world-bounds queries
+ * (S6.12, ADR-0005), and the standard preview render protocol with a
+ * deterministic software renderer (S8.5/S15.1/S15.2, ticket #25). Core
+ * semantic packages never import this module.
  */
 export {
   createMaterialAdapter,
@@ -89,3 +91,33 @@ export {
   type VoxelPickHit,
   type WorldBounds,
 } from "./pick.js";
+export {
+  DEFAULT_PREVIEW_SIZE,
+  MAX_PREVIEW_DIMENSION,
+  MAX_PREVIEW_PIXELS,
+  PREVIEW_AMBIENT,
+  PREVIEW_BACKGROUND,
+  PREVIEW_DIFFUSE,
+  PREVIEW_FAR,
+  PREVIEW_FOV_Y,
+  PREVIEW_FRAME_MARGIN,
+  PREVIEW_LIGHT_DIRECTION,
+  PREVIEW_MISSING_MATERIAL,
+  PREVIEW_NEAR,
+  PREVIEW_ORTHO_DISTANCE,
+  PREVIEW_ORTHO_FAR,
+  PREVIEW_ORTHO_NEAR,
+  STANDARD_PREVIEW_VIEWS,
+  frameStandardView,
+  validatePreviewSpec,
+  type PreviewFraming,
+  type PreviewProjection,
+  type PreviewSpec,
+  type PreviewViewId,
+} from "./preview/preview-protocol.js";
+export {
+  PreviewCancelledError,
+  renderStandardPreview,
+  type PreviewRenderOptions,
+  type PreviewRenderResult,
+} from "./preview/preview-renderer.js";

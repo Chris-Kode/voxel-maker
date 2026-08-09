@@ -1,5 +1,6 @@
 import type {
   AtomicWriteResult,
+  ImageStoragePort,
   ProjectStoragePort,
   RecoveryJournalPort,
 } from "@voxel-maker/storage";
@@ -86,6 +87,38 @@ export class BrowserProjectStorage
   removeJournal(path: string): Promise<void> {
     this.#files.delete(journalPathFor(path));
     return Promise.resolve();
+  }
+}
+
+/** Browser preview-image storage: in-memory map + download fallback. */
+export class BrowserImageStorage implements ImageStoragePort {
+  readonly #files = new Map<string, Uint8Array>();
+
+  writeImageAtomic(
+    path: string,
+    bytes: Uint8Array,
+  ): Promise<AtomicWriteResult> {
+    this.#files.set(path, Uint8Array.from(bytes));
+    downloadBytes(path, bytes);
+    return Promise.resolve({
+      tempPath: path,
+      backupCreated: false,
+      directorySyncSucceeded: true,
+    });
+  }
+
+  exists(path: string): Promise<boolean> {
+    return Promise.resolve(this.#files.has(path));
+  }
+
+  /** Copies of every stored path (tests and diagnostics). */
+  files(): ReadonlyMap<string, Uint8Array> {
+    return new Map(
+      [...this.#files.entries()].map(([path, bytes]) => [
+        path,
+        Uint8Array.from(bytes),
+      ]),
+    );
   }
 }
 

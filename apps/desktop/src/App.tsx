@@ -16,6 +16,10 @@ import { createPanelIds } from "./panels/panel-utils.js";
 import { MaterialPanel, usePanelState } from "./materials/MaterialPanel.js";
 import { handleCloseRequest } from "./close-request.js";
 import type { FileServiceResult, FileServiceStatus } from "./file-service.js";
+import type {
+  PreviewExportResult,
+  PreviewExportStatus,
+} from "./export/preview-export.js";
 import type { RecentProjectEntry } from "./recent-projects.js";
 
 /**
@@ -146,6 +150,13 @@ export function App(): React.JSX.Element {
   );
   const [busy, setBusy] = useState(false);
   const [lastResult, setLastResult] = useState<FileServiceResult | undefined>();
+  const [exportStatus, setExportStatus] = useState<PreviewExportStatus>(() =>
+    snapshotExportStatus(composition.previewExport.status),
+  );
+  const [exportSize, setExportSize] = useState(DEFAULT_EXPORT_SIZE);
+  const [lastExport, setLastExport] = useState<
+    PreviewExportResult | undefined
+  >();
   const [recent, setRecent] = useState<readonly RecentProjectEntry[]>([]);
   const [recentOpen, setRecentOpen] = useState(false);
   const recentRef = useRef<HTMLDivElement | null>(null);
@@ -154,6 +165,14 @@ export function App(): React.JSX.Element {
     () =>
       composition.fileService.subscribe(() => {
         setStatus(snapshotStatus(composition.fileService.status));
+      }),
+    [composition],
+  );
+
+  useEffect(
+    () =>
+      composition.previewExport.subscribe(() => {
+        setExportStatus(snapshotExportStatus(composition.previewExport.status));
       }),
     [composition],
   );
@@ -224,6 +243,13 @@ export function App(): React.JSX.Element {
     }
   };
 
+  const exportPreviews = async (): Promise<void> => {
+    const result = await composition.previewExport.exportPreviews({
+      size: exportSize,
+    });
+    if (result !== undefined) setLastExport(result);
+  };
+
   const openRecent = async (path: string): Promise<void> => {
     setRecentOpen(false);
     await run(() => composition.fileService.openRecentProject(path));
@@ -236,6 +262,7 @@ export function App(): React.JSX.Element {
 
   const saving = status.saving;
   const dirty = status.dirty;
+  const exporting = exportStatus.state === "exporting";
   const pendingTransform = editorState.transformPreview;
   // Single pending-apply predicate: the controller owns the definition
   // (a rotate/mirror/delete preview awaits apply; move/copy drags are
@@ -316,6 +343,39 @@ export function App(): React.JSX.Element {
         >
           Save As
         </button>
+        <label className="export-size" aria-label="Preview image size">
+          <select
+            value={exportSize}
+            disabled={busy || exporting}
+            onChange={(event) => {
+              setExportSize(Number(event.target.value));
+            }}
+          >
+            <option value={512}>512px</option>
+            <option value={1024}>1024px</option>
+            <option value={2048}>2048px</option>
+          </select>
+        </label>
+        {exporting ? (
+          <button
+            type="button"
+            className="cancel-save"
+            onClick={() => {
+              composition.previewExport.cancel();
+            }}
+          >
+            Cancel export
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy || status.documentId === undefined}
+            title="Export perspective, front, side, and top preview images"
+            onClick={() => void exportPreviews()}
+          >
+            Export previews
+          </button>
+        )}
         <div className="recent" ref={recentRef}>
           <button
             type="button"
@@ -691,6 +751,33 @@ export function App(): React.JSX.Element {
         {status.lastSaveStale ? (
           <span className="stale">Save is behind your latest changes</span>
         ) : null}
+        {exporting ? (
+          <span className="saving">
+            Exporting previews… (
+            {exportStatus.views.filter((view) => view.state === "done").length}/
+            {exportStatus.views.length}{" "}
+            {exportStatus.views.find(
+              (view) =>
+                view.state === "rendering" ||
+                view.state === "encoding" ||
+                view.state === "writing",
+            )?.view ?? ""}
+            )
+          </span>
+        ) : null}
+        {lastExport !== undefined ? (
+          <span
+            className={
+              lastExport.ok && !lastExport.cancelled ? "saved" : "error"
+            }
+          >
+            {lastExport.ok && !lastExport.cancelled
+              ? `Exported ${String(lastExport.paths.length)} preview images`
+              : lastExport.cancelled
+                ? `Preview export cancelled (${String(lastExport.paths.length)} written)`
+                : (lastExport.error?.message ?? "Preview export failed")}
+          </span>
+        ) : null}
         {status.degraded ? (
           <span className="degraded">Crash recovery degraded</span>
         ) : null}
@@ -722,6 +809,21 @@ export function App(): React.JSX.Element {
       </section>
     </div>
   );
+}
+
+/** Default export size for the shell selector (see the preview protocol). */
+const DEFAULT_EXPORT_SIZE = 1024;
+
+/** Copies the live export status into a stable snapshot for React. */
+function snapshotExportStatus(
+  status: PreviewExportStatus,
+): PreviewExportStatus {
+  return {
+    state: status.state,
+    views: status.views,
+    basePath: status.basePath,
+    error: status.error,
+  };
 }
 
 /** Copies the live getter-based status into a stable snapshot for React. */

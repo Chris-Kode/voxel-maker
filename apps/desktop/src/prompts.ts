@@ -40,6 +40,10 @@ export const PROMPT_MESSAGES = {
     "The current project has unsaved changes. Discard them and continue?",
   overwriteProject:
     "A project file already exists at this location. Replace it?",
+  overwritePreviews: (paths: readonly string[]): string =>
+    `The following preview image${paths.length === 1 ? "" : "s"} already ${
+      paths.length === 1 ? "exists" : "exist"
+    }: ${paths.join(", ")}. Replace ${paths.length === 1 ? "it" : "them"}?`,
   applyRecovery: (count: number): string =>
     `This project has ${String(count)} unsaved change${
       count === 1 ? "" : "s"

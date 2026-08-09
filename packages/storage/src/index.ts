@@ -52,6 +52,7 @@ export {
   type SaveOutcome,
 } from "./coordinator.js";
 export { MemoryProjectStorage } from "./memory-storage.js";
+export { MemoryImageStorage, type ImageStoragePort } from "./image-port.js";
 export {
   recoveryJournalPortConformanceCases,
   storagePortConformanceCases,

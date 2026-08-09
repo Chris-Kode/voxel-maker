@@ -6,6 +6,12 @@
  */
 export { crc32, crc32Hex } from "./crc32.js";
 export {
+  encodePng,
+  PNG_MAX_DIMENSION,
+  PNG_MAX_PIXELS,
+  validatePngInput,
+} from "./png.js";
+export {
   DEFAULT_ZIP_ARCHIVE_LIMITS,
   isValidEntryName,
   readZipArchive,

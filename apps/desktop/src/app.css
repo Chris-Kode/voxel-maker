@@ -346,6 +346,15 @@ body {
 }
 
 .toolbar .tools button.active,
+.toolbar .export-size select {
+  background: #262b33;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 12px;
+}
+
 .toolbar .selection-modes button.active,
 .toolbar .transform-modes button.active {
   background: var(--accent);
