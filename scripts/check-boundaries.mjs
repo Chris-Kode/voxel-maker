@@ -92,7 +92,15 @@ const allowedDependencies = {
   // boundary tests that stage proposals into a real preview session.
   // animation/formats are test-only devDependencies (ticket #38 boundary
   // proof) and are never imported by skills source.
-  skills: ["shared", "agent", "commands", "model", "document", "animation", "formats"],
+  skills: [
+    "shared",
+    "agent",
+    "commands",
+    "model",
+    "document",
+    "animation",
+    "formats",
+  ],
   testkit: ["shared"],
   evaluation: [
     "shared",
