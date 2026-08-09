@@ -37,10 +37,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build benchmark tooling
-        run: pnpm --filter @voxel-maker/bench-cli build
+        # turbo builds the bench-cli app AND its workspace dependencies
+        # (cross-package imports resolve to built dist).
+        run: pnpm exec turbo run build --filter @voxel-maker/bench-cli...
       - name: Fetch retained trends
         run: |
           set -euo pipefail
+          mkdir -p benchmarks
           if git rev-parse --verify origin/benchmark-trends >/dev/null 2>&1; then
             git show origin/benchmark-trends:benchmarks/trends.json > benchmarks/trends.json
             echo "trends baseline loaded: $(wc -l < benchmarks/trends.json) lines"
@@ -55,6 +58,9 @@ jobs:
           --json benchmarks/out/full.json --trends benchmarks/trends.json
           --no-progress
       - name: Upload benchmark evidence
+        # Runs even when the benchmark failed: a failing gate or trend
+        # regression must still leave its report as retained evidence.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-full-${{ github.run_id }}
@@ -63,6 +69,10 @@ jobs:
             benchmarks/trends.json
           if-no-files-found: error
       - name: Publish retained trends
+        # Runs even when the benchmark failed (the CLI appends the trend
+        # row before exiting non-zero), so the retained history keeps the
+        # failing evidence.
+        if: always()
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"

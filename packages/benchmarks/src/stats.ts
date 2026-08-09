@@ -20,7 +20,8 @@ export interface SampleSummary {
 }
 
 /**
- * Nearest-rank percentile of sorted ascending samples (the same
+ * Rank-interpolated percentile: the value at rank `p * (n - 1)` with
+ * linear interpolation between the two nearest sorted samples (the
  * definition used by ADR-0008 gate reporting). Returns 0 for an empty
  * sample set. `p` is a fraction in [0, 1]; 0.95 is the gate percentile.
  */

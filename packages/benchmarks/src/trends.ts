@@ -52,20 +52,10 @@ export interface TrendComparison {
   readonly regressed: boolean;
 }
 
-/** Every measurement value a trend row retains, by stable key. */
-export const TREND_METRIC_KEYS = Object.freeze([
-  "command.p95",
-  "remesh.p95",
-  "queueWait.p95",
-  "flush.p95",
-  "meshSettleMs",
-  "save.p95",
-  "load.p95",
-  "export.p95",
-  "memory.rssMiB",
-] as const);
-
-/** Flattens one report into trend values (same keys on every run). */
+/**
+ * Flattens one report into trend values (same stable keys on every run:
+ * `<kind>.<size>.<metric>` plus `animation.<tracks>.frameMs.p95`).
+ */
 export function flattenReport(report: BenchmarkReport): FlattenedValues {
   const values: Record<string, number> = {};
   for (const kind of Object.keys(report.scenes)) {
@@ -97,6 +87,9 @@ export function isTrendRegression(
   current: number,
   tolerance: TrendTolerance = DEFAULT_TREND_TOLERANCE,
 ): boolean {
+  // A zero baseline (e.g. a previously skipped metric) can never prove
+  // a ratio; tolerate up to five absolute-floor units of growth so a
+  // first measured value is not instantly a regression.
   if (previous === 0) return current > tolerance.absoluteFloorMs * 5;
   const delta = current - previous;
   if (delta <= tolerance.absoluteFloorMs) return false;
@@ -111,6 +104,10 @@ export function compareWithTrends(
 ): readonly TrendComparison[] {
   const latest = history.rows[history.rows.length - 1];
   if (latest === undefined) return [];
+  // Retained trends are only comparable on the same named hardware tier;
+  // a different machine class gets a fresh baseline, never a false
+  // regression against unrelated hardware.
+  if (latest.hardware.tier !== report.hardware.tier) return [];
   const current = flattenReport(report);
   const comparisons: TrendComparison[] = [];
   for (const key of Object.keys(latest.values)) {

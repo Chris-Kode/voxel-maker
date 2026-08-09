@@ -7,6 +7,7 @@ import {
   compareWithTrends,
   emptyTrendHistory,
   runBenchmarks,
+  BENCHMARK_SCENE_KINDS,
   type BenchmarkSceneKind,
   type BenchmarkTrendHistory,
   type HardwareInput,
@@ -36,8 +37,6 @@ interface CliOptions {
   trends: string | undefined;
   noProgress: boolean;
 }
-
-const KIND_NAMES = ["compact", "sparse", "checkerboard"] as const;
 
 function parseArgs(argv: readonly string[]): CliOptions {
   const options: CliOptions = {
@@ -80,7 +79,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
           .split(",")
           .map((part) => part.trim());
         for (const kind of options.kinds) {
-          if (!(KIND_NAMES as readonly string[]).includes(kind)) {
+          if (!(BENCHMARK_SCENE_KINDS as readonly string[]).includes(kind)) {
             throw new Error(`unknown scene kind: ${kind}`);
           }
         }
@@ -122,7 +121,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     }
   }
   if (options.sizes.length === 0) options.sizes = [100_000, 500_000, 1_000_000];
-  if (options.kinds.length === 0) options.kinds = [...KIND_NAMES];
+  if (options.kinds.length === 0) options.kinds = [...BENCHMARK_SCENE_KINDS];
   if (options.samples <= 0) throw new Error("--samples must be positive");
   return options;
 }

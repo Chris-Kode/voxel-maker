@@ -3,7 +3,6 @@ import {
   BENCHMARK_SCENE_KINDS,
   BENCHMARK_SIZES,
   createBenchmarkFixture,
-  type BenchmarkFixture,
   type BenchmarkSceneKind,
 } from "./fixtures.js";
 import {
@@ -22,6 +21,7 @@ import {
   measureSaveLoad,
   memorySnapshot,
 } from "./measure.js";
+import { summarize } from "./stats.js";
 import type {
   BenchmarkReport,
   HardwareInfo,
@@ -119,7 +119,6 @@ export async function runBenchmarks(
   // (save/load, command latency, remesh + frame pipeline) BEFORE any
   // transient-heavy operation runs, so export/preview garbage from one
   // scene can never pollute another scene's memory gate.
-  const fixtures: BenchmarkFixture[] = [];
   for (const kind of kinds) {
     for (const size of sizes) {
       progress(options.onProgress, `building fixture ${kind} ${String(size)}`);
@@ -130,7 +129,6 @@ export async function runBenchmarks(
         options.onProgress,
         `  built ${String(fixture.occupiedCount)} voxels in ${buildMs.toFixed(1)} ms`,
       );
-      fixtures.push(fixture);
 
       progress(options.onProgress, `  measuring save/load`);
       const saveLoad = measureSaveLoad(fixture, saveLoadRuns);
@@ -166,7 +164,7 @@ export async function runBenchmarks(
         save: saveLoad.save,
         load: saveLoad.load,
         export: {
-          summary: emptySummary(),
+          summary: summarize([]),
           bytes: 0,
           peakRssMiB: 0,
           blocked: undefined,
@@ -181,14 +179,16 @@ export async function runBenchmarks(
   // renders, which allocate large short-lived buffers. Export peak RSS
   // is sampled during the export itself; preview latency is measured on
   // the 100k interactive target only (larger scenes gate on the frame
-  // pipeline).
+  // pipeline). Fixtures are deterministically REBUILT here rather than
+  // retained, so the phase-1 memory gate always reflects one open
+  // scene, never a cumulative multi-fixture footprint.
   for (const kind of kinds) {
     for (const size of sizes) {
-      const fixture = fixtures.find(
-        (candidate) =>
-          candidate.kind === kind && candidate.targetOccupied === size,
+      progress(
+        options.onProgress,
+        `  building ${kind} ${String(size)} for phase 2`,
       );
-      if (fixture === undefined) continue;
+      const fixture = createBenchmarkFixture(kind, size);
       progress(options.onProgress, `  exporting ${kind} ${String(size)}`);
       const current = scenes[kind][String(size)];
       if (current === undefined) continue;
@@ -197,15 +197,19 @@ export async function runBenchmarks(
       // limits apply), so large exports are measured only when the
       // named machine can hold them; otherwise they are skipped and
       // reported with zero samples. 100k is always exported (the
-      // interactive reference size).
-      const estimatedExportBytes = size * 24_000;
+      // interactive reference size). The per-voxel estimate is
+      // per-kind: compact boxes are cheaper than high-surface
+      // checkerboards (measured ~8-20 KB/voxel).
+      const exportBytesPerVoxel =
+        kind === "compact" ? 12_000 : kind === "sparse" ? 16_000 : 24_000;
+      const estimatedExportBytes = size * exportBytesPerVoxel;
       const canHoldExport =
         size === 100_000 ||
         (full && hardware.totalMemoryGiB * 1024 ** 3 >= estimatedExportBytes);
       const exportMeasurement = canHoldExport
         ? await measureExportGltf(fixture)
         : {
-            summary: emptySummary(),
+            summary: summarize([]),
             bytes: 0,
             peakRssMiB: 0,
             blocked: undefined,
@@ -227,8 +231,9 @@ export async function runBenchmarks(
   }
 
   progress(options.onProgress, `measuring animation scaling`);
-  const trackCounts =
-    full || samples >= 60 ? ANIMATION_TRACK_COUNTS : [100, 10_000];
+  // The full track matrix runs only in full mode; smoke runs keep the
+  // 100-track sanity row plus the ADR-0008 10k-track gate row.
+  const trackCounts = full ? ANIMATION_TRACK_COUNTS : [100, 10_000];
   const animation = [];
   for (const trackCount of trackCounts) {
     progress(
@@ -265,15 +270,3 @@ export async function runBenchmarks(
 }
 
 /** Empty summary for skipped export measurements. */
-function emptySummary() {
-  return {
-    samples: 0,
-    mean: 0,
-    min: 0,
-    max: 0,
-    p50: 0,
-    p90: 0,
-    p95: 0,
-    p99: 0,
-  };
-}

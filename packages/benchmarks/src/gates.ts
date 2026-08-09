@@ -60,22 +60,35 @@ function sceneP95(
   return summary === undefined ? undefined : summary.p95;
 }
 
-/** Mean over all measured kinds of one size of one p95 metric. */
-function meanSceneP95(
+/** Mean over all measured kinds of one size of one metric percentile. */
+function meanScenePercentile(
   report: BenchmarkReport,
   size: number,
   metric: "command" | "remesh" | "queueWait" | "flush",
+  percentileName: "p95" | "p99",
 ): number | undefined {
   let total = 0;
   let count = 0;
   for (const kind of Object.keys(report.scenes)) {
-    const value = sceneP95(report, kind, size, metric);
+    const scenes = report.scenes[kind as keyof typeof report.scenes];
+    const scene = scenes[String(size)];
+    const summary = scene?.[metric];
+    const value = summary?.[percentileName];
     if (value !== undefined) {
       total += value;
       count += 1;
     }
   }
   return count === 0 ? undefined : total / count;
+}
+
+/** Mean p95 over all measured kinds of one size of one metric. */
+function meanSceneP95(
+  report: BenchmarkReport,
+  size: number,
+  metric: "command" | "remesh" | "queueWait" | "flush",
+): number | undefined {
+  return meanScenePercentile(report, size, metric, "p95");
 }
 
 /** Mean save or load p95 over measured kinds of one size. */
@@ -210,6 +223,21 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       return ms === undefined ? undefined : ms / 1000;
     },
   }) as GateDefinition,
+  // Editing produces no repeated main-thread task longer than 50 ms on
+  // the 100k interactive target (ADR-0008).
+  ...(["compact", "sparse", "checkerboard"] as const).map(
+    (kind) =>
+      Object.freeze({
+        id: `flush.p99.100k.${kind}`,
+        label: `no repeated main-thread task > 50 ms (100k ${kind})`,
+        unit: "ms",
+        limit: 50,
+        measure: (report: BenchmarkReport) => {
+          const scene = report.scenes[kind]["100000"];
+          return scene === undefined ? undefined : scene.flush.p99;
+        },
+      }) as GateDefinition,
+  ),
   // 500k fixture stays inside a 30 FPS frame budget.
   Object.freeze({
     id: "flush.p95.500k",
@@ -224,21 +252,20 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     label: "no repeated main-thread task > 50 ms (500k mean)",
     unit: "ms",
     limit: 50,
-    measure: (report: BenchmarkReport) => {
-      let total = 0;
-      let count = 0;
-      for (const kind of Object.keys(report.scenes)) {
-        const scenes = report.scenes[kind as keyof typeof report.scenes];
-        const scene = scenes["500000"];
-        if (scene !== undefined) {
-          total += scene.flush.p99;
-          count += 1;
-        }
-      }
-      return count === 0 ? undefined : total / count;
-    },
+    measure: (report: BenchmarkReport) =>
+      meanScenePercentile(report, 500_000, "flush", "p99"),
   }) as GateDefinition,
   // 1M fixture: opens within 10 seconds, navigable at 20 FPS, memory < 2 GiB.
+  Object.freeze({
+    id: "save.p95.1m",
+    label: "canonical 1M save p95",
+    unit: "s",
+    limit: 10,
+    measure: (report: BenchmarkReport) => {
+      const ms = meanSaveLoadP95(report, 1_000_000, "save");
+      return ms === undefined ? undefined : ms / 1000;
+    },
+  }) as GateDefinition,
   Object.freeze({
     id: "load.p95.1m",
     label: "canonical 1M load p95",
@@ -271,6 +298,16 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     unit: "ms",
     limit: 16.7,
     measure: (report: BenchmarkReport) => animationP95(report, 10_000),
+  }) as GateDefinition,
+  Object.freeze({
+    id: "animation.frame.p99.10k",
+    label: "10k-track animation: no repeated frame stall > 50 ms",
+    unit: "ms",
+    limit: 50,
+    measure: (report: BenchmarkReport) => {
+      const row = report.animation.find((entry) => entry.trackCount === 10_000);
+      return row === undefined ? undefined : row.frameMs.p99;
+    },
   }) as GateDefinition,
   Object.freeze({
     id: "animation.noMutation.10k",

@@ -297,11 +297,6 @@ export function createBenchmarkFixture(
   };
 }
 
-/** A fixed localized edit coordinate inside every benchmark extent. */
-export const BENCHMARK_EDIT_COORDINATE: readonly [number, number, number] = [
-  2, 2, 2,
-] as const;
-
 /**
  * Track-count scaling fixture (ADR-0008 "10,000 active Tracks"): one
  * clip whose two-keyframe tracks animate a flat hierarchy, up to two

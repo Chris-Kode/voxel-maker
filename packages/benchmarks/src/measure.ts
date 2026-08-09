@@ -100,11 +100,7 @@ export function measureCommandLatency(
     const result: TransactionResult = bus.execute(
       setVoxelCommand(commandId(`command:bench:edit:${String(i)}`), {
         volumeId: fixture.volumeId,
-        coordinate: [...fixtureEditCoordinate(fixture)] as [
-          number,
-          number,
-          number,
-        ],
+        coordinate: [...fixture.editCoordinate] as [number, number, number],
         material: toggleMaterial(fixture),
       }),
       {
@@ -119,13 +115,6 @@ export function measureCommandLatency(
     }
   }
   return summarize(durations);
-}
-
-/** The localized edit coordinate (inside every fixture extent). */
-function fixtureEditCoordinate(
-  fixture: BenchmarkFixture,
-): readonly [number, number, number] {
-  return fixture.editCoordinate;
 }
 
 /**
@@ -363,10 +352,16 @@ export async function measureRemeshAndPipeline(
   );
   try {
     pipeline.rebind(fixture.store);
-    // Initial meshing settles before any measured edit.
+    // Initial meshing settles before any measured edit; its mesh and
+    // flush samples are NOT part of the localized-edit gate, so the
+    // collectors reset here (the gate must measure only edit-driven
+    // remesh work).
     await pipeline.settle();
+    meshTimes.length = 0;
+    queueWaits.length = 0;
+    flushTimes.length = 0;
     const { bus } = createFixtureBus(fixture);
-    const coordinate = fixtureEditCoordinate(fixture);
+    const coordinate = fixture.editCoordinate;
     const settleStart = performance.now();
     for (let i = 0; i < samples; i += 1) {
       const result = bus.execute(
@@ -588,7 +583,14 @@ export function measureAnimationScale(
   frames: number,
 ): AnimationMeasurement {
   const { document, clip } = createAnimationScaleDocument(trackCount);
-  const revisionBefore = document.revision;
+  // Playback integrity is evidenced through the REAL session seams: the
+  // store and command bus observe every evaluation, so revision and
+  // history growth would be caught (ADR-0006: playback never writes).
+  const handle = createDocumentStore({ document });
+  const registry = new CommandRegistry();
+  const bus = new CommandBus(handle.store, registry, handle.writeCapability);
+  const revisionBefore = handle.store.revision;
+  const historyBefore = bus.historySnapshot().past.length;
   const hashBefore = canonicalDocumentHash(document);
   const times: number[] = [];
   const duration = clip.duration;
@@ -598,17 +600,15 @@ export function measureAnimationScale(
     evaluateAnimationRuntime(document, clip, time);
     times.push(performance.now() - start);
   }
-  const revisionAfter = document.revision;
-  const hashAfter = canonicalDocumentHash(document);
   return {
     trackCount,
     frames,
     frameMs: summarize(times),
     revisionBefore,
-    revisionAfter,
-    historyBefore: 0,
-    historyAfter: 0,
+    revisionAfter: handle.store.revision,
+    historyBefore,
+    historyAfter: bus.historySnapshot().past.length,
     semanticHashBefore: hashBefore,
-    semanticHashAfter: hashAfter,
+    semanticHashAfter: canonicalDocumentHash(document),
   };
 }

@@ -11,7 +11,6 @@
  */
 export {
   ANIMATION_TRACK_COUNTS,
-  BENCHMARK_EDIT_COORDINATE,
   BENCHMARK_SCENE_KINDS,
   BENCHMARK_SEED,
   BENCHMARK_SIZES,
@@ -50,7 +49,6 @@ export {
   emptyTrendHistory,
   flattenReport,
   isTrendRegression,
-  TREND_METRIC_KEYS,
   type BenchmarkTrendHistory,
   type TrendComparison,
   type TrendRow,

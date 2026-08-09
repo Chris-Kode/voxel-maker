@@ -102,7 +102,11 @@ export interface RunReport {
    * applied). Ticket #45 AC: evaluations track commands.
    */
   readonly appliedCommands: number;
-  /** Effective voxels changed by the applied proposal (ticket #45 AC). */
+  /**
+   * Effective voxels changed by the applied proposal (ticket #45 AC).
+   * Mirrors the efficiency score's effectiveChangedVoxels evidence; the
+   * run report carries it so every eval tracks modified voxels directly.
+   */
   readonly modifiedVoxels: number;
   /** Canonical output document JSON bytes after apply (ticket #45 AC). */
   readonly outputBytes: number;
