@@ -11,7 +11,12 @@ import {
   type NodeId,
   type VolumeId,
 } from "@voxel-maker/shared";
-import { createDocument, type VoxelDocument } from "@voxel-maker/model";
+import {
+  canonicalDocumentHash,
+  createDocument,
+  type VoxelDocument,
+} from "@voxel-maker/model";
+import { createSimpleCharacterFixture } from "@voxel-maker/rigging";
 import type { Transform } from "@voxel-maker/math";
 import {
   createDocumentStore,
@@ -300,6 +305,55 @@ describe("scene adapter", () => {
     const child = harness.store.getDocument().nodes[CHILD];
     expect(child?.transform.rotation[0]).toBeCloseTo(Math.sin(Math.PI / 6), 10);
     harness.adapter.dispose();
+  });
+
+  it("projects a definition-of-done demo rig deterministically without mutating the store (ticket #30)", () => {
+    const document = createSimpleCharacterFixture();
+    const handle = createDocumentStore({ document });
+    const scene = new THREE.Scene();
+    const adapter = createSceneAdapter({ scene });
+    adapter.rebind(handle.store);
+
+    // The adapter projects every demo node synchronously (renderer path
+    // for selection, overlays, and picking).
+    expect(adapter.nodeCount).toBe(Object.keys(document.nodes).length);
+    const matrices: number[][] = [];
+    for (const node of Object.values(document.nodes)) {
+      const group = adapter.objectForNode(node.nodeId);
+      if (group === undefined) throw new Error(`missing group ${node.nodeId}`);
+      matrices.push([...group.matrix.elements]);
+    }
+    // Deterministic evaluation: a fresh adapter over the same store
+    // produces bit-identical matrices.
+    const secondAdapter = createSceneAdapter({ scene: new THREE.Scene() });
+    secondAdapter.rebind(handle.store);
+    for (const node of Object.values(document.nodes)) {
+      const group = secondAdapter.objectForNode(node.nodeId);
+      if (group === undefined) throw new Error(`missing group ${node.nodeId}`);
+      expect([...group.matrix.elements]).toEqual(
+        matrices[Object.values(document.nodes).indexOf(node)],
+      );
+    }
+    // The base document state is untouched: same revision and hash.
+    expect(handle.store.revision).toBe(0);
+    expect(canonicalDocumentHash(handle.store.getDocument())).toBe(
+      canonicalDocumentHash(document),
+    );
+    // The demo rig's authored pose projects through the canonical
+    // transform math: the head sits on the torso, the arms hang at the
+    // shoulders (column-major elements 12..14 = translation).
+    const head = adapter.objectForNode(nodeId("node:rig:character:head"));
+    expect(head?.matrix.elements.slice(12, 15)).toEqual([0, 3, 0]);
+    const rightArm = adapter.objectForNode(
+      nodeId("node:rig:character:right-arm"),
+    );
+    expect(rightArm?.matrix.elements.slice(12, 15)).toEqual([2, 2, 0]);
+    const leftArm = adapter.objectForNode(
+      nodeId("node:rig:character:left-arm"),
+    );
+    expect(leftArm?.matrix.elements.slice(12, 15)).toEqual([-2, 2, 0]);
+    adapter.dispose();
+    secondAdapter.dispose();
   });
 
   it("keeps the old geometry visible until the replacement mesh lands", () => {
