@@ -17,6 +17,7 @@ import {
 } from "@voxel-maker/editor";
 import { createDraftOverlay, type DraftOverlay } from "./viewport/draft.js";
 import {
+  registerAnimationCommands,
   registerArticulationCommands,
   registerBatchCommands,
   registerMaterialCommands,
@@ -180,6 +181,7 @@ const REGISTER_COMMANDS = [
   registerArticulationCommands,
   registerMaterialCommands,
   registerVolumeCommands,
+  registerAnimationCommands,
 ] as const;
 
 export function createDesktopComposition(

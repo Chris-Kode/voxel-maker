@@ -27,6 +27,7 @@
     "@voxel-maker/shared": "workspace:*",
     "@voxel-maker/model": "workspace:*",
     "@voxel-maker/document": "workspace:*",
-    "@voxel-maker/rigging": "workspace:*"
+    "@voxel-maker/rigging": "workspace:*",
+    "@voxel-maker/math": "workspace:*"
   }
 }

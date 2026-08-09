@@ -28,6 +28,7 @@ import {
   CommandRegistry,
   createMaterialCommand,
   fillBoxCommand,
+  registerAnimationCommands,
   registerBatchCommands,
   registerMaterialCommands,
   registerArticulationCommands,
@@ -120,6 +121,7 @@ export function createTraceRegistry(): CommandRegistry {
   registerRegionCommands(registry);
   registerNodeCommands(registry);
   registerArticulationCommands(registry);
+  registerAnimationCommands(registry);
   registerMaterialCommands(registry);
   return registry;
 }
