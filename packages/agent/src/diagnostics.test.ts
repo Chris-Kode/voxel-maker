@@ -34,6 +34,7 @@ function okResult(): AgentRunResult {
       changedNodeIds: [],
       changedMaterialIds: [],
       changedVolumeIds: [],
+      changedAnimationIds: [],
       voxelEstimate: 0,
       truncated: false,
     },
