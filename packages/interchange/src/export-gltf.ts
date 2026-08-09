@@ -17,14 +17,15 @@ import {
 } from "@voxel-maker/storage";
 
 /**
- * Static glTF/GLB export service (plan S16.3, ticket #41): preflights the
- * open document (unsupported features and structural problems), maps it to
- * the deterministic export scene graph, encodes glTF 2.0 JSON with an
- * embedded buffer or a binary GLB container, and writes through the scoped
- * atomic storage port with progress and cancellation. Export never mutates
- * the document. A preflight block returns a structured loss report and
- * writes nothing; resource-limit violations throw structured
- * `limit`-family errors before any bytes are written.
+ * glTF/GLB export service (plan S16.3-S16.4, tickets #41/#42): preflights
+ * the open document (unsupported features and structural problems), maps it
+ * to the deterministic export scene graph (static meshes plus, by default,
+ * Clips as glTF animations), encodes glTF 2.0 JSON with an embedded buffer
+ * or a binary GLB container, and writes through the scoped atomic storage
+ * port with progress and cancellation. Export never mutates the document.
+ * A preflight block returns a structured loss report and writes nothing;
+ * resource-limit violations throw structured `limit`-family errors before
+ * any bytes are written.
  */
 
 /** Options for one static glTF export. */
@@ -46,6 +47,12 @@ export interface ExportGltfOptions {
   readonly onPhase?: (phase: AtomicWritePhase) => void;
   /** Export resource limits; callers may only lower the defaults. */
   readonly limits?: GltfExportLimits;
+  /**
+   * When false, Clips are omitted and reported (static-only export);
+   * when true or omitted, Clips map to glTF animations (ADR-0011,
+   * ticket #42).
+   */
+  readonly includeAnimations?: boolean;
 }
 
 /** Outcome of one export: either written or blocked by the loss report. */
@@ -80,13 +87,23 @@ export async function exportGltf(
   options: ExportGltfOptions,
 ): Promise<ExportGltfOutcome> {
   const format = exportFormatForPath(options.path);
-  const preflight = preflightGltfExport(options.document, options.getVolume);
+  const exportOptions = {
+    ...(options.includeAnimations !== undefined
+      ? { includeAnimations: options.includeAnimations }
+      : {}),
+  };
+  const preflight = preflightGltfExport(
+    options.document,
+    options.getVolume,
+    exportOptions,
+  );
   if (!preflight.ok) return { ok: false, blocked: preflight.blocked };
   const sceneGraph = planGltfExport(
     options.document,
     options.getVolume,
     preflight,
     options.limits,
+    exportOptions,
   );
   const bytes =
     format === "glb"

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  animationId,
+  keyframeId,
   materialId,
   nodeId,
+  trackId,
   volumeId,
   type VolumeId,
 } from "@voxel-maker/shared";
@@ -262,6 +265,128 @@ describe("exportGltf", () => {
       }),
     ).rejects.toMatchObject({ code: "IO_WRITE_INTERRUPTED" });
     expect(storage.files().size).toBe(0);
+  });
+
+  it("exports clips as glTF animations by default", async () => {
+    const document: VoxelDocument = {
+      ...exportDocument(),
+      animations: {
+        [animationId("animation:export:spin")]: {
+          animationId: animationId("animation:export:spin"),
+          name: "Spin",
+          duration: 2,
+          loop: "loop",
+          tracks: [
+            {
+              trackId: trackId("track:export:spin"),
+              targetNodeId: nodeId("node:export:a"),
+              interpolation: "linear",
+              keyframes: [
+                {
+                  keyframeId: keyframeId("key:export:spin:0"),
+                  time: 0,
+                  property: { channel: "rotation", value: [0, 0, 0, 1] },
+                },
+                {
+                  keyframeId: keyframeId("key:export:spin:1"),
+                  time: 2,
+                  property: { channel: "rotation", value: [0, 0, 1, 0] },
+                },
+              ],
+            },
+          ],
+        },
+      } as VoxelDocument["animations"],
+    };
+    const { store } = storeWithEntries(document, [
+      { coordinate: [1, 2, -3], material: 1 },
+    ]);
+    const storage = new MemoryProjectStorage();
+    const outcome = await exportGltf({
+      document,
+      getVolume: (id) => store.getVolume(id),
+      storagePort: storage,
+      path: "animated.glb",
+    });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.metadata.clips).toBe(1);
+    expect(
+      outcome.losses.some((loss) => loss.code === "GLTF_LOSS_CLIP_LOOP"),
+    ).toBe(true);
+    const json = parseGlbJson(
+      storage.files().get("animated.glb") as Uint8Array,
+    ) as {
+      readonly animations: readonly {
+        readonly name: string;
+        readonly channels: readonly {
+          readonly target: { readonly node: number; readonly path: string };
+        }[];
+        readonly samplers: readonly {
+          readonly input: number;
+          readonly output: number;
+          readonly interpolation: string;
+        }[];
+      }[];
+    };
+    expect(json.animations).toHaveLength(1);
+    expect(json.animations[0]?.name).toBe("Spin");
+    expect(json.animations[0]?.channels[0]?.target).toEqual({
+      node: 0,
+      path: "rotation",
+    });
+    expect(json.animations[0]?.samplers[0]?.interpolation).toBe("LINEAR");
+  });
+
+  it("keeps static-only export available with includeAnimations: false", async () => {
+    const document: VoxelDocument = {
+      ...exportDocument(),
+      animations: {
+        [animationId("animation:export:spin")]: {
+          animationId: animationId("animation:export:spin"),
+          name: "Spin",
+          duration: 1,
+          loop: "once",
+          tracks: [
+            {
+              trackId: trackId("track:export:spin"),
+              targetNodeId: nodeId("node:export:a"),
+              interpolation: "linear",
+              keyframes: [
+                {
+                  keyframeId: keyframeId("key:export:spin:0"),
+                  time: 0,
+                  property: { channel: "rotation", value: [0, 0, 0, 1] },
+                },
+              ],
+            },
+          ],
+        },
+      } as VoxelDocument["animations"],
+    };
+    const { store } = storeWithEntries(document, [
+      { coordinate: [0, 0, 0], material: 1 },
+    ]);
+    const storage = new MemoryProjectStorage();
+    const outcome = await exportGltf({
+      document,
+      getVolume: (id) => store.getVolume(id),
+      storagePort: storage,
+      path: "static.glb",
+      includeAnimations: false,
+    });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.metadata.clips).toBe(0);
+    expect(outcome.losses.some((loss) => loss.code === "GLTF_LOSS_CLIPS")).toBe(
+      true,
+    );
+    const json = parseGlbJson(
+      storage.files().get("static.glb") as Uint8Array,
+    ) as {
+      readonly animations?: readonly unknown[];
+    };
+    expect(json.animations).toBeUndefined();
   });
 
   it("does not mutate the document", async () => {

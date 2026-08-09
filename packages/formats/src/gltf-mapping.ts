@@ -12,6 +12,7 @@ import {
   GLTF_EXPORT_LOSSES,
   GLTF_GENERATOR,
   GLTF_METERS_PER_VOXEL,
+  type GltfAnimationExport,
   type GltfExportLimits,
   type GltfExportLoss,
   type GltfExportMetadata,
@@ -26,10 +27,23 @@ import {
   type GltfVolumeAccess,
 } from "./gltf-types.js";
 import { buildVolumeMesh } from "./gltf-mesh.js";
+import {
+  planGltfAnimations,
+  preflightGltfAnimations,
+  type GltfNodeChainTargets,
+} from "./gltf-animation.js";
+import {
+  compareCodeUnit,
+  NameAllocator,
+  sanitizeGltfName,
+} from "./gltf-common.js";
+
+/** Re-exported for callers of the mapping module (naming policy). */
+export { sanitizeGltfName } from "./gltf-common.js";
 
 /**
- * Document -> static glTF export mapping (plan S16.1-S16.3, ADR-0011,
- * ticket #41).
+ * Document -> glTF export mapping (plan S16.1-S16.4, ADR-0011, tickets
+ * #41/#42).
  *
  * The editor and glTF bases are both emitted as right-handed `+Y` up with
  * `+X` right; editor `+Z` forward is retained as positive glTF Z, so no
@@ -62,50 +76,6 @@ const negate = (value: Vec3): Vec3 => [
   value[2] === 0 ? 0 : -value[2],
 ];
 
-/**
- * Code-unit string comparison matching the canonical JSON member order
- * (RFC 8785, `canonicalDocumentJson`), so the export is identical whether
- * the document was created in memory or parsed from disk.
- */
-const compareCodeUnit = (a: string, b: string): number =>
-  a < b ? -1 : a > b ? 1 : 0;
-
-/**
- * Sanitizes a document name for glTF: removes control characters
- * (U+0000..U+001F, U+007F) and trims. Returns undefined when nothing
- * remains, so callers fall back to a deterministic `Node N` / `Material N`
- * / `Mesh N` label.
- */
-export function sanitizeGltfName(name: string | undefined): string | undefined {
-  if (name === undefined) return undefined;
-  let sanitized = "";
-  for (const char of name) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f) continue;
-    sanitized += char;
-  }
-  sanitized = sanitized.trim();
-  return sanitized.length === 0 ? undefined : sanitized;
-}
-
-/** Deterministic unique-name allocator (ADR-0011 naming policy). */
-class NameAllocator {
-  readonly #used = new Set<string>();
-
-  /** Allocates `base`, or the fallback when base is undefined or empty. */
-  allocate(base: string | undefined, fallback: string): string {
-    const root = base === undefined || base.length === 0 ? fallback : base;
-    let candidate = root;
-    let suffix = 2;
-    while (this.#used.has(candidate)) {
-      candidate = `${root}-${String(suffix)}`;
-      suffix += 1;
-    }
-    this.#used.add(candidate);
-    return candidate;
-  }
-}
-
 /** Iterates document nodes in canonical node-id (code-unit) order. */
 function canonicalNodeOrder(
   document: VoxelDocument,
@@ -134,18 +104,30 @@ function collectVoxelNodes(document: VoxelDocument): VoxelNode[] {
   return voxelNodes;
 }
 
+/** Export options shared by preflight and plan (plan S16.4, ticket #42). */
+export interface GltfExportOptions {
+  /**
+   * When false, Clips are omitted and reported (static-only export);
+   * when true or omitted, Clips map to glTF animations (ADR-0011) and
+   * only the unrepresentable parts (loop policy, smoothstep baking) are
+   * reported as losses.
+   */
+  readonly includeAnimations?: boolean;
+}
+
 /**
- * Preflights a document for static glTF export (plan S16.1, ADR-0011).
- * Every unsupported feature (Clips, constraints, joints, metadata, empty
- * volumes) is reported as a documented bake loss; structural problems (no
- * voxel volumes, missing volume data) block the export. Nothing is dropped
- * silently. Resource limits are enforced later by the mesher and encoder
- * with structured `limit`-family errors (ADR-0009), before any bytes are
- * written.
+ * Preflights a document for glTF export (plan S16.1, ADR-0011). Every
+ * unsupported feature (constraints, joints, metadata, empty volumes, and
+ * Clips in static-only mode) is reported as a documented bake loss;
+ * structural problems (no voxel volumes, missing volume data) block the
+ * export. Nothing is dropped silently. Resource limits are enforced later
+ * by the mesher and encoder with structured `limit`-family errors
+ * (ADR-0009), before any bytes are written.
  */
 export function preflightGltfExport(
   document: VoxelDocument,
   getVolume: GltfVolumeAccess,
+  options?: GltfExportOptions,
 ): GltfExportPreflight {
   const blocked: GltfExportLoss[] = [];
   const losses: GltfExportLoss[] = [];
@@ -187,14 +169,16 @@ export function preflightGltfExport(
     });
   }
   const animationCount = Object.keys(document.animations).length;
-  if (animationCount > 0) {
+  if (animationCount > 0 && options?.includeAnimations === false) {
     losses.push({
       code: GLTF_EXPORT_LOSSES.clips,
       message:
-        "Clips are not exported by the static exporter; animated glTF export is a separate feature",
+        "Clips are not exported in static-only mode; enable animated export to map them to glTF animations",
       severity: "bake",
       context: { clips: animationCount },
     });
+  } else if (animationCount > 0) {
+    losses.push(...preflightGltfAnimations(document));
   }
   for (const node of Object.values(document.nodes)) {
     for (const component of node.components) {
@@ -273,6 +257,7 @@ export function planGltfExport(
   getVolume: GltfVolumeAccess,
   preflight: Extract<GltfExportPreflight, { readonly ok: true }>,
   limits: GltfExportLimits = DEFAULT_GLTF_EXPORT_LIMITS,
+  options?: GltfExportOptions,
 ): GltfSceneGraph {
   void preflight; // the ok preflight gates the plan; losses carry through
   const nodes: GltfNodeExport[] = [];
@@ -286,6 +271,7 @@ export function planGltfExport(
   const pivotHelpers: GltfPivotHelperReport[] = [];
   const chainStartByNode = new Map<NodeId, number>();
   const chainLastByNode = new Map<NodeId, number>();
+  const chainTargets = new Map<NodeId, GltfNodeChainTargets>();
   let totalFaces = 0;
   let totalVoxels = 0;
 
@@ -428,6 +414,10 @@ export function planGltfExport(
       };
       chainStartByNode.set(node.nodeId, nodes.length);
       chainLastByNode.set(node.nodeId, nodes.length);
+      chainTargets.set(node.nodeId, {
+        translationNode: nodes.length,
+        rotationScaleNode: nodes.length,
+      });
       nodes.push(gltfNode);
       return;
     }
@@ -471,6 +461,10 @@ export function planGltfExport(
     );
     chainStartByNode.set(node.nodeId, headIndex);
     chainLastByNode.set(node.nodeId, offsetIndex);
+    chainTargets.set(node.nodeId, {
+      translationNode: headIndex,
+      rotationScaleNode: helperIndex,
+    });
     pivotHelpers.push({
       nodeId: node.nodeId,
       name: baseName,
@@ -516,6 +510,14 @@ export function planGltfExport(
     });
   }
 
+  let animations: readonly GltfAnimationExport[] = [];
+  let clips = 0;
+  if (options?.includeAnimations !== false) {
+    const planned = planGltfAnimations(document, chainTargets, limits);
+    animations = planned.animations;
+    clips = planned.clips;
+  }
+
   const metadata: GltfExportMetadata = {
     generator: GLTF_GENERATOR,
     metersPerVoxel: GLTF_METERS_PER_VOXEL,
@@ -525,12 +527,14 @@ export function planGltfExport(
     materials: materials.length,
     faces: totalFaces,
     voxels: totalVoxels,
+    clips,
   };
   return {
     sceneNodes: [rootStart],
     nodes,
     meshes,
     materials,
+    animations,
     metadata,
     losses: preflight.losses,
   };

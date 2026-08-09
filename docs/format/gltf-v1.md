@@ -1,19 +1,19 @@
-# Static glTF 2.0 / GLB export contract (v1)
+# glTF 2.0 / GLB export contract (v1)
 
-This document freezes the static glTF interchange contract (plan S16.1,
-ADR-0011, ticket #41): the exported subset, units, axes, hierarchy,
-pivots, materials, naming, the unsupported-feature policy, and the
-resource limits. glTF import is deferred; the animated exporter is a
-separate ticket (#42) and this contract covers static export only.
+This document freezes the glTF interchange contract (plan S16.1-S16.4,
+ADR-0011, tickets #41/#42): the exported subset, units, axes, hierarchy,
+pivots, materials, animation mapping, naming, the unsupported-feature
+policy, and the resource limits. glTF import is deferred.
 
 ## Scope and guarantees
 
-Static export writes glTF **2.0** as either a binary **GLB** container
-(`.glb`) or self-contained **glTF JSON** (`.gltf`) whose buffer is
-embedded as a base64 `data:` URI, so one scoped atomic write produces a
-complete file (ADR-0011 scoped atomic write policy). Both variants embed
-the same scene graph and the same binary buffer; only the container
-differs.
+Export writes glTF **2.0** as either a binary **GLB** container (`.glb`)
+or self-contained **glTF JSON** (`.gltf`) whose buffer is embedded as a
+base64 `data:` URI, so one scoped atomic write produces a complete file
+(ADR-0011 scoped atomic write policy). Both variants embed the same scene
+graph and the same binary buffer; only the container differs. By default
+Clips map to glTF animations (ticket #42); pass `includeAnimations:
+false` to export the static subset only (ticket #41 behavior).
 
 The exporter is deterministic: the same frozen document and volume read
 views always produce the same bytes. The encoder fixes the JSON key
@@ -95,9 +95,48 @@ Unused document materials are not emitted.
 
 Names are sanitized by removing control characters (U+0000..U+001F,
 U+007F) and trimming; an empty result falls back to a deterministic
-label (`Node N`, `Mesh N`, `Material <id>`). Collisions are resolved by
-appending `-2`, `-3`, ... in canonical node-id / material-id order. Stable document IDs are
-never used as glTF names.
+label (`Node N`, `Mesh N`, `Material <id>`, `Clip N`). Collisions are
+resolved by appending `-2`, `-3`, ... in canonical node-id / material-id
+/ animation-id order. Stable document IDs are never used as glTF names.
+
+## Animation mapping
+
+Each Clip (`document.animations`, ADR-0006) maps to one glTF
+`animation` in canonical animation-id order; animation names follow the
+naming policy above. Each Track maps to one channel plus one sampler:
+
+| Track | glTF channel target | Sampler |
+|---|---|---|
+| `translation` | chain head node (`translation`) | input = keyframe times |
+| `rotation` | pivot helper / single node (`rotation`) | output = canonical quaternions (VEC4) |
+| `scale` | pivot helper / single node (`scale`) | output = scale vectors (VEC3) |
+
+A track targeting a pivoted node animates the same helper chain that
+carries its static transform: translation moves the chain head, rotation
+and scale are applied on the pivot helper, so the world transform stays
+`T(t) x T(pivot) x R(t) x S(t) x T(-pivot)` while animated (ADR-0011).
+
+Interpolation maps as follows:
+
+- `step` and `linear` map directly to glTF `STEP` and `LINEAR` with the
+  authored keyframes (times strictly increasing, values bit-for-bit in
+  float32).
+- `smoothstep` is deterministically baked to `LINEAR` samples using the
+  frozen ease curve `u² × (3 - 2u)` (ADR-0006), with at most
+  `maxSmoothstepSamplesPerSegment` interior samples per segment
+  (default 16, callers may only lower). Authored boundary values are
+  reproduced exactly.
+- A track with a single keyframe is constant and is emitted as two
+  `LINEAR` samples over `[0, clip.duration]`, because glTF samplers
+  require at least two strictly increasing input times.
+- A track with no keyframes carries no motion and is omitted; a Clip
+  whose tracks all carry no keyframes produces no animation.
+
+Rotation samples are the model's canonical shortest-path quaternions
+(ADR-0001/ADR-0006), so consecutive samples always travel the shortest
+arc and every sample is a unit quaternion. glTF cannot encode playback
+looping; a `loop` Clip is exported as an animation whose playback policy
+is reported as a loss so downstream tooling must enable looping itself.
 
 ## Unsupported-feature policy
 
@@ -106,7 +145,9 @@ any bytes are written; nothing is dropped silently:
 
 | Feature | Policy |
 |---|---|
-| Clips (`document.animations`) | reported loss (static exporter omits them; animated export is #42) |
+| Clips (`document.animations`) with `includeAnimations: false` | reported loss `GLTF_LOSS_CLIPS` |
+| Clip loop policy `loop` | reported loss `GLTF_LOSS_CLIP_LOOP` (glTF cannot encode looping) |
+| `smoothstep` tracks | reported loss `GLTF_LOSS_SMOOTHSTEP` (baked to linear samples) |
 | Rotation-limit constraints | reported loss (per node) |
 | Joint annotations | reported loss (per node) |
 | Document/node metadata | reported loss |
@@ -130,17 +171,22 @@ before any bytes are written.
 
 - **Preflight** (`preflightGltfExport`): feature loss report or block.
 - **Plan** (`planGltfExport`): meshes volumes, builds the node chains,
-  the material table, and export metadata.
-- **Encode** (`encodeGlb` / `encodeGltfJson`): deterministic bytes.
+  the material table, maps Clips to animations, and builds export
+  metadata (`metadata.clips` counts the exported animations).
+- **Encode** (`encodeGlb` / `encodeGltfJson`): deterministic bytes; the
+  `animations` JSON key is omitted when the scene graph has no
+  animations, so static exports keep their exact historical bytes.
 - **Write** (`@voxel-maker/interchange` `exportGltf`): scoped atomic
   write through the storage port with progress and cancellation.
 
 ## Fixtures
 
 `fixtures/gltf/` (see its `README.md`) holds the byte-stable golden
-corpus: a cube, a pivoted hierarchy, and a lossy document, each with the
-retained document/volume JSON needed to rebuild the exact bytes.
-Regenerate with:
+corpus: a cube, a pivoted hierarchy, a lossy document, and an animated
+pivoted arm (rotation/translation/scale channels, baked smoothstep,
+loop clip, constraint), each with the retained document/volume JSON
+needed to rebuild the exact bytes. The corpus test validates animation
+playback data through an independent GLB reader. Regenerate with:
 
 ```sh
 pnpm build

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "golden": [
     {
       "file": "golden/cube.glb",
@@ -14,6 +14,9 @@
       "faces": 32,
       "voxels": 8,
       "losses": 0,
+      "animations": 0,
+      "channels": 0,
+      "samplers": 0,
       "gltf": "golden/cube.gltf",
       "gltfByteLength": 6573
     },
@@ -29,21 +32,182 @@
       "accessors": 6,
       "faces": 20,
       "voxels": 4,
-      "losses": 0
+      "losses": 0,
+      "animations": 0,
+      "channels": 0,
+      "samplers": 0
     },
     {
       "file": "golden/lossy.glb",
-      "vector": "transparent material, clip, joint, node/document metadata, empty volume",
-      "byteLength": 1692,
+      "vector": "transparent material, exported single-keyframe clip, joint, node/document metadata, empty volume",
+      "byteLength": 2124,
       "documentJson": "golden/lossy.document.json",
       "volumesJson": "golden/lossy.volumes.json",
       "nodes": 3,
       "meshes": 1,
       "materials": 1,
-      "accessors": 3,
+      "accessors": 5,
       "faces": 6,
       "voxels": 1,
-      "losses": 5
+      "losses": 4,
+      "animations": 1,
+      "channels": 1,
+      "samplers": 1
+    },
+    {
+      "file": "golden/animated.glb",
+      "vector": "pivoted arm with linear rotation, step translation, baked smoothstep scale, loop clip, and a constraint",
+      "byteLength": 5576,
+      "documentJson": "golden/animated.document.json",
+      "volumesJson": "golden/animated.volumes.json",
+      "nodes": 5,
+      "meshes": 2,
+      "materials": 1,
+      "accessors": 12,
+      "faces": 20,
+      "voxels": 4,
+      "losses": 3,
+      "animations": 1,
+      "channels": 3,
+      "samplers": 3,
+      "animationSamples": [
+        {
+          "name": "Swing",
+          "channels": [
+            {
+              "sampler": 0,
+              "node": 3,
+              "path": "scale"
+            },
+            {
+              "sampler": 1,
+              "node": 1,
+              "path": "rotation"
+            },
+            {
+              "sampler": 2,
+              "node": 0,
+              "path": "translation"
+            }
+          ],
+          "samplers": [
+            {
+              "input": [
+                0,
+                0.05882352963089943,
+                0.11764705926179886,
+                0.1764705926179886,
+                0.23529411852359772,
+                0.29411765933036804,
+                0.3529411852359772,
+                0.4117647111415863,
+                0.47058823704719543,
+                0.529411792755127,
+                0.5882353186607361,
+                0.6470588445663452,
+                0.7058823704719543,
+                0.7647058963775635,
+                0.8235294222831726,
+                0.8823529481887817,
+                0.9411764740943909,
+                1
+              ],
+              "output": [
+                1,
+                1,
+                1,
+                1.0099735260009766,
+                1.0099735260009766,
+                1.0099735260009766,
+                1.0382658243179321,
+                1.0382658243179321,
+                1.0382658243179321,
+                1.0824344158172607,
+                1.0824344158172607,
+                1.0824344158172607,
+                1.1400365829467773,
+                1.1400365829467773,
+                1.1400365829467773,
+                1.2086302042007446,
+                1.2086302042007446,
+                1.2086302042007446,
+                1.285772442817688,
+                1.285772442817688,
+                1.285772442817688,
+                1.369020938873291,
+                1.369020938873291,
+                1.369020938873291,
+                1.4559332132339478,
+                1.4559332132339478,
+                1.4559332132339478,
+                1.5440667867660522,
+                1.5440667867660522,
+                1.5440667867660522,
+                1.630979061126709,
+                1.630979061126709,
+                1.630979061126709,
+                1.714227557182312,
+                1.714227557182312,
+                1.714227557182312,
+                1.7913697957992554,
+                1.7913697957992554,
+                1.7913697957992554,
+                1.8599634170532227,
+                1.8599634170532227,
+                1.8599634170532227,
+                1.9175655841827393,
+                1.9175655841827393,
+                1.9175655841827393,
+                1.9617341756820679,
+                1.9617341756820679,
+                1.9617341756820679,
+                1.9900264739990234,
+                1.9900264739990234,
+                1.9900264739990234,
+                2,
+                2,
+                2
+              ],
+              "interpolation": "LINEAR",
+              "outputType": "VEC3"
+            },
+            {
+              "input": [
+                0,
+                1
+              ],
+              "output": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                0
+              ],
+              "interpolation": "LINEAR",
+              "outputType": "VEC4"
+            },
+            {
+              "input": [
+                0,
+                0.5
+              ],
+              "output": [
+                1,
+                2,
+                0,
+                2,
+                2,
+                0
+              ],
+              "interpolation": "STEP",
+              "outputType": "VEC3"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

@@ -80,6 +80,7 @@ function sceneGraph(): GltfSceneGraph {
       materials: 2,
       faces: 2,
       voxels: 2,
+      clips: 0,
     },
     losses: [],
   };
@@ -92,6 +93,7 @@ interface GltfJson {
   readonly nodes: readonly Record<string, unknown>[];
   readonly meshes: readonly Record<string, unknown>[];
   readonly materials: readonly Record<string, unknown>[];
+  readonly animations?: readonly Record<string, unknown>[];
   readonly accessors: readonly Record<string, unknown>[];
   readonly bufferViews: readonly Record<string, unknown>[];
   readonly buffers: readonly Record<string, unknown>[];
@@ -155,7 +157,7 @@ function resolveAccessor(
   const componentType = accessor.componentType as number;
   const count = accessor.count as number;
   const type = accessor.type as string;
-  const components = type === "VEC3" ? 3 : 1;
+  const components = type === "VEC3" ? 3 : type === "VEC4" ? 4 : 1;
   const bytesPer = componentType === 5126 ? 4 : 4;
   const view = new DataView(
     bin.buffer,
@@ -255,6 +257,7 @@ describe("encodeGlb", () => {
       maxFacesPerVolume: 1_000_000,
       maxTotalFaces: 1_000_000,
       maxTotalBytes: 16,
+      maxSmoothstepSamplesPerSegment: 16,
     };
     expectGltfError(
       () => encodeGlb(sceneGraph(), limits),
@@ -290,6 +293,147 @@ function expectGltfError(
     )}`,
   );
 }
+
+/** Scene graph from `sceneGraph()` plus one animated clip. */
+function animatedSceneGraph(): GltfSceneGraph {
+  return {
+    ...sceneGraph(),
+    animations: [
+      {
+        name: "Spin",
+        channels: [
+          { sampler: 0, node: 1, path: "rotation" },
+          { sampler: 1, node: 0, path: "translation" },
+        ],
+        samplers: [
+          {
+            input: Float32Array.from([0, 1, 2]),
+            output: Float32Array.from([
+              0,
+              0,
+              0,
+              1, //
+              0,
+              0,
+              Math.fround(Math.SQRT1_2),
+              Math.fround(Math.SQRT1_2), //
+              0,
+              0,
+              1,
+              0,
+            ]),
+            interpolation: "LINEAR",
+            outputType: "VEC4",
+          },
+          {
+            input: Float32Array.from([0, 2]),
+            output: Float32Array.from([1, 2, 3, 4, 5, 6]),
+            interpolation: "STEP",
+            outputType: "VEC3",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+describe("encodeGlb with animations", () => {
+  it("emits animation channels, samplers, and accessors", () => {
+    const bytes = encodeGlb(animatedSceneGraph());
+    const { json } = readGlb(bytes);
+    const animations = json.animations as
+      | readonly {
+          readonly name: string;
+          readonly channels: readonly {
+            readonly sampler: number;
+            readonly target: { readonly node: number; readonly path: string };
+          }[];
+          readonly samplers: readonly {
+            readonly input: number;
+            readonly output: number;
+            readonly interpolation: string;
+          }[];
+        }[]
+      | undefined;
+    expect(animations).toHaveLength(1);
+    const animation = animations?.[0];
+    expect(animation?.name).toBe("Spin");
+    expect(animation?.channels).toEqual([
+      { sampler: 0, target: { node: 1, path: "rotation" } },
+      { sampler: 1, target: { node: 0, path: "translation" } },
+    ]);
+    expect(animation?.samplers).toHaveLength(2);
+    expect(animation?.samplers[0]?.interpolation).toBe("LINEAR");
+    expect(animation?.samplers[1]?.interpolation).toBe("STEP");
+  });
+
+  it("round-trips animation times and values through the buffer", () => {
+    const bytes = encodeGlb(animatedSceneGraph());
+    const { json, bin } = readGlb(bytes);
+    const animations = json.animations as
+      | readonly {
+          readonly samplers: readonly {
+            readonly input: number;
+            readonly output: number;
+            readonly interpolation: string;
+          }[];
+        }[]
+      | undefined;
+    const samplers = animations?.[0]?.samplers;
+    expect(samplers).toHaveLength(2);
+    const times = resolveAccessor(json, bin, samplers?.[0]?.input ?? -1);
+    expect(times.values).toEqual([0, 1, 2]);
+    expect(times.min).toEqual([0]);
+    expect(times.max).toEqual([2]);
+    const rotations = resolveAccessor(json, bin, samplers?.[0]?.output ?? -1);
+    expect(rotations.values).toEqual([
+      0,
+      0,
+      0,
+      1, //
+      0,
+      0,
+      Math.fround(Math.SQRT1_2),
+      Math.fround(Math.SQRT1_2), //
+      0,
+      0,
+      1,
+      0,
+    ]);
+    const translations = resolveAccessor(
+      json,
+      bin,
+      samplers?.[1]?.output ?? -1,
+    );
+    expect(translations.values).toEqual([1, 2, 3, 4, 5, 6]);
+    const accessor = json.accessors[samplers?.[0]?.input ?? -1];
+    expect(accessor?.type).toBe("SCALAR");
+    const rotationAccessor = json.accessors[samplers?.[0]?.output ?? -1];
+    expect(rotationAccessor?.type).toBe("VEC4");
+    const translationAccessor = json.accessors[samplers?.[1]?.output ?? -1];
+    expect(translationAccessor?.type).toBe("VEC3");
+  });
+
+  it("omits the animations key when the scene graph has none", () => {
+    const { json } = readGlb(encodeGlb(sceneGraph()));
+    expect(json.animations).toBeUndefined();
+  });
+
+  it("is byte-deterministic across calls", () => {
+    const first = encodeGlb(animatedSceneGraph());
+    const second = encodeGlb(animatedSceneGraph());
+    expect(first).toEqual(second);
+  });
+
+  it("matches the GLB JSON document exactly (same animated scene graph)", () => {
+    const graph = animatedSceneGraph();
+    const gltf = JSON.parse(encodeGltfJson(graph).json) as GltfJson;
+    const { json: glb } = readGlb(encodeGlb(graph));
+    expect(gltf.animations).toEqual(glb.animations);
+    expect(gltf.nodes).toEqual(glb.nodes);
+    expect(gltf.accessors).toEqual(glb.accessors);
+  });
+});
 
 describe("encodeGltfJson", () => {
   it("embeds the buffer as a data URI and keeps the JSON valid", () => {

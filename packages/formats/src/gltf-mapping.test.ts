@@ -191,7 +191,7 @@ describe("preflightGltfExport", () => {
     ).toBe(true);
   });
 
-  it("reports clips, constraints, joints, and metadata as bake losses", () => {
+  it("reports clips (static-only mode), constraints, joints, and metadata as bake losses", () => {
     const document: VoxelDocument = {
       ...buildDocument(),
       metadata: { title: "fixture" },
@@ -244,7 +244,9 @@ describe("preflightGltfExport", () => {
       },
     };
     const store = fullStore(buildDocument());
-    const result = preflightGltfExport(document, (id) => store.getVolume(id));
+    const result = preflightGltfExport(document, (id) => store.getVolume(id), {
+      includeAnimations: false,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const codes = new Set(result.losses.map((loss) => loss.code));
@@ -252,6 +254,53 @@ describe("preflightGltfExport", () => {
     expect(codes.has(GLTF_EXPORT_LOSSES.constraints)).toBe(true);
     expect(codes.has(GLTF_EXPORT_LOSSES.joints)).toBe(true);
     expect(codes.has(GLTF_EXPORT_LOSSES.metadata)).toBe(true);
+  });
+
+  it("reports clips as mapped animations plus loop and smoothstep losses", () => {
+    const document: VoxelDocument = {
+      ...buildDocument(),
+      animations: {
+        [animationId("animation:gltf:spin")]: {
+          animationId: animationId("animation:gltf:spin"),
+          name: "Spin",
+          duration: 1,
+          loop: "loop",
+          tracks: [
+            {
+              trackId: trackId("track:gltf:spin"),
+              targetNodeId: BODY,
+              interpolation: "smoothstep",
+              keyframes: [
+                {
+                  keyframeId: keyframeId("key:gltf:spin:0"),
+                  time: 0,
+                  property: {
+                    channel: "rotation",
+                    value: [0, 0, 0, 1],
+                  },
+                },
+                {
+                  keyframeId: keyframeId("key:gltf:spin:1"),
+                  time: 1,
+                  property: {
+                    channel: "rotation",
+                    value: [0, 0, 1, 0],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const store = fullStore(buildDocument());
+    const result = preflightGltfExport(document, (id) => store.getVolume(id));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const codes = new Set(result.losses.map((loss) => loss.code));
+    expect(codes.has(GLTF_EXPORT_LOSSES.clips)).toBe(false);
+    expect(codes.has(GLTF_EXPORT_LOSSES.clipLoop)).toBe(true);
+    expect(codes.has(GLTF_EXPORT_LOSSES.smoothstep)).toBe(true);
   });
 
   it("reports empty volumes as a bake loss", () => {
@@ -501,6 +550,7 @@ describe("planGltfExport", () => {
       maxFacesPerVolume: 1_000_000,
       maxTotalFaces: 10,
       maxTotalBytes: 1024,
+      maxSmoothstepSamplesPerSegment: 16,
     };
     expectGltfError(
       () =>

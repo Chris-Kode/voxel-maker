@@ -103,11 +103,17 @@ export {
   GLTF_ERROR_CODES,
   GLTF_EXPORT_LOSSES,
   GLTF_GENERATOR,
+  GLTF_INTERPOLATION_LINEAR,
+  GLTF_INTERPOLATION_STEP,
   GLTF_JSON_VERSION,
   GLTF_METERS_PER_VOXEL,
   GLTF_MODE_TRIANGLES,
   GLTF_TARGET_ARRAY_BUFFER,
   GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
+  type GltfAnimationChannel,
+  type GltfAnimationChannelPath,
+  type GltfAnimationExport,
+  type GltfAnimationSampler,
   type GltfExportLimits,
   type GltfExportLoss,
   type GltfExportMetadata,
@@ -124,8 +130,15 @@ export {
 } from "./gltf-types.js";
 export { buildVolumeMesh } from "./gltf-mesh.js";
 export {
+  buildTrackSamples,
+  planGltfAnimations,
+  preflightGltfAnimations,
+  type GltfNodeChainTargets,
+} from "./gltf-animation.js";
+export {
   planGltfExport,
   preflightGltfExport,
   sanitizeGltfName,
+  type GltfExportOptions,
 } from "./gltf-mapping.js";
 export { encodeGlb, encodeGltfJson, type GltfJsonEncoded } from "./gltf.js";

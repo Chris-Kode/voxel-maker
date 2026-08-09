@@ -3,10 +3,10 @@ import type { Quat, Vec3 } from "@voxel-maker/math";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 
 /**
- * Shared types for the static glTF 2.0 / GLB exporter (ADR-0011, plan
- * S16.1-S16.3, ticket #41). The exporter works directly on the frozen
- * document and the session volume read views; it never touches renderer
- * objects (plan S16.2 "renderer-independent mesh DTO").
+ * Shared types for the glTF 2.0 / GLB exporter (ADR-0011, plan
+ * S16.1-S16.4, tickets #41/#42). The exporter works directly on the
+ * frozen document and the session volume read views; it never touches
+ * renderer objects (plan S16.2 "renderer-independent mesh DTO").
  */
 
 /** glTF 2.0 asset version written by every export. */
@@ -47,6 +47,12 @@ export interface GltfExportLimits {
   readonly maxTotalFaces: number;
   /** Hard cap on encoded output bytes (JSON + buffer) of one export. */
   readonly maxTotalBytes: number;
+  /**
+   * Hard cap on interior linear samples emitted per segment when a
+   * smoothstep track is baked to LINEAR (ADR-0011); callers may only
+   * lower the default, which trades fidelity for output size.
+   */
+  readonly maxSmoothstepSamplesPerSegment: number;
 }
 
 /** ADR-0009-style hard defaults for one glTF export; callers may only lower. */
@@ -54,6 +60,7 @@ export const DEFAULT_GLTF_EXPORT_LIMITS: GltfExportLimits = Object.freeze({
   maxFacesPerVolume: 1_000_000,
   maxTotalFaces: 4_000_000,
   maxTotalBytes: 256 * 1024 * 1024,
+  maxSmoothstepSamplesPerSegment: 16,
 });
 
 /** Stable export loss codes (ADR-0011 loss report). */
@@ -61,6 +68,8 @@ export const GLTF_EXPORT_LOSSES = {
   noVolumes: "GLTF_LOSS_NO_VOLUMES",
   missingVolume: "GLTF_LOSS_MISSING_VOLUME",
   clips: "GLTF_LOSS_CLIPS",
+  clipLoop: "GLTF_LOSS_CLIP_LOOP",
+  smoothstep: "GLTF_LOSS_SMOOTHSTEP",
   constraints: "GLTF_LOSS_CONSTRAINTS",
   joints: "GLTF_LOSS_JOINTS",
   metadata: "GLTF_LOSS_METADATA",
@@ -128,6 +137,44 @@ export interface GltfPrimitiveExport {
   readonly indices: Uint32Array;
 }
 
+/** glTF animation sampler interpolation modes emitted by the exporter. */
+export const GLTF_INTERPOLATION_STEP = "STEP";
+export const GLTF_INTERPOLATION_LINEAR = "LINEAR";
+
+/** One glTF animation channel target path (a TRS property). */
+export type GltfAnimationChannelPath = "translation" | "rotation" | "scale";
+
+/** One channel: one sampler applied to one TRS property of one node. */
+export interface GltfAnimationChannel {
+  readonly sampler: number;
+  readonly node: number;
+  readonly path: GltfAnimationChannelPath;
+}
+
+/**
+ * One animation sampler: typed keyframe data plus the deterministic
+ * interpolation mode. `input` holds strictly increasing times in seconds
+ * (SCALAR float accessor with min/max); `output` holds one `outputType`
+ * value per input sample (VEC3 translation/scale, VEC4 rotation). All
+ * values are authored or baked canonical values (ADR-0011).
+ */
+export interface GltfAnimationSampler {
+  readonly input: Float32Array;
+  readonly output: Float32Array;
+  readonly interpolation: "STEP" | "LINEAR";
+  readonly outputType: "VEC3" | "VEC4";
+}
+
+/**
+ * One glTF animation: a named clip mapped to channels plus samplers
+ * (ADR-0011). Channels reference samplers by index within this animation.
+ */
+export interface GltfAnimationExport {
+  readonly name: string;
+  readonly channels: readonly GltfAnimationChannel[];
+  readonly samplers: readonly GltfAnimationSampler[];
+}
+
 /** One mesh: shared positions/normals plus one primitive per material. */
 export interface GltfMeshExport {
   readonly name: string;
@@ -163,19 +210,24 @@ export interface GltfExportMetadata {
   readonly materials: number;
   readonly faces: number;
   readonly voxels: number;
+  /** Number of exported clips (glTF animations). */
+  readonly clips: number;
 }
 
 /**
- * The complete static export scene graph: glTF-shaped nodes, meshes,
- * materials, the scene root indices, export metadata, and the applied
+ * The complete export scene graph: glTF-shaped nodes, meshes, materials,
+ * animations, the scene root indices, export metadata, and the applied
  * loss report. The encoder turns this into deterministic glTF JSON and a
- * binary buffer without touching the document again.
+ * binary buffer without touching the document again. `animations` may be
+ * empty; the JSON key is then omitted so static exports keep their exact
+ * historical bytes.
  */
 export interface GltfSceneGraph {
   readonly sceneNodes: readonly number[];
   readonly nodes: readonly GltfNodeExport[];
   readonly meshes: readonly GltfMeshExport[];
   readonly materials: readonly GltfMaterialExport[];
+  readonly animations?: readonly GltfAnimationExport[];
   readonly metadata: GltfExportMetadata;
   readonly losses: readonly GltfExportLoss[];
 }
