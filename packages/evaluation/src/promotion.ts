@@ -1,3 +1,5 @@
+import { EVALUATION_VERSION } from "./versions.js";
+import { SCORE_DIMENSIONS, type ScoreDimension } from "./score.js";
 import type { GeometryEvalResult } from "./harness.js";
 
 /**
@@ -57,43 +59,27 @@ export const PROMOTION_THRESHOLDS: PromotionThresholds = Object.freeze({
 /** One recorded baseline score of the golden run (captured at v1). */
 export interface BaselineRecord {
   readonly scenarioId: string;
-  readonly dimension:
-    | "taskCompletion"
-    | "unrelatedChanges"
-    | "efficiency"
-    | "invalidCalls"
-    | "limitFailures"
-    | "semanticStructure"
-    | "renderedPreviews";
+  readonly dimension: ScoreDimension;
   readonly score: number;
   /** Version of the evaluation suite the baseline was recorded under. */
   readonly recordedAtVersion: string;
 }
 
-const BASELINE_DIMENSIONS = [
-  "taskCompletion",
-  "unrelatedChanges",
-  "efficiency",
-  "invalidCalls",
-  "limitFailures",
-  "semanticStructure",
-  "renderedPreviews",
-] as const;
-
 function suiteBaselines(scenarioId: string): readonly BaselineRecord[] {
-  return BASELINE_DIMENSIONS.map((dimension) => ({
+  return SCORE_DIMENSIONS.map((dimension) => ({
     scenarioId,
     dimension,
     score: 1,
-    recordedAtVersion: "geometry-eval-v1",
+    recordedAtVersion: EVALUATION_VERSION,
   }));
 }
 
 /**
- * Baselines captured from the first golden harness run (geometry-eval-v1):
- * every golden trace scores 1.0 on every dimension by construction, and
- * the suite locks them so any future regression is detected instead of
- * silently absorbed into a new "looks good".
+ * Pinned v1 baselines: the golden suite is DESIGNED to score 1.0 on
+ * every dimension (the recorded traces are the perfect executions), and
+ * the suite test re-runs the golden scenarios and asserts the measured
+ * scores reproduce these records exactly, so any future drift is
+ * detected instead of silently absorbed into a new "looks good".
  */
 export const RECORDED_BASELINES: readonly BaselineRecord[] = Object.freeze([
   ...suiteBaselines("chair-create"),
@@ -140,27 +126,17 @@ export interface PromotionReport {
   readonly baselineRegressions: readonly BaselineRegression[];
 }
 
-function dimensionScore(
-  result: GeometryEvalResult,
-  dimension: BaselineRecord["dimension"],
-): number {
-  switch (dimension) {
-    case "taskCompletion":
-      return result.scores.taskCompletion.score;
-    case "unrelatedChanges":
-      return result.scores.unrelatedChanges.score;
-    case "efficiency":
-      return result.scores.efficiency.score;
-    case "invalidCalls":
-      return result.scores.invalidCalls.score;
-    case "limitFailures":
-      return result.scores.limitFailures.score;
-    case "semanticStructure":
-      return result.scores.semanticStructure.score;
-    case "renderedPreviews":
-      return result.scores.renderedPreviews.score;
-  }
-}
+const DIMENSION_SCORES: Readonly<
+  Record<ScoreDimension, (result: GeometryEvalResult) => number>
+> = {
+  taskCompletion: (result) => result.scores.taskCompletion.score,
+  unrelatedChanges: (result) => result.scores.unrelatedChanges.score,
+  efficiency: (result) => result.scores.efficiency.score,
+  invalidCalls: (result) => result.scores.invalidCalls.score,
+  limitFailures: (result) => result.scores.limitFailures.score,
+  semanticStructure: (result) => result.scores.semanticStructure.score,
+  renderedPreviews: (result) => result.scores.renderedPreviews.score,
+};
 
 /**
  * Evaluates one suite run against the explicit thresholds and the
@@ -287,10 +263,10 @@ export function evaluatePromotion(
   // 6. Changed-baseline review: any score below its recorded baseline
   //    requires an approved evaluation report before promotion.
   for (const result of results) {
-    for (const dimension of BASELINE_DIMENSIONS) {
+    for (const dimension of SCORE_DIMENSIONS) {
       const baseline = recordedBaseline(result.scenarioId, dimension);
       if (baseline === undefined) continue;
-      const current = dimensionScore(result, dimension);
+      const current = DIMENSION_SCORES[dimension](result);
       const delta = baseline - current;
       if (delta <= 0) continue;
       const requiresReview =

@@ -22,7 +22,7 @@ export {
   type EvaluationVersions,
 } from "./versions.js";
 export {
-  CHAIR_LEG_LIST,
+  CHAIR_LEGS,
   CHAIR_REGIONS,
   CHAIR_SHAPE,
   CHAIR_SHAPE_WITH_ARMREST,

@@ -19,7 +19,9 @@ For each fixed scenario the harness:
 2. runs the bounded provider-neutral agent loop (`@voxel-maker/agent`,
    ticket #33) over an isolated preview session with the
    `DeterministicProvider` executing the scenario's **golden recorded
-   tool trace** (`src/scenarios.ts`) on a virtual clock;
+   tool trace** (`src/scenarios.ts`) on a virtual clock; the suite pins
+   the exact expected input and output document hashes of every golden
+   scenario (plan 12.3) so a fixture or trace drift fails CI;
 3. applies the approved proposal as ONE labeled live transaction
    (the suite never auto-applies);
 4. renders the starting and resulting documents through the standard
@@ -121,8 +123,11 @@ each run against the recorded baselines:
 
 Image/LLM-judge scores remain advisory until calibrated against blinded
 human ratings; visual review remains required for a curated set. Live
-provider cases run nightly (at least three repetitions where budget
-permits) and are never a PR prerequisite.
+provider cases are a planned follow-up (nightly, at least three
+repetitions where budget permits, recording variance; never a PR
+prerequisite) — v1 ships the deterministic recorded-trace lane only, and
+the harness records every versioned input so a live-provider run can be
+compared against these baselines when it lands.
 
 ## Running
 

@@ -173,18 +173,10 @@ export function silhouetteSimilarity(
       const cellY = Math.min(grid - 1, Math.floor(y / cellHeight));
       const cellX = Math.min(grid - 1, Math.floor(x / cellWidth));
       const cell = cellY * grid + cellX;
-      if (bOccupied) {
-        bCount[cell] = (bCount[cell] ?? 0) + 1;
-        bTotal[cell] = (bTotal[cell] ?? 0) + 1;
-      } else {
-        bTotal[cell] = (bTotal[cell] ?? 0) + 1;
-      }
-      if (aOccupied) {
-        aCount[cell] = (aCount[cell] ?? 0) + 1;
-        aTotal[cell] = (aTotal[cell] ?? 0) + 1;
-      } else {
-        aTotal[cell] = (aTotal[cell] ?? 0) + 1;
-      }
+      bTotal[cell] = (bTotal[cell] ?? 0) + 1;
+      if (bOccupied) bCount[cell] = (bCount[cell] ?? 0) + 1;
+      aTotal[cell] = (aTotal[cell] ?? 0) + 1;
+      if (aOccupied) aCount[cell] = (aCount[cell] ?? 0) + 1;
     }
   }
   let difference = 0;
@@ -206,6 +198,11 @@ export function silhouetteSimilarity(
   return 1 - difference / cells;
 }
 
+/** Red-dominance thresholds of the requested-color signal (#ff0000). */
+const RED_MIN_R = 200;
+const RED_MAX_G = 80;
+const RED_MAX_B = 80;
+
 /** Fraction of pixels that are predominantly red (requested-color check). */
 export function redPixelRatio(rgba: Uint8Array): number {
   let red = 0;
@@ -214,7 +211,7 @@ export function redPixelRatio(rgba: Uint8Array): number {
     const r = rgba[i] as number;
     const g = rgba[i + 1] as number;
     const b = rgba[i + 2] as number;
-    if (r > 200 && g < 80 && b < 80) red += 1;
+    if (r > RED_MIN_R && g < RED_MAX_G && b < RED_MAX_B) red += 1;
     total += 1;
   }
   return total === 0 ? 0 : red / total;

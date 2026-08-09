@@ -1,20 +1,20 @@
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import type {
-  EditorSelectionSnapshot,
   DeterministicStep,
+  EditorSelectionSnapshot,
   ToolCall,
 } from "@voxel-maker/agent";
-import { STANDARD_PREVIEW_VIEWS } from "@voxel-maker/renderer";
 import type { IntAabb } from "@voxel-maker/math";
 import type { MaterialId } from "@voxel-maker/shared";
+import { STANDARD_PREVIEW_VIEWS } from "@voxel-maker/renderer";
 import {
-  CHAIR_LEG_LIST,
-  regionOf,
   CHAIR_REGIONS,
   CHAIR_SHAPE,
   CHAIR_SHAPE_WITH_ARMREST,
+  CHAIR_LEGS,
   EVAL_IDS,
   EVAL_RED_COLOR,
+  regionOf,
   regionSelection,
 } from "./fixtures.js";
 import {
@@ -25,7 +25,13 @@ import {
   regionHasMaterial,
   symmetryScore,
 } from "./metrics.js";
-import type { PreviewEvidenceSet } from "./previews.js";
+import {
+  redPixelRatio,
+  silhouetteSimilarity,
+  type PreviewEvidenceSet,
+} from "./previews.js";
+
+const STANDARD_VIEWS = STANDARD_PREVIEW_VIEWS;
 
 /**
  * Fixed geometry evaluation scenarios (plan S12.12/S12.13, ticket #35):
@@ -62,6 +68,12 @@ export interface GeometryScenario {
   readonly id: ScenarioId;
   readonly name: string;
   readonly description: string;
+  /**
+   * True when occupancy must match the expected shape exactly (creation
+   * scenarios): any voxel outside the expected shape counts as an
+   * unrelated change even though the whole volume is the allowed region.
+   */
+  readonly strictShape: boolean;
   /** The fixed user prompt (recorded as the scenario prompt version). */
   readonly prompt: string;
   readonly fixtureVersion: string;
@@ -202,13 +214,11 @@ const NONEMPTY_SIGNAL: PreviewSignal = {
   },
 };
 
-import { redPixelRatio, silhouetteSimilarity } from "./previews.js";
-const STANDARD_VIEWS = STANDARD_PREVIEW_VIEWS;
-
 /** chair-create: empty scaffold document, no selection. */
 const CHAIR_CREATE: GeometryScenario = {
   id: "chair-create",
   name: "Initial chair creation",
+  strictShape: true,
   description:
     "Create a complete chair (seat, four legs, backrest) from the deterministic empty scaffold document.",
   prompt: "Create a chair with a seat, four legs, and a backrest.",
@@ -303,7 +313,7 @@ const CHAIR_CREATE: GeometryScenario = {
     {
       name: "all four legs are filled",
       check: (store) =>
-        CHAIR_LEG_LIST.every((leg) =>
+        CHAIR_LEGS.every((leg) =>
           regionFilled(store, EVAL_IDS.volumeMain, leg),
         ),
     },
@@ -319,6 +329,7 @@ const CHAIR_CREATE: GeometryScenario = {
 /** shorter-legs: full chair, bottom halves of the legs selected. */
 const SHORTER_LEGS: GeometryScenario = {
   id: "shorter-legs",
+  strictShape: false,
   name: "Shorter chair legs",
   description:
     "Shorten every chair leg by removing its bottom two rows; the seat and backrest must stay untouched.",
@@ -363,7 +374,7 @@ const SHORTER_LEGS: GeometryScenario = {
         const bottom = regionOf([0, 0, 0], [8, 2, 8]);
         const top = regionOf([0, 2, 0], [8, 4, 8]);
         return (
-          CHAIR_LEG_LIST.every((leg) => {
+          CHAIR_LEGS.every((leg) => {
             const bottomHalf = regionOf(
               [leg.min[0], leg.min[1], leg.min[2]],
               [leg.max[0], leg.min[1] + 2, leg.max[2]],
@@ -420,6 +431,7 @@ const SHORTER_LEGS: GeometryScenario = {
 /** red-seat: full chair, seat region selected. */
 const RED_SEAT: GeometryScenario = {
   id: "red-seat",
+  strictShape: false,
   name: "Red seat",
   description:
     "Recolor only the seat voxels red via a new red material; legs and backrest keep the wood material.",
@@ -479,7 +491,7 @@ const RED_SEAT: GeometryScenario = {
     {
       name: "legs keep the wood material",
       check: (store) =>
-        CHAIR_LEG_LIST.every((leg) =>
+        CHAIR_LEGS.every((leg) =>
           regionHasMaterial(
             store,
             EVAL_IDS.volumeMain,
@@ -525,6 +537,7 @@ const RED_SEAT: GeometryScenario = {
 /** mirror-left: chair with a left armrest, whole chair selected. */
 const MIRROR_LEFT: GeometryScenario = {
   id: "mirror-left",
+  strictShape: false,
   name: "Left-side mirroring",
   description:
     "Mirror the left armrest to the right side across the chair's symmetry plane (x=4) so the chair becomes symmetric. The tool surface's voxel.mirrorRegion has move semantics (the destination is the source region), so the minimal-diff realization of a copy mirror is voxel.copyRegion anchored at the mirrored position.",

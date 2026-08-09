@@ -22,7 +22,7 @@ import {
   type ProviderConsent,
 } from "@voxel-maker/agent";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
-import type { VolumeId } from "@voxel-maker/shared";
+import { WorkspaceError, type VolumeId } from "@voxel-maker/shared";
 import {
   createChairStore,
   createEmptyScaffoldStore,
@@ -30,6 +30,7 @@ import {
   EVAL_IDS,
 } from "./fixtures.js";
 import {
+  changedVoxels,
   occupiedMetrics,
   structuralIssues,
   type OccupiedMetrics,
@@ -127,6 +128,11 @@ export interface EvaluateScenarioOptions {
   readonly isLiveCurrent?: () => boolean;
   /** Optional progress projection (headless UI). */
   readonly onEvent?: (event: AgentEvent) => void;
+  /**
+   * Cancels the run after this many executed tool calls (deterministic
+   * cancellation trace; 0 = cancel before the first round).
+   */
+  readonly cancelAfterToolCalls?: number;
 }
 
 /** Builds a committed fixture store of a scenario. */
@@ -206,16 +212,24 @@ export async function evaluateScenario(
   });
   const consent = suiteConsent(provider.providerId, provider.defaultModel);
   const toolLog: ToolLogEntry[] = [];
-  const inspectionNames = new Set(inspector.contracts.map((c) => c.name));
-  let index = 0;
+  let executedToolCalls = 0;
+  let cancelRequested = false;
   const onEvent = (event: AgentEvent): void => {
+    if (event.kind === "tool") {
+      executedToolCalls += 1;
+      if (
+        !cancelRequested &&
+        options.cancelAfterToolCalls !== undefined &&
+        executedToolCalls > options.cancelAfterToolCalls
+      ) {
+        cancelRequested = true;
+        sessionHolder.session?.cancel();
+      }
+    }
     if (event.kind !== "tool") return;
     toolLog.push({
-      index,
       tool: event.tool,
-      callId: event.call.id,
       ok: event.result.ok,
-      kind: inspectionNames.has(event.tool) ? "inspection" : "mutation",
       ...(event.result.ok
         ? {}
         : {
@@ -223,9 +237,9 @@ export async function evaluateScenario(
             errorFamily: event.result.error.family,
           }),
     });
-    index += 1;
     options.onEvent?.(event);
   };
+  const sessionHolder: { session?: ReturnType<typeof createAgentSession> } = {};
   const loopOptions: AgentLoopOptions = {
     provider,
     inspector,
@@ -241,7 +255,7 @@ export async function evaluateScenario(
       ? {}
       : { isLiveCurrent: options.isLiveCurrent }),
   };
-  const session = createAgentSession(loopOptions);
+  sessionHolder.session = createAgentSession(loopOptions);
   const inputHash = semanticHashOf(handle.store);
   const beforeMetrics = occupiedMetrics(
     beforeStore,
@@ -250,7 +264,7 @@ export async function evaluateScenario(
   );
   const beforePreviews = renderPreviewEvidence(beforeStore);
 
-  const result = await session.run();
+  const result = await sessionHolder.session.run();
   // Capture the staged proposal facts BEFORE apply (apply closes the
   // preview and releases its counters).
   const stagedCommands = result.ok ? result.stagedCommands : 0;
@@ -259,7 +273,9 @@ export async function evaluateScenario(
   let applyOk = false;
   let applyLabel: string | undefined;
   if (result.ok) {
-    const applied = session.apply({ label: `AI eval: ${scenario.name}` });
+    const applied = sessionHolder.session.apply({
+      label: `AI eval: ${scenario.name}`,
+    });
     applyOk = applied.ok;
     applyLabel = applied.ok ? `AI eval: ${scenario.name}` : undefined;
   }
@@ -281,6 +297,13 @@ export async function evaluateScenario(
     rounds: result.ok ? result.rounds : 0,
     toolCalls: result.ok ? result.toolCalls : toolLog.length,
     commands: result.ok ? result.stagedCommands : 0,
+    voxelEstimate,
+    effectiveChangedVoxels: changedVoxels(
+      beforeStore,
+      handle.store,
+      EVAL_IDS.volumeMain,
+      scenario.scanRegion,
+    ).length,
     before: beforeStore,
     after: handle.store,
     beforeMetrics,
@@ -337,6 +360,7 @@ export async function evaluateScenario(
 }
 
 function errorCodeOf(error: Error): string | undefined {
+  if (error instanceof WorkspaceError) return error.code;
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
 }

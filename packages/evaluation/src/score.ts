@@ -2,7 +2,7 @@ import type { AgentRunReason } from "@voxel-maker/agent";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import type { MaterialId } from "@voxel-maker/shared";
 import type { GeometryScenario } from "./scenarios.js";
-import { EVAL_IDS, regionCoordinates } from "./fixtures.js";
+import { EVAL_IDS, regionCoordinates, voxelKey } from "./fixtures.js";
 import {
   changedMaterials,
   changedNodes,
@@ -23,13 +23,10 @@ import type { PreviewEvidenceSet } from "./previews.js";
 
 /** One recorded tool call of a run. */
 export interface ToolLogEntry {
-  readonly index: number;
   readonly tool: string;
-  readonly callId: string;
   readonly ok: boolean;
   readonly errorCode?: string;
   readonly errorFamily?: string;
-  readonly kind: "inspection" | "mutation" | "rejected";
 }
 
 export interface TaskCompletionScore {
@@ -62,6 +59,18 @@ export interface EfficiencyScore {
   readonly goldenToolCalls: number;
   readonly goldenRounds: number;
   readonly goldenCommands: number;
+  /** Proposed voxel changes reserved by the staged commands. */
+  readonly voxelEstimate: number;
+  /** Effective voxel changes of the applied document (before -> after). */
+  readonly effectiveChangedVoxels: number;
+  /**
+   * 1 when the estimate bounds the effective change; partial credit when
+   * the proposal under-estimates its real footprint (an unsafe planning
+   * signal). Conservative over-estimation is not penalized: coarse
+   * operations (for example a copy whose target overlaps existing
+   * same-material voxels) legitimately reserve more than the final diff.
+   */
+  readonly estimateBoundCompliance: number;
 }
 
 export interface InvalidCallsScore {
@@ -93,6 +102,20 @@ export interface RenderedPreviewsScore {
   readonly failures: readonly string[];
 }
 
+/** The seven scoring dimensions, in canonical order. */
+export const SCORE_DIMENSIONS = [
+  "taskCompletion",
+  "unrelatedChanges",
+  "efficiency",
+  "invalidCalls",
+  "limitFailures",
+  "semanticStructure",
+  "renderedPreviews",
+] as const;
+
+/** One scoring dimension id. */
+export type ScoreDimension = (typeof SCORE_DIMENSIONS)[number];
+
 /** All seven scoring dimensions of one run. */
 export interface GeometryEvalScores {
   readonly taskCompletion: TaskCompletionScore;
@@ -114,6 +137,8 @@ export interface ScoreInputs {
   readonly rounds: number;
   readonly toolCalls: number;
   readonly commands: number;
+  readonly voxelEstimate: number;
+  readonly effectiveChangedVoxels: number;
   readonly before: DocumentStoreRead;
   readonly after: DocumentStoreRead;
   readonly beforeMetrics: OccupiedMetrics;
@@ -162,14 +187,12 @@ function scoreUnrelatedChanges(
     scenario.scanRegion,
   );
   const allowed = new Set(
-    regionCoordinates(scenario.allowedChangedRegion).map(
-      ([x, y, z]) => `${String(x)},${String(y)},${String(z)}`,
-    ),
+    regionCoordinates(scenario.allowedChangedRegion).map(voxelKey),
   );
   const expected = new Set<string>();
   for (const region of scenario.expectedShape) {
-    for (const [x, y, z] of regionCoordinates(region)) {
-      expected.add(`${String(x)},${String(y)},${String(z)}`);
+    for (const coordinate of regionCoordinates(region)) {
+      expected.add(voxelKey(coordinate));
     }
   }
   // Voxel changes outside the allowed region are unrelated. For
@@ -178,12 +201,12 @@ function scoreUnrelatedChanges(
   // unrelated extras.
   let unrelated = 0;
   for (const coordinate of changed) {
-    const key = `${String(coordinate[0])},${String(coordinate[1])},${String(coordinate[2])}`;
+    const key = voxelKey(coordinate);
     if (!allowed.has(key)) {
       unrelated += 1;
       continue;
     }
-    if (scenario.id === "chair-create" && !expected.has(key)) {
+    if (scenario.strictShape && !expected.has(key)) {
       unrelated += 1;
     }
   }
@@ -224,24 +247,49 @@ function scoreUnrelatedChanges(
   };
 }
 
+/** Ratio of golden to actual counts; zero work scores 0 (not 1). */
+function ratioOf(golden: number, actual: number): number {
+  if (golden <= 0) return actual <= 0 ? 1 : 0;
+  if (actual <= 0) return 0;
+  return Math.min(1, golden / actual);
+}
+
 /** Efficiency: tool-call, round, and command counts vs the golden trace. */
 function scoreEfficiency(
   scenario: GeometryScenario,
   rounds: number,
   toolCalls: number,
   commands: number,
+  voxelEstimate: number,
+  effectiveChangedVoxels: number,
 ): EfficiencyScore {
-  const toolRatio = Math.min(1, scenario.goldenToolCalls / toolCalls);
-  const roundRatio = Math.min(1, scenario.goldenRounds / rounds);
-  const commandRatio = Math.min(1, scenario.goldenCommands / commands);
+  const toolRatio = ratioOf(scenario.goldenToolCalls, toolCalls);
+  const roundRatio = ratioOf(scenario.goldenRounds, rounds);
+  const commandRatio = ratioOf(scenario.goldenCommands, commands);
+  const estimateBoundCompliance =
+    effectiveChangedVoxels <= voxelEstimate
+      ? 1
+      : Math.max(
+          0,
+          1 -
+            (effectiveChangedVoxels - voxelEstimate) /
+              Math.max(1, effectiveChangedVoxels),
+        );
   return {
-    score: 0.4 * toolRatio + 0.3 * roundRatio + 0.3 * commandRatio,
+    score:
+      0.35 * toolRatio +
+      0.25 * roundRatio +
+      0.25 * commandRatio +
+      0.15 * estimateBoundCompliance,
     toolCalls,
     rounds,
     commands,
     goldenToolCalls: scenario.goldenToolCalls,
     goldenRounds: scenario.goldenRounds,
     goldenCommands: scenario.goldenCommands,
+    voxelEstimate,
+    effectiveChangedVoxels,
+    estimateBoundCompliance,
   };
 }
 
@@ -377,6 +425,8 @@ export function computeScores(inputs: ScoreInputs): GeometryEvalScores {
     inputs.rounds,
     inputs.toolCalls,
     inputs.commands,
+    inputs.voxelEstimate,
+    inputs.effectiveChangedVoxels,
   );
   const invalidCalls = scoreInvalidCalls(inputs.toolLog);
   const limitFailures = scoreLimitFailures(

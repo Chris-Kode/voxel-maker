@@ -1,5 +1,10 @@
 import type { DocumentStoreRead } from "@voxel-maker/document";
-import { validateDocument, type VoxelDocument } from "@voxel-maker/model";
+import {
+  validateDocument,
+  type MaterialRecord,
+  type VoxelDocument,
+} from "@voxel-maker/model";
+import { voxelKey } from "./fixtures.js";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
 import type { MaterialId, NodeId, VolumeId } from "@voxel-maker/shared";
 
@@ -143,20 +148,16 @@ export function symmetryScore(
     for (let y = region.min[1]; y < region.max[1]; y += 1) {
       for (let z = region.min[2]; z < region.max[2]; z += 1) {
         if (store.getVoxel(volumeId, [x, y, z]) !== 0) {
-          occupied.add(`${String(x)},${String(y)},${String(z)}`);
+          occupied.add(voxelKey([x, y, z]));
         }
       }
     }
   }
   let matched = 0;
   for (const key of occupied) {
-    const [x, y, z] = key.split(",").map(Number) as [number, number, number];
-    const twin = mirrorOf([x, y, z]);
-    if (
-      occupied.has(`${String(twin[0])},${String(twin[1])},${String(twin[2])}`)
-    ) {
-      matched += 1;
-    }
+    const coordinate = parseVoxelKey(key);
+    const twin = mirrorOf(coordinate);
+    if (occupied.has(voxelKey(twin))) matched += 1;
   }
   return {
     score: occupied.size === 0 ? 1 : matched / occupied.size,
@@ -165,36 +166,30 @@ export function symmetryScore(
   };
 }
 
-/** Structural validity report: full document validation + orphan checks. */
+/** Parses a `voxelKey` back into a coordinate (exact 3-component form). */
+export function parseVoxelKey(key: string): Vec3i {
+  const parts = key.split(",");
+  if (parts.length !== 3) throw new Error(`Invalid voxel key: ${key}`);
+  const x = Number(parts[0]);
+  const y = Number(parts[1]);
+  const z = Number(parts[2]);
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) {
+    throw new Error(`Invalid voxel key: ${key}`);
+  }
+  return [x, y, z];
+}
+
+/**
+ * Structural validity report: the model package's full document
+ * validation, which already covers hierarchy cycles, orphan/missing
+ * node references, missing volumes, and every referential invariant.
+ */
 export function structuralIssues(store: DocumentStoreRead): readonly string[] {
   const issues = validateDocument(store.getDocument(), store.limits);
-  const messages: string[] = [];
-  for (const issue of issues) {
-    messages.push(
+  return issues.map(
+    (issue) =>
       `${issue.code}${issue.path.length === 0 ? "" : ` at ${issue.path.join(".")}`}: ${issue.message}`,
-    );
-  }
-  const document = store.getDocument();
-  for (const key of Object.keys(document.nodes)) {
-    const node = document.nodes[key as NodeId];
-    if (node === undefined) continue;
-    if (node.parentId !== null && document.nodes[node.parentId] === undefined) {
-      messages.push(
-        `Orphan node ${key} references missing parent ${node.parentId}`,
-      );
-    }
-    for (const component of node.components) {
-      if (
-        component.kind === "voxel" &&
-        document.volumes[component.volumeId] === undefined
-      ) {
-        messages.push(
-          `Node ${key} references missing volume ${component.volumeId}`,
-        );
-      }
-    }
-  }
-  return messages;
+  );
 }
 
 /**
@@ -250,8 +245,12 @@ export function changedMaterials(
   }[] = [];
   const beforeIds = Object.keys(before.materials);
   const afterIds = Object.keys(after.materials);
-  const beforeMaterials = before.materials as Readonly<Record<string, unknown>>;
-  const afterMaterials = after.materials as Readonly<Record<string, unknown>>;
+  const beforeMaterials = before.materials as Readonly<
+    Record<string, MaterialRecord>
+  >;
+  const afterMaterials = after.materials as Readonly<
+    Record<string, MaterialRecord>
+  >;
   for (const id of afterIds) {
     if (beforeMaterials[id] === undefined) {
       changes.push({ materialId: id, kind: "added" });

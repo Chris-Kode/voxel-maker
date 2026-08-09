@@ -65,7 +65,8 @@ export const CHAIR_REGIONS = Object.freeze({
 } as const);
 
 /** The exact 208-voxel chair shape: seat + four legs + backrest. */
-const CHAIR_LEGS: readonly IntAabb[] = Object.freeze([
+/** The four leg columns as a stable ordered list. */
+export const CHAIR_LEGS: readonly IntAabb[] = Object.freeze([
   CHAIR_REGIONS.leg1,
   CHAIR_REGIONS.leg2,
   CHAIR_REGIONS.leg3,
@@ -78,9 +79,6 @@ export const CHAIR_SHAPE: readonly IntAabb[] = Object.freeze([
   ...CHAIR_LEGS,
   CHAIR_REGIONS.back,
 ]);
-
-/** The four leg columns as a stable ordered list. */
-export const CHAIR_LEG_LIST: readonly IntAabb[] = CHAIR_LEGS;
 
 /** The 224-voxel chair shape with the left armrest (mirror scenario). */
 export const CHAIR_SHAPE_WITH_ARMREST: readonly IntAabb[] = Object.freeze([
@@ -95,14 +93,14 @@ const identity = {
   scale: [1, 1, 1],
 } as const;
 
-/** Builds the frozen chair document (optionally with the left armrest). */
-export function createChairDocument(withArmrest = false): VoxelDocument {
+/** The single scaffold layout shared by every evaluation document. */
+function createEvalDocument(
+  title: string,
+  tags: readonly string[],
+): VoxelDocument {
   return createDocument({
     documentId: EVAL_IDS.document,
-    metadata: {
-      title: withArmrest ? "chair with left armrest" : "chair",
-      tags: ["eval", "fixture", "chair"],
-    },
+    metadata: { title, tags: [...tags] },
     rootNodeId: EVAL_IDS.root,
     nodes: [
       {
@@ -141,47 +139,18 @@ export function createChairDocument(withArmrest = false): VoxelDocument {
   });
 }
 
+/** Builds the frozen chair document (optionally with the left armrest). */
+export function createChairDocument(withArmrest = false): VoxelDocument {
+  return createEvalDocument(withArmrest ? "chair with left armrest" : "chair", [
+    "eval",
+    "fixture",
+    "chair",
+  ]);
+}
+
 /** Builds the empty scaffold document used by the chair-create scenario. */
 export function createEmptyScaffoldDocument(): VoxelDocument {
-  return createDocument({
-    documentId: EVAL_IDS.document,
-    metadata: { title: "empty scaffold", tags: ["eval", "fixture"] },
-    rootNodeId: EVAL_IDS.root,
-    nodes: [
-      {
-        nodeId: EVAL_IDS.root,
-        name: "Chair",
-        parentId: null,
-        children: [],
-        transform: identity,
-        components: [
-          {
-            kind: "voxel",
-            schemaVersion: 1,
-            volumeId: EVAL_IDS.volumeMain,
-          },
-        ],
-      },
-    ],
-    materials: [
-      {
-        materialId: EVAL_IDS.materialWood,
-        name: "wood",
-        color: EVAL_WOOD_COLOR,
-        opacity: 1,
-        roughness: 0.5,
-        metallic: 0,
-        emissive: 0,
-      },
-    ],
-    volumes: [
-      {
-        volumeId: EVAL_IDS.volumeMain,
-        name: "main",
-        bounds: { min: [0, 0, 0], max: [8, 10, 8] },
-      },
-    ],
-  });
+  return createEvalDocument("empty scaffold", ["eval", "fixture"]);
 }
 
 /**
@@ -248,6 +217,11 @@ export function regionCoordinates(region: IntAabb): readonly Vec3i[] {
     }
   }
   return coordinates;
+}
+
+/** Stable string key of one voxel coordinate (canonical set/diff identity). */
+export function voxelKey(coordinate: Vec3i): string {
+  return `${String(coordinate[0])},${String(coordinate[1])},${String(coordinate[2])}`;
 }
 
 /** All voxel entries of a set of regions with one material (fixed order). */
