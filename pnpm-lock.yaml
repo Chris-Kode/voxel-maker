@@ -113,6 +113,9 @@ importers:
       '@tauri-apps/plugin-dialog':
         specifier: 'catalog:'
         version: 2.7.2
+      '@voxel-maker/animation':
+        specifier: workspace:*
+        version: link:../../packages/animation
       '@voxel-maker/commands':
         specifier: workspace:*
         version: link:../../packages/commands

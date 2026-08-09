@@ -123,6 +123,43 @@ describe("createPlaybackController", () => {
     expect(controller.state.time).toBe(0);
   });
 
+  it("loads a null document (lifecycle close) without corrupting state", () => {
+    const controller = createPlaybackController(makeClock().clock);
+    const document = createAnimatedWheelDocument();
+    controller.load(document, createWheelSpinClip());
+    controller.scrub(0.25);
+    controller.load(null, null);
+    expect(controller.state).toMatchObject({
+      playing: false,
+      stopped: false,
+      time: 0,
+      clipId: null,
+    });
+    // Evaluate without a document fails loudly with the documented error
+    // instead of touching a stale or undefined document.
+    expect(() => controller.evaluate()).toThrow(/no document is loaded/);
+  });
+
+  it("refresh swaps the document snapshot without rewinding or pausing", () => {
+    const { clock, advance } = makeClock();
+    const document = createAnimatedWheelDocument();
+    const controller = createPlaybackController(clock);
+    controller.load(document, createWheelSpinClip());
+    controller.scrub(0.5);
+    const replaced = createAnimatedWheelDocument();
+    controller.refresh(replaced);
+    expect(controller.state.time).toBeCloseTo(0.5, 12);
+    expect(controller.state.stopped).toBe(false);
+    expect(controller.evaluate().clipId).toBe(
+      createWheelSpinClip().animationId,
+    );
+    controller.play();
+    advance(0.25);
+    controller.tick(clock.now());
+    expect(controller.state.time).toBeCloseTo(0.75, 12);
+    expect(controller.state.playing).toBe(true);
+  });
+
   it("stop restores base state exactly", () => {
     const { clock, advance } = makeClock();
     const document = createAnimatedWheelDocument();

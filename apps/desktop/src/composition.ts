@@ -50,6 +50,10 @@ import {
   createPreviewExportService,
   type PreviewExportService,
 } from "./export/preview-export.js";
+import {
+  createTimelineController,
+  type TimelineController,
+} from "./timeline/timeline-controller.js";
 
 /**
  * Desktop application composition root (plan S6.2, ticket #15): the single
@@ -101,6 +105,11 @@ export interface DesktopComposition {
   readonly fileService: FileService;
   /** Standard preview image export (plan S8.5/S15.2, ticket #25). */
   readonly previewExport: PreviewExportService;
+  /**
+   * Animation timeline controller (plan S10.9-S10.13, ticket #29): the
+   * headless seam between the timeline UI and the session command bus.
+   */
+  readonly timeline: TimelineController;
   dispose(): void;
 }
 
@@ -211,6 +220,7 @@ export function createDesktopComposition(
     },
   });
   const editor = createEditorStore();
+  const timeline = createTimelineController({ session, editor });
   const viewport = createViewportController({
     session,
     editor,
@@ -218,6 +228,9 @@ export function createDesktopComposition(
     ...(options.gestureVoxelLimit === undefined
       ? {}
       : { gestureVoxelLimit: options.gestureVoxelLimit }),
+    // Auto-key (plan S10.12): transform gestures write keys into the
+    // selected clip when the timeline key mode is "auto".
+    autoKey: (commands) => timeline.autoKeyCommands(commands),
   });
   const draftOverlay = createDraftOverlay({
     scene,
@@ -308,7 +321,9 @@ export function createDesktopComposition(
     materialPanel,
     fileService,
     previewExport,
+    timeline,
     dispose() {
+      timeline.dispose();
       materialPanel.dispose();
       viewport.dispose();
       draftOverlay.dispose();

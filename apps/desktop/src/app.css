@@ -771,3 +771,271 @@ body {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Animation timeline (plan S10.9-S10.11, ticket #29) */
+.timeline-panel {
+  display: flex;
+  flex-direction: column;
+  height: 210px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.timeline-toolbar button,
+.timeline-toolbar select,
+.timeline-toolbar input {
+  font-size: 12px;
+}
+
+.timeline-toolbar button {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #262b33;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.timeline-toolbar button:hover:not(:disabled) {
+  background: #30363f;
+}
+
+.timeline-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.timeline-toolbar button.active {
+  background: #2f5d9e;
+  border-color: #3d6fb8;
+}
+
+.timeline-separator {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.timeline-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  min-width: 56px;
+  text-align: right;
+}
+
+.timeline-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.timeline-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.timeline-tracks {
+  width: 210px;
+  min-width: 210px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.timeline-track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.timeline-track.selected {
+  background: rgba(47, 93, 158, 0.35);
+}
+
+.timeline-track-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-track-channel {
+  color: var(--muted);
+  font-size: 11px;
+  width: 52px;
+}
+
+.timeline-track select {
+  font-size: 11px;
+  width: 62px;
+}
+
+.timeline-track-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.timeline-track-remove:hover {
+  color: var(--error, #e06c75);
+}
+
+.timeline-lanes {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  outline: none;
+}
+
+.timeline-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 18px;
+  border-bottom: 1px solid var(--border);
+  cursor: ew-resize;
+}
+
+.timeline-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 18px;
+  pointer-events: none;
+}
+
+.timeline-lane-content {
+  position: absolute;
+  top: 18px;
+  bottom: 0;
+  left: 0;
+}
+
+.timeline-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 26px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.timeline-keyframe {
+  position: absolute;
+  top: 5px;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid #7fb3ff;
+  border-radius: 2px;
+  background: #2b3a52;
+  cursor: ew-resize;
+  transform: rotate(45deg);
+}
+
+.timeline-keyframe.selected {
+  background: #7fb3ff;
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #ff9a62;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Animation inspector (plan S10.13, ticket #29) */
+.animation-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.animation-inspector .field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.animation-inspector .field span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.animation-inspector .field input,
+.animation-inspector .field select {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+}
+
+.keyframe-editor {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 0;
+}
+
+.keyframe-editor legend {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 0 4px;
+}
+
+.keyframe-values {
+  display: flex;
+  gap: 6px;
+}
+
+.keyframe-values .field {
+  flex: 1;
+}
+
+.field-error {
+  color: var(--error, #e06c75);
+  font-size: 11px;
+  margin: 4px 0 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

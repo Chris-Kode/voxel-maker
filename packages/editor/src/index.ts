@@ -14,6 +14,26 @@ export {
   type EditorStoreSnapshot,
 } from "./runtime.js";
 export {
+  createTimelineStore,
+  pixelToTime,
+  snapTime,
+  timeToPixel,
+  TIMELINE_DEFAULT_SNAP_INCREMENT,
+  TIMELINE_DEFAULT_ZOOM,
+  TIMELINE_MAX_SNAP_INCREMENT,
+  TIMELINE_MAX_ZOOM,
+  TIMELINE_MIN_ZOOM,
+  type KeyMode,
+  type TimelineStore,
+  type TimelineStoreSnapshot,
+} from "./timeline.js";
+export {
+  buildAutoKeyCommands,
+  buildChannelProperty,
+  type AutoKeyOptions,
+  type TrackChannel,
+} from "./auto-key.js";
+export {
   countMaterialUsage,
   defaultNewMaterialPayload,
   materialUpdateChanges,

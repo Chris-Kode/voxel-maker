@@ -75,6 +75,14 @@ export interface ViewportControllerOptions {
    * (ADR-0009, default `MAX_VOXELS_PER_OPERATION`); callers may lower it.
    */
   readonly gestureVoxelLimit?: number;
+  /**
+   * Auto-key augmentation (plan S10.12, ticket #29): when the timeline is
+   * in auto-key mode, the composition injects a function that turns a
+   * gesture's `node.setTransform` commands into additional `keyframe.set`
+   * commands for the selected clip. The transform gesture and its keys
+   * commit as one atomic, undoable transaction.
+   */
+  readonly autoKey?: (commands: readonly Command[]) => readonly Command[];
 }
 
 export interface ViewportController {
@@ -173,6 +181,9 @@ class ViewportControllerImpl implements ViewportController {
   readonly #rig: CameraRig;
   readonly #overlays: OverlayManager;
   readonly #gizmo: GizmoOverlay;
+  readonly #autoKey:
+    | ((commands: readonly Command[]) => readonly Command[])
+    | undefined;
   readonly #transform: NodeTransformTool;
   readonly #select: ReturnType<typeof createSelectTool>;
   readonly #pencil: StrokeTool;
@@ -198,6 +209,7 @@ class ViewportControllerImpl implements ViewportController {
     this.#rig = createCameraRig();
     this.#overlays = createOverlayManager(options.scene);
     this.#gizmo = createGizmoOverlay(options.scene);
+    this.#autoKey = options.autoKey;
     this.#transform = createNodeTransformTool(this.#makeTransformHost());
     const host = this.#makeToolHost(options.gestureVoxelLimit);
     this.#select = createSelectTool({ host, editor: this.#editor });
@@ -679,7 +691,14 @@ class ViewportControllerImpl implements ViewportController {
         return {
           update: (commands, label) => {
             this.#transformSequence += 1;
-            const result = gesture.update(commands, {
+            // Auto-key (plan S10.12): when the timeline key mode is
+            // "auto", the transform commands are augmented with keyframe
+            // commands for the selected clip before the gesture stage
+            // commits them, so transform and keys land in one history
+            // entry.
+            const augmented =
+              this.#autoKey === undefined ? commands : this.#autoKey(commands);
+            const result = gesture.update(augmented, {
               transactionId: transactionId(
                 `transaction:transform:${String(this.#transformSequence)}`,
               ),
@@ -745,7 +764,9 @@ class ViewportControllerImpl implements ViewportController {
           });
         }
         this.#toolTransactionSequence += 1;
-        const result = current.bus.executeTransaction(commands, {
+        const augmented =
+          this.#autoKey === undefined ? commands : this.#autoKey(commands);
+        const result = current.bus.executeTransaction(augmented, {
           transactionId: transactionId(
             `transaction:tool:${String(this.#toolTransactionSequence)}`,
           ),
