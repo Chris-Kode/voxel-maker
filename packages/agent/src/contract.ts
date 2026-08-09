@@ -12,7 +12,10 @@ import type { JsonSchema } from "./schema.js";
 export const INSPECTION_CONTRACT_VERSION = 1;
 
 /** Contract version of the v1 mutation surface (plan S11.5/S11.6). */
-export const MUTATION_CONTRACT_VERSION = 1;
+/** Version of the v1 mutation envelope (bumped to 2 when the rigging and
+ * animation tool surface and the optional `animation` reservation field
+ * were added, ticket #36). */
+export const MUTATION_CONTRACT_VERSION = 2;
 
 /**
  * Capability classes (plan S11.9): inspection is authorized separately
@@ -107,12 +110,14 @@ export function outputSchema(
   toolName: string,
   payload: Readonly<Record<string, JsonSchema>>,
   requiredPayload: readonly string[],
+  contractVersion: number = INSPECTION_CONTRACT_VERSION,
 ): JsonSchema {
   return {
     type: "object",
     additionalProperties: false,
     properties: {
       ...BASE_RESPONSE_PROPERTIES,
+      contractVersion: { const: contractVersion },
       tool: { enum: [toolName] },
       ...payload,
     },
@@ -156,6 +161,7 @@ export function mutationOutputSchema(toolName: string): JsonSchema {
       },
     },
     ["baseRevision", "voxelEstimate", "command"],
+    MUTATION_CONTRACT_VERSION,
   );
 }
 
