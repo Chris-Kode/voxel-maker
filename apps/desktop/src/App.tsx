@@ -7,15 +7,17 @@ import {
 import { createDesktopComposition } from "./composition.js";
 import { createDefaultPlatform } from "./platform/index.js";
 import { Viewport } from "./viewport/Viewport.js";
+import { MaterialPanel, usePanelState } from "./materials/MaterialPanel.js";
 import type { FileServiceResult } from "./file-service.js";
 
 /**
  * Desktop shell chrome (plan S6.1/S6.2 ticket #15, S7.3-S7.7/S7.19 ticket
- * #18): a minimal header with project lifecycle actions, the edit tool
- * buttons (select/pencil/erase/paint/eyedropper/box/sphere/cylinder), the
- * select-tool granularity picker (node/voxel/region), and the viewport.
- * All behavior lives behind the composition root; this component only
- * renders state and forwards gestures.
+ * #18, S7.13 ticket #21): a minimal header with project lifecycle
+ * actions, undo/redo, the edit tool buttons
+ * (select/pencil/erase/paint/eyedropper/box/sphere/cylinder), the
+ * select-tool granularity picker (node/voxel/region), the materials
+ * panel, and the viewport. All behavior lives behind the composition
+ * root; this component only renders state and forwards gestures.
  */
 
 /** The runtime tool choices rendered in the shell toolbar. */
@@ -71,6 +73,8 @@ export function App(): React.JSX.Element {
       useMeshingWorker: true,
     }),
   );
+  const panel = composition.materialPanel;
+  const panelState = usePanelState(panel);
   const editorState = useEditorStore(composition.editor);
   const [status, setStatus] = useState(() => composition.fileService.status);
   const [busy, setBusy] = useState(false);
@@ -129,6 +133,26 @@ export function App(): React.JSX.Element {
           Close
         </button>
         <span className="toolbar-separator" aria-hidden="true" />
+        <button
+          type="button"
+          disabled={!panelState.canUndo}
+          title="Undo the last edit"
+          onClick={() => {
+            panel.undo();
+          }}
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          disabled={!panelState.canRedo}
+          title="Redo the last undone edit"
+          onClick={() => {
+            panel.redo();
+          }}
+        >
+          Redo
+        </button>
         <span className="tools" role="group" aria-label="Edit tools">
           {TOOLS.map((tool) => (
             <button
@@ -171,11 +195,16 @@ export function App(): React.JSX.Element {
         ) : null}
       </header>
       <main className="stage">
-        <Viewport
-          composition={composition}
-          activeTool={editorState.activeTool}
-          selectionMode={editorState.selectionMode}
-        />
+        <aside className="sidebar" aria-label="Document panels">
+          <MaterialPanel controller={panel} />
+        </aside>
+        <div className="viewport-host">
+          <Viewport
+            composition={composition}
+            activeTool={editorState.activeTool}
+            selectionMode={editorState.selectionMode}
+          />
+        </div>
       </main>
       <footer className="statusbar" aria-live="polite">
         <span>

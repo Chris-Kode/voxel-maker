@@ -158,6 +158,7 @@ describe("desktop composition root", () => {
     expect(composition.editor).toBeDefined();
     expect(composition.renderer.adapter).toBeDefined();
     expect(composition.fileService).toBeDefined();
+    expect(composition.materialPanel).toBeDefined();
     expect(composition.renderer.scene).toBeInstanceOf(THREE.Scene);
     composition.dispose();
   });

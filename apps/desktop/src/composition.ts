@@ -28,6 +28,10 @@ import {
   createViewportController,
   type ViewportController,
 } from "./viewport/controller.js";
+import {
+  createMaterialPanelController,
+  type MaterialPanelController,
+} from "./materials/material-panel-controller.js";
 
 /**
  * Desktop application composition root (plan S6.2, ticket #15): the single
@@ -69,6 +73,8 @@ export interface DesktopComposition {
   readonly viewport: ViewportController;
   /** Transient pencil/erase stroke preview projection (ticket #17). */
   readonly draftOverlay: DraftOverlay;
+  /** Materials panel controller (plan S7.13, ticket #21). */
+  readonly materialPanel: MaterialPanelController;
   readonly fileService: FileService;
   dispose(): void;
 }
@@ -162,6 +168,7 @@ export function createDesktopComposition(
     storage: options.storage,
     picker: options.picker,
   });
+  const materialPanel = createMaterialPanelController({ session, editor });
 
   // Lifecycle rebinding: opening, replacing, and closing a document fully
   // dispose and rebind scene resources through lifecycle events (plan S6.3).
@@ -221,8 +228,10 @@ export function createDesktopComposition(
     },
     viewport,
     draftOverlay,
+    materialPanel,
     fileService,
     dispose() {
+      materialPanel.dispose();
       viewport.dispose();
       draftOverlay.dispose();
       adapter.dispose();
