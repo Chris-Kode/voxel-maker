@@ -1,6 +1,7 @@
 import {
   WorkspaceError,
   type CommandId,
+  type ComponentId,
   type NodeId,
 } from "@voxel-maker/shared";
 import {
@@ -12,16 +13,29 @@ import {
   type Vec3,
 } from "@voxel-maker/math";
 import {
+  addConstraintCommand,
   addJointCommand,
+  removeConstraintCommand,
   removeJointCommand,
   removePivotCommand,
+  reorderConstraintCommand,
+  setConstraintCommand,
   setNodeComponentsCommand,
   setNodeMetadataCommand,
   setNodeTransformCommand,
   setPivotCommand,
   type Command,
 } from "@voxel-maker/commands";
-import type { Component, MetadataRecord } from "@voxel-maker/model";
+import {
+  applyRotationConstraints,
+  rotationConstraintsOf,
+} from "@voxel-maker/rigging";
+import type {
+  Component,
+  MetadataRecord,
+  RotationLimits,
+  VoxelDocument,
+} from "@voxel-maker/model";
 
 /**
  * Headless inspector semantics (plan S7.12, ticket #20): validated text
@@ -323,6 +337,128 @@ export function buildSetMetadataCommand(
     nodeId,
     ...(text.trim().length === 0 ? {} : { metadata: parseMetadataInput(text) }),
   });
+}
+
+/**
+ * Parses six finite degrees values ("minX, minY, minZ, maxX, maxY, maxZ")
+ * into canonical radian rotation limits, rejecting per-axis min > max.
+ * The inspector edits limits in degrees like every other rotation field;
+ * the document stores radians.
+ */
+export function parseLimitsDegreesInput(
+  text: string,
+  field: string,
+): RotationLimits {
+  const parts = text
+    .split(/[,\s]+/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length !== 6) {
+    throw inputError(
+      field,
+      "Expected six numbers: minX, minY, minZ, maxX, maxY, maxZ (degrees)",
+    );
+  }
+  const values = parts.map((part) => parseFinite(part, field));
+  const toRadians = (value: number): number => (value * Math.PI) / 180;
+  const min: Vec3 = [
+    toRadians(values[0] as number),
+    toRadians(values[1] as number),
+    toRadians(values[2] as number),
+  ];
+  const max: Vec3 = [
+    toRadians(values[3] as number),
+    toRadians(values[4] as number),
+    toRadians(values[5] as number),
+  ];
+  for (let axis = 0; axis < 3; axis += 1) {
+    if ((min[axis] as number) > (max[axis] as number)) {
+      throw inputError(
+        field,
+        `Minimum exceeds maximum on axis ${String(axis)}`,
+      );
+    }
+  }
+  return { min, max };
+}
+
+/** Formats radian rotation limits as six degree values for the inspector. */
+export function formatLimitsDegrees(limits: RotationLimits): string {
+  const toDegrees = (value: number): number => (value * 180) / Math.PI;
+  return [
+    toDegrees(limits.min[0]),
+    toDegrees(limits.min[1]),
+    toDegrees(limits.min[2]),
+    toDegrees(limits.max[0]),
+    toDegrees(limits.max[1]),
+    toDegrees(limits.max[2]),
+  ]
+    .map(formatNumber)
+    .join(", ");
+}
+
+/** Builds a `node.addConstraint` command (plan S9.4, ticket #27). */
+export function buildAddConstraintCommand(
+  id: CommandId,
+  nodeId: NodeId,
+  componentId: ComponentId,
+  limits: RotationLimits,
+  before: ComponentId | null = null,
+): Command<"node.addConstraint"> {
+  return addConstraintCommand(id, { nodeId, componentId, limits, before });
+}
+
+/** Builds a `node.setConstraint` command (plan S9.4, ticket #27). */
+export function buildSetConstraintCommand(
+  id: CommandId,
+  nodeId: NodeId,
+  componentId: ComponentId,
+  limits: RotationLimits,
+): Command<"node.setConstraint"> {
+  return setConstraintCommand(id, { nodeId, componentId, limits });
+}
+
+/** Builds a `node.reorderConstraint` command (plan S9.4, ticket #27). */
+export function buildReorderConstraintCommand(
+  id: CommandId,
+  nodeId: NodeId,
+  componentId: ComponentId,
+  before: ComponentId | null,
+): Command<"node.reorderConstraint"> {
+  return reorderConstraintCommand(id, { nodeId, componentId, before });
+}
+
+/** Builds a `node.removeConstraint` command (plan S9.4, ticket #27). */
+export function buildRemoveConstraintCommand(
+  id: CommandId,
+  nodeId: NodeId,
+  componentId: ComponentId,
+): Command<"node.removeConstraint"> {
+  return removeConstraintCommand(id, { nodeId, componentId });
+}
+
+/**
+ * Evaluated local Euler XYZ degrees of one node after its rotation
+ * constraints (plan S9.5, ticket #27): the pure runtime clamp the
+ * viewport renders. Returns undefined when the node does not exist.
+ * Pure read; never mutates the document.
+ */
+export function constraintRuntimeRotationDegrees(
+  document: VoxelDocument,
+  nodeId: NodeId,
+): Vec3 | undefined {
+  const node = document.nodes[nodeId];
+  if (node === undefined) return undefined;
+  const constrained = applyRotationConstraints(
+    node.transform.rotation,
+    rotationConstraintsOf(node),
+  );
+  const euler = quaternionToEulerXYZ(constrained);
+  return [
+    (euler[0] * 180) / Math.PI,
+    (euler[1] * 180) / Math.PI,
+    (euler[2] * 180) / Math.PI,
+  ];
 }
 
 function inputError(field: string, message: string): WorkspaceError {

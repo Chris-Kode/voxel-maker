@@ -49,6 +49,19 @@ errors the bus returns. Panels never encode domain invariants themselves
   joint, constraint) with summaries and remove buttons; voxel (by volume
   id), pivot, and joint components can be added. Commits are
   `node.setComponents` with the full replacement list.
+- **Constraints (plan S9.7, ticket #27)**: with a single constrained node
+  selected, a Constraints section lists every rotation-limits descriptor
+  in persisted order. Each row edits the six degree values
+  `minX, minY, minZ, maxX, maxY, maxZ` (parsed by
+  `parseLimitsDegreesInput`, committed as one `node.setConstraint`
+  transaction; invalid values and min > max per axis surface as
+  notices), moves the descriptor earlier/later (`node.reorderConstraint`),
+  and removes it (`node.removeConstraint`). "＋ Constraint" appends a new
+  descriptor with ±90° defaults through `node.addConstraint` using a
+  fresh stable component id. The section also shows the constrained
+  runtime rotation in degrees next to the authored rotation
+  (`constraintRuntimeRotationDegrees`, plan S9.5) — the same clamped
+  result the viewport renders.
 - **Metadata**: a JSON text area commits `node.setMetadata`; invalid or
   non-finite input is rejected with a notice, and the bus enforces the
   document's depth/byte limits. Empty text removes the record.

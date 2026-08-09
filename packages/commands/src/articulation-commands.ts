@@ -1,11 +1,20 @@
 import {
   WorkspaceError,
   type CommandId,
+  type ComponentId,
   type NodeId,
 } from "@voxel-maker/shared";
 import { canonicalVec3, type Vec3 } from "@voxel-maker/math";
-import type { DocumentLimits, PivotComponent } from "@voxel-maker/model";
-import { isRecord, parseNodeId } from "./parse-helpers.js";
+import type {
+  ConstraintComponent,
+  ConstraintDescriptor,
+  DocumentLimits,
+  PivotComponent,
+  RotationLimits,
+  SceneNode,
+  VoxelDocument,
+} from "@voxel-maker/model";
+import { isRecord, parseComponentId, parseNodeId } from "./parse-helpers.js";
 import type { Command } from "./types.js";
 import type {
   CommandExecution,
@@ -24,16 +33,22 @@ import {
 import { CommandRegistry } from "./registry.js";
 
 /**
- * Per-discriminant articulation component commands (plan S9.3, ticket
- * #26): pivot and joint are singletons per node, so their lifecycle is a
- * small set of create/update/remove commands instead of whole-list
- * replacement. A joint annotates a node in the single transform
- * hierarchy; it never introduces a second parent graph. `node.setPivot`
- * writes through to `transform.pivot` so the annotation and the approved
- * transform formula stay in sync (plan S7.9: geometry/world behavior
- * matches ADR-0001). Undo restores the exact pre-command state via the
- * recorded inverses (which may be different command types or a composite,
- * matching the node.create/node.delete pattern).
+ * Per-discriminant articulation component commands (plan S9.3/S9.4,
+ * tickets #26/#27): pivot and joint are singletons per node, so their
+ * lifecycle is a small set of create/update/remove commands instead of
+ * whole-list replacement. A joint annotates a node in the single
+ * transform hierarchy; it never introduces a second parent graph.
+ * `node.setPivot` writes through to `transform.pivot` so the annotation
+ * and the approved transform formula stay in sync (plan S7.9:
+ * geometry/world behavior matches ADR-0001). Constraints are stable,
+ * explicitly ordered local Euler XYZ rotation limits (ADR-0006): the
+ * `node.addConstraint` / `node.setConstraint` /
+ * `node.reorderConstraint` / `node.removeConstraint` commands manage one
+ * descriptor at a time with caller-supplied stable component ids, while
+ * `node.setComponents` remains the whole-list replacement path. Undo
+ * restores the exact pre-command state via the recorded inverses (which
+ * may be different command types or a composite, matching the
+ * node.create/node.delete pattern).
  */
 
 export const NODE_SET_PIVOT_COMMAND = "node.setPivot" as const;
@@ -452,10 +467,779 @@ function nodeResources(
   };
 }
 
+export const NODE_ADD_CONSTRAINT_COMMAND = "node.addConstraint" as const;
+export const NODE_SET_CONSTRAINT_COMMAND = "node.setConstraint" as const;
+export const NODE_REORDER_CONSTRAINT_COMMAND =
+  "node.reorderConstraint" as const;
+export const NODE_REMOVE_CONSTRAINT_COMMAND = "node.removeConstraint" as const;
+
+export interface AddConstraintPayload {
+  readonly nodeId: NodeId;
+  readonly componentId: ComponentId;
+  readonly limits: RotationLimits;
+  /**
+   * Insert the new constraint before this constraint's stable id; `null`
+   * appends at the end. The target must be another constraint on the
+   * same node.
+   */
+  readonly before: ComponentId | null;
+}
+
+export interface SetConstraintPayload {
+  readonly nodeId: NodeId;
+  readonly componentId: ComponentId;
+  readonly limits: RotationLimits;
+}
+
+export interface ReorderConstraintPayload {
+  readonly nodeId: NodeId;
+  readonly componentId: ComponentId;
+  /**
+   * Move the constraint before this constraint's stable id; `null` moves
+   * it to the end. The target must be another constraint on the same
+   * node.
+   */
+  readonly before: ComponentId | null;
+}
+
+export interface RemoveConstraintPayload {
+  readonly nodeId: NodeId;
+  readonly componentId: ComponentId;
+}
+
+/** Canonicalizing constructor for a `node.addConstraint` command. */
+export function addConstraintCommand(
+  id: CommandId,
+  payload: AddConstraintPayload,
+): Command<typeof NODE_ADD_CONSTRAINT_COMMAND, AddConstraintPayload> {
+  return {
+    id,
+    type: NODE_ADD_CONSTRAINT_COMMAND,
+    schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+    payload: {
+      nodeId: payload.nodeId,
+      componentId: payload.componentId,
+      limits: canonicalLimits(payload.limits),
+      before: payload.before ?? null,
+    },
+  };
+}
+
+/** Canonicalizing constructor for a `node.setConstraint` command. */
+export function setConstraintCommand(
+  id: CommandId,
+  payload: SetConstraintPayload,
+): Command<typeof NODE_SET_CONSTRAINT_COMMAND, SetConstraintPayload> {
+  return {
+    id,
+    type: NODE_SET_CONSTRAINT_COMMAND,
+    schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+    payload: {
+      nodeId: payload.nodeId,
+      componentId: payload.componentId,
+      limits: canonicalLimits(payload.limits),
+    },
+  };
+}
+
+/** Canonicalizing constructor for a `node.reorderConstraint` command. */
+export function reorderConstraintCommand(
+  id: CommandId,
+  payload: ReorderConstraintPayload,
+): Command<typeof NODE_REORDER_CONSTRAINT_COMMAND, ReorderConstraintPayload> {
+  return {
+    id,
+    type: NODE_REORDER_CONSTRAINT_COMMAND,
+    schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+    payload: {
+      nodeId: payload.nodeId,
+      componentId: payload.componentId,
+      before: payload.before ?? null,
+    },
+  };
+}
+
+/** Canonicalizing constructor for a `node.removeConstraint` command. */
+export function removeConstraintCommand(
+  id: CommandId,
+  payload: RemoveConstraintPayload,
+): Command<typeof NODE_REMOVE_CONSTRAINT_COMMAND, RemoveConstraintPayload> {
+  return {
+    id,
+    type: NODE_REMOVE_CONSTRAINT_COMMAND,
+    schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+    payload: {
+      nodeId: payload.nodeId,
+      componentId: payload.componentId,
+    },
+  };
+}
+
+function canonicalLimits(limits: RotationLimits): RotationLimits {
+  return { min: canonicalVec3(limits.min), max: canonicalVec3(limits.max) };
+}
+
+function invalidConstraint(
+  message: string,
+  path: readonly (string | number)[],
+): WorkspaceError {
+  return new WorkspaceError({
+    family: "validation",
+    code: "INVALID_CONSTRAINT",
+    message,
+    path,
+  });
+}
+
+function parseRotationLimits(
+  value: unknown,
+  path: readonly (string | number)[],
+): RotationLimits {
+  if (!isRecord(value)) {
+    throw invalidConstraint("Expected rotation limits", path);
+  }
+  for (const key of Object.keys(value)) {
+    if (key !== "min" && key !== "max") {
+      throw invalidConstraint(`Unknown limits field ${key}`, [...path, key]);
+    }
+  }
+  const min = parseVec3(value.min, [...path, "min"]);
+  const max = parseVec3(value.max, [...path, "max"]);
+  for (let axis = 0; axis < 3; axis += 1) {
+    if ((min[axis] as number) > (max[axis] as number)) {
+      throw invalidConstraint(
+        `Rotation limit minimum exceeds maximum on axis ${String(axis)}`,
+        [...path, "limits"],
+      );
+    }
+  }
+  return { min, max };
+}
+
+function parseConstraintPayload(payload: unknown): {
+  readonly nodeId: NodeId;
+  readonly componentId?: ComponentId;
+  readonly limits?: RotationLimits;
+  readonly before?: ComponentId | null;
+} {
+  if (!isRecord(payload)) {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_FIELD_TYPE",
+      message: "Expected a payload object",
+      path: ["payload"],
+    });
+  }
+  for (const key of Object.keys(payload)) {
+    if (
+      key !== "nodeId" &&
+      key !== "componentId" &&
+      key !== "limits" &&
+      key !== "before"
+    ) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "UNKNOWN_FIELD",
+        message: `Unknown constraint command field ${key}`,
+        path: ["payload", key],
+      });
+    }
+  }
+  return {
+    nodeId: parseNodeId(payload.nodeId, ["payload", "nodeId"]),
+    ...(payload.componentId !== undefined
+      ? {
+          componentId: parseComponentId(payload.componentId, [
+            "payload",
+            "componentId",
+          ]),
+        }
+      : {}),
+    ...(payload.limits !== undefined
+      ? { limits: parseRotationLimits(payload.limits, ["payload", "limits"]) }
+      : {}),
+    ...(payload.before !== undefined
+      ? {
+          before:
+            payload.before === null
+              ? null
+              : parseComponentId(payload.before, ["payload", "before"]),
+        }
+      : {}),
+  };
+}
+
+function missingConstraint(componentIdValue: ComponentId): WorkspaceError {
+  return new WorkspaceError({
+    family: "validation",
+    code: "MISSING_CONSTRAINT",
+    message: "Node has no constraint with this component id",
+    context: { componentId: componentIdValue },
+  });
+}
+
+function invalidOrderTarget(componentIdValue: ComponentId): WorkspaceError {
+  return new WorkspaceError({
+    family: "validation",
+    code: "INVALID_ORDER_TARGET",
+    message: "The order target must be another constraint on the same node",
+    context: { componentId: componentIdValue },
+  });
+}
+
+/** The constraint component of a node, if present. */
+function constraintHolder(
+  node: SceneNode,
+):
+  | { readonly component: ConstraintComponent; readonly index: number }
+  | undefined {
+  for (let index = 0; index < node.components.length; index += 1) {
+    const component = node.components[index];
+    if (component !== undefined && component.kind === "constraint") {
+      return { component, index };
+    }
+  }
+  return undefined;
+}
+
+interface ConstraintEntry {
+  readonly descriptor: ConstraintDescriptor;
+  /** Index of the descriptor inside the constraint component's list. */
+  readonly index: number;
+}
+
+function findConstraint(
+  node: SceneNode,
+  componentIdValue: ComponentId,
+): ConstraintEntry | undefined {
+  const holder = constraintHolder(node);
+  if (holder === undefined) return undefined;
+  for (let index = 0; index < holder.component.constraints.length; index += 1) {
+    const descriptor = holder.component.constraints[index];
+    if (
+      descriptor !== undefined &&
+      descriptor.componentId === componentIdValue
+    ) {
+      return { descriptor, index };
+    }
+  }
+  return undefined;
+}
+
+function requireConstraint(
+  node: SceneNode,
+  componentIdValue: ComponentId,
+): ConstraintEntry {
+  const entry = findConstraint(node, componentIdValue);
+  if (entry === undefined) throw missingConstraint(componentIdValue);
+  return entry;
+}
+
+/** True when any constraint in the document carries the component id. */
+function documentHasConstraintId(
+  document: VoxelDocument,
+  componentIdValue: ComponentId,
+): boolean {
+  for (const node of Object.values(document.nodes)) {
+    for (const component of node.components) {
+      if (component.kind !== "constraint") continue;
+      for (const constraint of component.constraints) {
+        if (constraint.componentId === componentIdValue) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Validates the `before` order target of add/reorder. */
+function requireOrderTarget(
+  node: SceneNode,
+  componentIdValue: ComponentId,
+  before: ComponentId | null,
+): void {
+  if (before === null) return;
+  if (before === componentIdValue) throw invalidOrderTarget(before);
+  if (findConstraint(node, before) === undefined) {
+    throw invalidOrderTarget(before);
+  }
+}
+
+/** Inserts `value` at `index` in a new array (index == length appends). */
+function insertAt<T>(list: readonly T[], index: number, value: T): T[] {
+  return [...list.slice(0, index), value, ...list.slice(index)];
+}
+
+/** Replaces the constraint component with a new constraints list. */
+function setConstraintList(
+  node: MutableSceneNode,
+  holderIndex: number,
+  constraints: readonly ConstraintDescriptor[],
+): void {
+  node.components = node.components.map((component, index) =>
+    index === holderIndex
+      ? { kind: "constraint", schemaVersion: 1, constraints }
+      : component,
+  );
+}
+
+const addConstraintHandler: CommandHandler<
+  typeof NODE_ADD_CONSTRAINT_COMMAND,
+  AddConstraintPayload
+> = {
+  type: NODE_ADD_CONSTRAINT_COMMAND,
+  schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+  parse(payload: unknown, limits: DocumentLimits): AddConstraintPayload {
+    void limits;
+    const parsed = parseConstraintPayload(payload);
+    if (
+      parsed.componentId === undefined ||
+      parsed.limits === undefined ||
+      parsed.before === undefined
+    ) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_FIELD_TYPE",
+        message:
+          "node.addConstraint requires nodeId, componentId, limits, and before",
+        path: ["payload"],
+      });
+    }
+    return {
+      nodeId: parsed.nodeId,
+      componentId: parsed.componentId,
+      limits: parsed.limits,
+      before: parsed.before,
+    };
+  },
+  validate(
+    payload: AddConstraintPayload,
+    context: CommandValidationContext,
+  ): void {
+    const node = context.document.nodes[payload.nodeId];
+    if (node === undefined) throw missingNode(payload.nodeId);
+    const existing = findConstraint(node, payload.componentId);
+    if (existing === undefined) {
+      if (documentHasConstraintId(context.document, payload.componentId)) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "DUPLICATE_COMPONENT_ID",
+          message:
+            "Constraint component IDs must be unique within the document",
+          context: { componentId: payload.componentId },
+        });
+      }
+    } else if (
+      !rotationLimitsEqual(existing.descriptor.limits, payload.limits)
+    ) {
+      // Re-adding the same id with different limits is a create conflict
+      // (matching node.create); an identical re-add is a no-op commit.
+      throw new WorkspaceError({
+        family: "validation",
+        code: "DUPLICATE_COMPONENT_ID",
+        message: "Constraint component IDs must be unique within the document",
+        context: { componentId: payload.componentId },
+      });
+    }
+    requireOrderTarget(node, payload.componentId, payload.before);
+  },
+  execute(
+    payload: AddConstraintPayload,
+    context: CommandExecutionContext,
+  ): CommandExecution {
+    const document = context.stageDocument();
+    const node = mutableNode(document, payload.nodeId);
+    const componentsBefore = node.components;
+    const holder = constraintHolder(node);
+    const descriptor: ConstraintDescriptor = {
+      componentId: payload.componentId,
+      type: "rotation-limits",
+      limits: payload.limits,
+    };
+    const existing =
+      holder === undefined
+        ? undefined
+        : findConstraint(node, payload.componentId);
+    if (existing !== undefined && holder !== undefined) {
+      // Identical re-add (same id, limits, and position) is a no-op
+      // commit, matching node.create. An identical id moved to another
+      // position is a deterministic move with a reorder inverse.
+      const removed = holder.component.constraints.filter(
+        (constraint) => constraint.componentId !== payload.componentId,
+      );
+      const targetIndex =
+        payload.before === null
+          ? removed.length
+          : removed.findIndex(
+              (constraint) => constraint.componentId === payload.before,
+            );
+      if (targetIndex === existing.index) {
+        return {
+          inverse: {
+            type: NODE_ADD_CONSTRAINT_COMMAND,
+            schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+            payload: {
+              nodeId: payload.nodeId,
+              componentId: payload.componentId,
+              limits: payload.limits,
+              before: payload.before,
+            },
+          },
+          changedRecords: false,
+          declaredAffectedResources: nodeResources(payload.nodeId),
+        };
+      }
+      setConstraintList(
+        node,
+        holder.index,
+        insertAt(removed, targetIndex, descriptor),
+      );
+      const restoreBefore = removed[existing.index]?.componentId ?? null;
+      return {
+        inverse: {
+          type: NODE_REORDER_CONSTRAINT_COMMAND,
+          schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+          payload: {
+            nodeId: payload.nodeId,
+            componentId: payload.componentId,
+            before: restoreBefore,
+          },
+        },
+        changedRecords: true,
+        declaredAffectedResources: nodeResources(payload.nodeId),
+      };
+    }
+    if (holder === undefined) {
+      node.components = [
+        ...node.components,
+        { kind: "constraint", schemaVersion: 1, constraints: [descriptor] },
+      ];
+      return {
+        inverse: {
+          type: NODE_REMOVE_CONSTRAINT_COMMAND,
+          schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+          payload: { nodeId: payload.nodeId, componentId: payload.componentId },
+        },
+        changedRecords: true,
+        declaredAffectedResources: nodeResources(payload.nodeId),
+      };
+    }
+    const targetIndex =
+      payload.before === null
+        ? holder.component.constraints.length
+        : holder.component.constraints.findIndex(
+            (entry) => entry.componentId === payload.before,
+          );
+    setConstraintList(
+      node,
+      holder.index,
+      insertAt(holder.component.constraints, targetIndex, descriptor),
+    );
+    if (holder.component.constraints.length === 0) {
+      // The node carried an empty constraint component (only possible via
+      // whole-list replacement). The inverse must recreate that empty
+      // component, so it is a whole-list restore of the exact pre-state.
+      return {
+        inverse: {
+          type: NODE_SET_COMPONENTS_COMMAND,
+          schemaVersion: NODE_COMMAND_SCHEMA_VERSION,
+          payload: { nodeId: payload.nodeId, components: componentsBefore },
+        },
+        changedRecords: true,
+        declaredAffectedResources: nodeResources(payload.nodeId),
+      };
+    }
+    return {
+      inverse: {
+        type: NODE_REMOVE_CONSTRAINT_COMMAND,
+        schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+        payload: { nodeId: payload.nodeId, componentId: payload.componentId },
+      },
+      changedRecords: true,
+      declaredAffectedResources: nodeResources(payload.nodeId),
+    };
+  },
+};
+
+const setConstraintHandler: CommandHandler<
+  typeof NODE_SET_CONSTRAINT_COMMAND,
+  SetConstraintPayload
+> = {
+  type: NODE_SET_CONSTRAINT_COMMAND,
+  schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+  parse(payload: unknown, limits: DocumentLimits): SetConstraintPayload {
+    void limits;
+    const parsed = parseConstraintPayload(payload);
+    if (parsed.componentId === undefined || parsed.limits === undefined) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_FIELD_TYPE",
+        message: "node.setConstraint requires nodeId, componentId, and limits",
+        path: ["payload"],
+      });
+    }
+    return {
+      nodeId: parsed.nodeId,
+      componentId: parsed.componentId,
+      limits: parsed.limits,
+    };
+  },
+  validate(
+    payload: SetConstraintPayload,
+    context: CommandValidationContext,
+  ): void {
+    const node = context.document.nodes[payload.nodeId];
+    if (node === undefined) throw missingNode(payload.nodeId);
+    requireConstraint(node, payload.componentId);
+  },
+  execute(
+    payload: SetConstraintPayload,
+    context: CommandExecutionContext,
+  ): CommandExecution {
+    const document = context.stageDocument();
+    const node = mutableNode(document, payload.nodeId);
+    const entry = requireConstraint(node, payload.componentId);
+    if (rotationLimitsEqual(entry.descriptor.limits, payload.limits)) {
+      return {
+        inverse: {
+          type: NODE_SET_CONSTRAINT_COMMAND,
+          schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+          payload: {
+            nodeId: payload.nodeId,
+            componentId: payload.componentId,
+            limits: payload.limits,
+          },
+        },
+        changedRecords: false,
+        declaredAffectedResources: nodeResources(payload.nodeId),
+      };
+    }
+    const holder = constraintHolder(node);
+    if (holder === undefined) throw missingConstraint(payload.componentId);
+    const constraints = holder.component.constraints.map((constraint, index) =>
+      index === entry.index
+        ? { ...constraint, limits: payload.limits }
+        : constraint,
+    );
+    setConstraintList(node, holder.index, constraints);
+    return {
+      inverse: {
+        type: NODE_SET_CONSTRAINT_COMMAND,
+        schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+        payload: {
+          nodeId: payload.nodeId,
+          componentId: payload.componentId,
+          limits: entry.descriptor.limits,
+        },
+      },
+      changedRecords: true,
+      declaredAffectedResources: nodeResources(payload.nodeId),
+    };
+  },
+};
+
+const reorderConstraintHandler: CommandHandler<
+  typeof NODE_REORDER_CONSTRAINT_COMMAND,
+  ReorderConstraintPayload
+> = {
+  type: NODE_REORDER_CONSTRAINT_COMMAND,
+  schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+  parse(payload: unknown, limits: DocumentLimits): ReorderConstraintPayload {
+    void limits;
+    const parsed = parseConstraintPayload(payload);
+    if (parsed.componentId === undefined || parsed.before === undefined) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_FIELD_TYPE",
+        message:
+          "node.reorderConstraint requires nodeId, componentId, and before",
+        path: ["payload"],
+      });
+    }
+    return {
+      nodeId: parsed.nodeId,
+      componentId: parsed.componentId,
+      before: parsed.before,
+    };
+  },
+  validate(
+    payload: ReorderConstraintPayload,
+    context: CommandValidationContext,
+  ): void {
+    const node = context.document.nodes[payload.nodeId];
+    if (node === undefined) throw missingNode(payload.nodeId);
+    requireConstraint(node, payload.componentId);
+    requireOrderTarget(node, payload.componentId, payload.before);
+  },
+  execute(
+    payload: ReorderConstraintPayload,
+    context: CommandExecutionContext,
+  ): CommandExecution {
+    const document = context.stageDocument();
+    const node = mutableNode(document, payload.nodeId);
+    const entry = requireConstraint(node, payload.componentId);
+    const holder = constraintHolder(node);
+    if (holder === undefined) throw missingConstraint(payload.componentId);
+    const removed = holder.component.constraints.filter(
+      (constraint) => constraint.componentId !== payload.componentId,
+    );
+    const targetIndex =
+      payload.before === null
+        ? removed.length
+        : removed.findIndex(
+            (constraint) => constraint.componentId === payload.before,
+          );
+    if (targetIndex === entry.index) {
+      return {
+        inverse: {
+          type: NODE_REORDER_CONSTRAINT_COMMAND,
+          schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+          payload: {
+            nodeId: payload.nodeId,
+            componentId: payload.componentId,
+            before: payload.before,
+          },
+        },
+        changedRecords: false,
+        declaredAffectedResources: nodeResources(payload.nodeId),
+      };
+    }
+    setConstraintList(
+      node,
+      holder.index,
+      insertAt(removed, targetIndex, entry.descriptor),
+    );
+    // Exact inverse: move the descriptor back to its original index,
+    // expressed as a `before` target in the post-move list.
+    const restoreBefore = removed[entry.index]?.componentId ?? null;
+    return {
+      inverse: {
+        type: NODE_REORDER_CONSTRAINT_COMMAND,
+        schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+        payload: {
+          nodeId: payload.nodeId,
+          componentId: payload.componentId,
+          before: restoreBefore,
+        },
+      },
+      changedRecords: true,
+      declaredAffectedResources: nodeResources(payload.nodeId),
+    };
+  },
+};
+
+const removeConstraintHandler: CommandHandler<
+  typeof NODE_REMOVE_CONSTRAINT_COMMAND,
+  RemoveConstraintPayload
+> = {
+  type: NODE_REMOVE_CONSTRAINT_COMMAND,
+  schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+  parse(payload: unknown, limits: DocumentLimits): RemoveConstraintPayload {
+    void limits;
+    const parsed = parseConstraintPayload(payload);
+    if (parsed.componentId === undefined) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_FIELD_TYPE",
+        message: "node.removeConstraint requires nodeId and componentId",
+        path: ["payload"],
+      });
+    }
+    return { nodeId: parsed.nodeId, componentId: parsed.componentId };
+  },
+  validate(
+    payload: RemoveConstraintPayload,
+    context: CommandValidationContext,
+  ): void {
+    if (context.document.nodes[payload.nodeId] === undefined) {
+      throw missingNode(payload.nodeId);
+    }
+  },
+  execute(
+    payload: RemoveConstraintPayload,
+    context: CommandExecutionContext,
+  ): CommandExecution {
+    const document = context.stageDocument();
+    const node = mutableNode(document, payload.nodeId);
+    const componentsBefore = node.components;
+    const entry = findConstraint(node, payload.componentId);
+    if (entry === undefined) {
+      // Removing an absent constraint is a no-op commit, matching the
+      // removePivot/removeJoint no-op policy: history stays uniform.
+      return {
+        inverse: {
+          type: NODE_REMOVE_CONSTRAINT_COMMAND,
+          schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+          payload: { nodeId: payload.nodeId, componentId: payload.componentId },
+        },
+        changedRecords: false,
+        declaredAffectedResources: nodeResources(payload.nodeId),
+      };
+    }
+    const holder = constraintHolder(node);
+    if (holder === undefined) throw missingConstraint(payload.componentId);
+    const remaining = holder.component.constraints.filter(
+      (constraint) => constraint.componentId !== payload.componentId,
+    );
+    if (remaining.length === 0) {
+      // The last constraint goes away with the component; the exact
+      // inverse restores the whole pre-command component list.
+      node.components = node.components.filter(
+        (component, index) => index !== holder.index,
+      );
+      return {
+        inverse: {
+          type: NODE_SET_COMPONENTS_COMMAND,
+          schemaVersion: NODE_COMMAND_SCHEMA_VERSION,
+          payload: { nodeId: payload.nodeId, components: componentsBefore },
+        },
+        changedRecords: true,
+        declaredAffectedResources: nodeResources(payload.nodeId),
+      };
+    }
+    setConstraintList(node, holder.index, remaining);
+    // Exact inverse: re-insert the descriptor at its old position via
+    // `before` (the constraint that followed it), or append when it was
+    // the last constraint.
+    const restoreBefore = remaining[entry.index]?.componentId ?? null;
+    return {
+      inverse: {
+        type: NODE_ADD_CONSTRAINT_COMMAND,
+        schemaVersion: ARTICULATION_COMMAND_SCHEMA_VERSION,
+        payload: {
+          nodeId: payload.nodeId,
+          componentId: payload.componentId,
+          limits: entry.descriptor.limits,
+          before: restoreBefore,
+        },
+      },
+      changedRecords: true,
+      declaredAffectedResources: nodeResources(payload.nodeId),
+    };
+  },
+};
+
+export function rotationLimitsEqual(
+  a: RotationLimits,
+  b: RotationLimits,
+): boolean {
+  return (
+    a.min[0] === b.min[0] &&
+    a.min[1] === b.min[1] &&
+    a.min[2] === b.min[2] &&
+    a.max[0] === b.max[0] &&
+    a.max[1] === b.max[1] &&
+    a.max[2] === b.max[2]
+  );
+}
+
 /** Registers the per-discriminant articulation component handlers. */
 export function registerArticulationCommands(registry: CommandRegistry): void {
   registry.register(setPivotHandler);
   registry.register(removePivotHandler);
   registry.register(addJointHandler);
   registry.register(removeJointHandler);
+  registry.register(addConstraintHandler);
+  registry.register(setConstraintHandler);
+  registry.register(reorderConstraintHandler);
+  registry.register(removeConstraintHandler);
 }

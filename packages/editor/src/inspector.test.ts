@@ -1,23 +1,32 @@
 import { describe, expect, it } from "vitest";
 import {
+  WorkspaceError,
   commandId,
+  componentId,
   nodeId,
   type CommandId,
   type NodeId,
 } from "@voxel-maker/shared";
 import { eulerXYZToQuaternion, type Transform } from "@voxel-maker/math";
 import {
+  buildAddConstraintCommand,
   buildAddJointCommand,
+  buildRemoveConstraintCommand,
   buildRemoveJointCommand,
   buildRemovePivotCommand,
+  buildReorderConstraintCommand,
   buildSetComponentsCommand,
+  buildSetConstraintCommand,
   buildSetMetadataCommand,
   buildSetPivotCommand,
   buildSetTransformFieldCommands,
+  constraintRuntimeRotationDegrees,
+  formatLimitsDegrees,
   formatMetadata,
   formatNumber,
   formatRotationDegrees,
   formatVec3,
+  parseLimitsDegreesInput,
   parseMetadataInput,
   parseRotationDegreesInput,
   parseScaleInput,
@@ -260,5 +269,183 @@ describe("articulation component command construction (plan S9.3, ticket #26)", 
     for (const command of commands) {
       expect((command.payload as { nodeId: NodeId }).nodeId).toBe(A);
     }
+  });
+});
+
+describe("constraint inspector helpers (plan S9.4/S9.5, ticket #27)", () => {
+  it("parses six degree values into canonical radian limits", () => {
+    const limits = parseLimitsDegreesInput(
+      "-45, -10, -180, 45, 10, 180",
+      "constraint",
+    );
+    expect(limits.min[0]).toBeCloseTo(-Math.PI / 4, 12);
+    expect(limits.min[1]).toBeCloseTo(-Math.PI / 18, 12);
+    expect(limits.min[2]).toBeCloseTo(-Math.PI, 12);
+    expect(limits.max[0]).toBeCloseTo(Math.PI / 4, 12);
+    expect(limits.max[1]).toBeCloseTo(Math.PI / 18, 12);
+    expect(limits.max[2]).toBeCloseTo(Math.PI, 12);
+  });
+
+  it("accepts whitespace separated degree values", () => {
+    const limits = parseLimitsDegreesInput(
+      "-90 -90 -90 90 90 90",
+      "constraint",
+    );
+    expect(limits.min).toEqual([-Math.PI / 2, -Math.PI / 2, -Math.PI / 2]);
+    expect(limits.max).toEqual([Math.PI / 2, Math.PI / 2, Math.PI / 2]);
+  });
+
+  it("rejects wrong value counts and non-finite input", () => {
+    expect(() =>
+      parseLimitsDegreesInput("-1, -1, -1, 1, 1", "constraint"),
+    ).toThrow(/six numbers/u);
+    expect(() =>
+      parseLimitsDegreesInput("-1, -1, -1, 1, 1, nope", "constraint"),
+    ).toThrow(/Expected a finite number/u);
+  });
+
+  it("rejects min greater than max per axis with the axis in the message", () => {
+    let error: unknown;
+    try {
+      parseLimitsDegreesInput("-1, -1, -1, -2, 1, 1", "constraint");
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(WorkspaceError);
+    if (error instanceof WorkspaceError) {
+      expect(error.code).toBe("INVALID_INSPECTOR_INPUT");
+      expect(error.message).toContain("axis 0");
+    }
+  });
+
+  it("formats radian limits as six degree values", () => {
+    const limits = {
+      min: [-Math.PI / 2, 0, -Math.PI] as [number, number, number],
+      max: [Math.PI / 2, 0, Math.PI] as [number, number, number],
+    };
+    expect(formatLimitsDegrees(limits)).toBe("-90, 0, -180, 90, 0, 180");
+  });
+
+  it("round-trips through parse and format", () => {
+    const limits = parseLimitsDegreesInput(
+      "0, 5, 10, 20, 25, 30",
+      "constraint",
+    );
+    const formatted = formatLimitsDegrees(limits);
+    const reparsed = parseLimitsDegreesInput(formatted, "constraint");
+    expect(reparsed).toEqual(limits);
+  });
+
+  it("builds the four constraint lifecycle commands", () => {
+    const idA = componentId("component:inspector:a");
+    const idB = componentId("component:inspector:b");
+    const limits = {
+      min: [-1, -1, -1] as [number, number, number],
+      max: [1, 1, 1] as [number, number, number],
+    };
+    expect(
+      buildAddConstraintCommand(
+        commandId("command:inspector:add-constraint"),
+        A,
+        idA,
+        limits,
+      ).type,
+    ).toBe("node.addConstraint");
+    expect(
+      buildAddConstraintCommand(
+        commandId("command:inspector:add-constraint-before"),
+        A,
+        idB,
+        limits,
+        idA,
+      ).payload,
+    ).toEqual({ nodeId: A, componentId: idB, limits, before: idA });
+    expect(
+      buildSetConstraintCommand(
+        commandId("command:inspector:set-constraint"),
+        A,
+        idA,
+        limits,
+      ).payload,
+    ).toEqual({ nodeId: A, componentId: idA, limits });
+    expect(
+      buildReorderConstraintCommand(
+        commandId("command:inspector:reorder-constraint"),
+        A,
+        idA,
+        null,
+      ).payload,
+    ).toEqual({ nodeId: A, componentId: idA, before: null });
+    expect(
+      buildRemoveConstraintCommand(
+        commandId("command:inspector:remove-constraint"),
+        A,
+        idA,
+      ).payload,
+    ).toEqual({ nodeId: A, componentId: idA });
+  });
+
+  it("reports the constrained runtime rotation of a node", () => {
+    const document = {
+      documentId: "document:inspector:constraint",
+      documentSchemaVersion: 1,
+      revision: 0,
+      metadata: {},
+      rootNodeId: A,
+      nodes: {
+        [A as never]: {
+          nodeId: A,
+          name: "Constrained",
+          parentId: null,
+          children: [],
+          transform: {
+            translation: [0, 0, 0],
+            pivot: [0, 0, 0],
+            rotation: eulerXYZToQuaternion([(60 * Math.PI) / 180, 0, 0]),
+            scale: [1, 1, 1],
+          },
+          components: [
+            {
+              kind: "constraint",
+              schemaVersion: 1,
+              constraints: [
+                {
+                  componentId: componentId("component:inspector:limit"),
+                  type: "rotation-limits",
+                  limits: {
+                    min: [(-30 * Math.PI) / 180, 0, 0],
+                    max: [(30 * Math.PI) / 180, 0, 0],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      materials: {},
+      volumes: {},
+      animations: {},
+    };
+    const degrees = constraintRuntimeRotationDegrees(document as never, A);
+    expect(degrees?.[0]).toBeCloseTo(30, 8);
+    expect(degrees?.[1]).toBeCloseTo(0, 8);
+    expect(degrees?.[2]).toBeCloseTo(0, 8);
+  });
+
+  it("returns undefined for a missing node", () => {
+    const document = {
+      documentId: "document:inspector:constraint",
+      documentSchemaVersion: 1,
+      revision: 0,
+      metadata: {},
+      rootNodeId: A,
+      nodes: {},
+      materials: {},
+      volumes: {},
+      animations: {},
+    };
+    expect(
+      constraintRuntimeRotationDegrees(document as never, A),
+    ).toBeUndefined();
   });
 });

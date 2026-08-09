@@ -1,8 +1,10 @@
 import {
+  componentId,
   documentId,
   materialId,
   nodeId,
   volumeId,
+  type ComponentId,
   type NodeId,
   type VolumeId,
 } from "@voxel-maker/shared";
@@ -37,6 +39,26 @@ const pivot = (value: readonly [number, number, number]): Component => ({
 });
 
 const joint: Component = { kind: "joint", schemaVersion: 1 };
+
+/** A rotation-limits constraint component with one descriptor. */
+const constraint = (
+  id: ComponentId,
+  min: readonly [number, number, number],
+  max: readonly [number, number, number],
+): Component => ({
+  kind: "constraint",
+  schemaVersion: 1,
+  constraints: [
+    {
+      componentId: id,
+      type: "rotation-limits",
+      limits: { min: [...min], max: [...max] },
+    },
+  ],
+});
+
+/** Full-revolution range used for axes a fixture leaves unrestricted. */
+const FREE = [-Math.PI, Math.PI] as const;
 
 const voxel = (id: VolumeId): Component => ({
   kind: "voxel",
@@ -176,6 +198,11 @@ export function createChestLidFixture(): VoxelDocument {
           voxel(volumeId("volume:rig:chest-lid:lid")),
           pivot([0, 0, -3]),
           joint,
+          constraint(
+            componentId("component:rig:chest-lid:hinge"),
+            [FREE[0], FREE[0], -Math.PI / 6],
+            [FREE[1], FREE[1], Math.PI / 12],
+          ),
         ],
         volume: {
           volumeId: volumeId("volume:rig:chest-lid:lid"),
@@ -255,6 +282,11 @@ export function createLinkedArmFixture(): VoxelDocument {
           voxel(volumeId("volume:rig:arm:link1")),
           pivot([0, 0, 0]),
           joint,
+          constraint(
+            componentId("component:rig:arm:shoulder"),
+            [-Math.PI / 3, -Math.PI / 6, FREE[0]],
+            [Math.PI / 3, Math.PI / 6, FREE[1]],
+          ),
         ],
         volume: {
           volumeId: volumeId("volume:rig:arm:link1"),
@@ -273,6 +305,11 @@ export function createLinkedArmFixture(): VoxelDocument {
           voxel(volumeId("volume:rig:arm:link2")),
           pivot([0, 0, 0]),
           joint,
+          constraint(
+            componentId("component:rig:arm:elbow"),
+            [FREE[0], FREE[0], -Math.PI / 2],
+            [FREE[1], FREE[1], Math.PI / 4],
+          ),
         ],
         volume: {
           volumeId: volumeId("volume:rig:arm:link2"),
@@ -291,6 +328,11 @@ export function createLinkedArmFixture(): VoxelDocument {
           voxel(volumeId("volume:rig:arm:link3")),
           pivot([0, 0, 0]),
           joint,
+          constraint(
+            componentId("component:rig:arm:wrist"),
+            [FREE[0], FREE[0], -Math.PI / 4],
+            [FREE[1], FREE[1], Math.PI / 4],
+          ),
         ],
         volume: {
           volumeId: volumeId("volume:rig:arm:link3"),
@@ -338,6 +380,11 @@ export function createWingsFixture(): VoxelDocument {
           voxel(volumeId("volume:rig:wings:right")),
           pivot([0, 0, 0]),
           joint,
+          constraint(
+            componentId("component:rig:wings:right-flap"),
+            [FREE[0], FREE[0], -Math.PI / 4],
+            [FREE[1], FREE[1], Math.PI / 6],
+          ),
         ],
         volume: {
           volumeId: volumeId("volume:rig:wings:right"),

@@ -1,17 +1,25 @@
 import { useState } from "react";
-import { volumeId } from "@voxel-maker/shared";
+import { volumeId, type ComponentId } from "@voxel-maker/shared";
+import { rotationLimitsEqual } from "@voxel-maker/commands";
 import type { DocumentSession } from "@voxel-maker/session";
 import {
+  buildAddConstraintCommand,
   buildAddJointCommand,
+  buildRemoveConstraintCommand,
   buildRemoveJointCommand,
   buildRemovePivotCommand,
+  buildReorderConstraintCommand,
   buildSetComponentsCommand,
+  buildSetConstraintCommand,
   buildSetMetadataCommand,
   buildSetPivotCommand,
   buildSetTransformFieldCommands,
+  constraintRuntimeRotationDegrees,
   formatMetadata,
+  formatNumber,
   formatRotationDegrees,
   formatVec3,
+  parseLimitsDegreesInput,
   parseRotationDegreesInput,
   parseScaleInput,
   parseVec3Input,
@@ -20,8 +28,15 @@ import {
   type EditorStore,
   type TransformField,
 } from "@voxel-maker/editor";
-import type { Quat, Transform } from "@voxel-maker/math";
-import type { Component, SceneNode, VoxelDocument } from "@voxel-maker/model";
+import type { Quat, Transform, Vec3 } from "@voxel-maker/math";
+import type {
+  Component,
+  ConstraintComponent,
+  ConstraintDescriptor,
+  RotationLimits,
+  SceneNode,
+  VoxelDocument,
+} from "@voxel-maker/model";
 import {
   createPanelIds,
   executeTransaction,
@@ -377,6 +392,17 @@ export function InspectorPanel({
         </button>
       </div>
 
+      {single !== undefined ? (
+        <ConstraintEditor
+          key={`constraints:${single.nodeId}:${String(document.revision)}`}
+          node={single}
+          document={document.document}
+          ids={panelIds}
+          session={session}
+          editor={editor}
+        />
+      ) : null}
+
       <h3>Metadata</h3>
       <MetadataEditor
         key={`${nodes.map((node) => node.nodeId).join(",")}:${String(
@@ -663,4 +689,267 @@ function MetadataEditor({
       }}
     />
   );
+}
+
+/** Default limits for a newly added constraint: +-90 degrees per axis. */
+const DEFAULT_CONSTRAINT_LIMITS: RotationLimits = {
+  min: [-Math.PI / 2, -Math.PI / 2, -Math.PI / 2],
+  max: [Math.PI / 2, Math.PI / 2, Math.PI / 2],
+};
+
+/**
+ * Constraint editor (plan S9.7, ticket #27): ordered local Euler
+ * rotation limits of the single selected node with per-axis degree
+ * editing, removal, and up/down reordering, plus the constrained runtime
+ * rotation the viewport renders. Shown for every single-node selection
+ * so the first constraint can be added from the UI; every edit is one
+ * labeled transaction through the session bus and validation feedback
+ * surfaces as notices.
+ */
+function ConstraintEditor({
+  node,
+  document,
+  ids,
+  session,
+  editor,
+}: {
+  readonly node: SceneNode;
+  readonly document: VoxelDocument;
+  readonly ids: PanelIds;
+  readonly session: DocumentSession;
+  readonly editor: EditorStore;
+}): React.JSX.Element {
+  const holder = node.components.find(
+    (component): component is ConstraintComponent =>
+      component.kind === "constraint",
+  );
+  const runtime = constraintRuntimeRotationDegrees(document, node.nodeId);
+  const add = (): void => {
+    const command = buildAddConstraintCommand(
+      ids.nextCommandId(),
+      node.nodeId,
+      ids.nextComponentId(),
+      DEFAULT_CONSTRAINT_LIMITS,
+      null,
+    );
+    const result = executeTransaction(
+      session,
+      ids,
+      [command],
+      "Add constraint",
+    );
+    if (!result.ok) editor.pushNotice("error", result.message);
+  };
+  return (
+    <section className="constraint-editor" aria-label="Rotation constraints">
+      <h3>Constraints</h3>
+      <p className="panel-empty">
+        Local Euler XYZ rotation limits in degrees, applied in order (top first)
+        after the authored rotation; the document never changes.
+      </p>
+      {holder === undefined || holder.constraints.length === 0 ? (
+        <p className="panel-empty">No constraints yet.</p>
+      ) : (
+        <ul className="component-list">
+          {holder.constraints.map((constraint, index) => (
+            <ConstraintRow
+              key={String(constraint.componentId)}
+              node={node}
+              holder={holder}
+              constraint={constraint}
+              index={index}
+              ids={ids}
+              session={session}
+              editor={editor}
+            />
+          ))}
+        </ul>
+      )}
+      <div className="component-add">
+        <button type="button" onClick={add}>
+          ＋ Constraint
+        </button>
+      </div>
+      {runtime !== undefined ? (
+        <p className="constraint-runtime">
+          Runtime rotation: {formatVec3(roundDegrees(runtime))}° (authored:{" "}
+          {formatRotationDegrees(node.transform.rotation)}°)
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** The six editable degree values of one constraint, ordered minX..maxZ. */
+const CONSTRAINT_FIELDS = [
+  { label: "min X", index: 0 },
+  { label: "max X", index: 3 },
+  { label: "min Y", index: 1 },
+  { label: "max Y", index: 4 },
+  { label: "min Z", index: 2 },
+  { label: "max Z", index: 5 },
+] as const;
+
+function limitsToText(limits: RotationLimits): readonly string[] {
+  const toDegrees = (value: number): string =>
+    formatNumber((value * 180) / Math.PI);
+  return [
+    toDegrees(limits.min[0]),
+    toDegrees(limits.min[1]),
+    toDegrees(limits.min[2]),
+    toDegrees(limits.max[0]),
+    toDegrees(limits.max[1]),
+    toDegrees(limits.max[2]),
+  ];
+}
+
+function ConstraintRow({
+  node,
+  holder,
+  constraint,
+  index,
+  ids,
+  session,
+  editor,
+}: {
+  readonly node: SceneNode;
+  readonly holder: ConstraintComponent;
+  readonly constraint: ConstraintDescriptor;
+  readonly index: number;
+  readonly ids: PanelIds;
+  readonly session: DocumentSession;
+  readonly editor: EditorStore;
+}): React.JSX.Element {
+  const [values, setValues] = useState<readonly string[]>(() =>
+    limitsToText(constraint.limits),
+  );
+  const commit = (): void => {
+    try {
+      const limits = parseLimitsDegreesInput(values.join(", "), "constraint");
+      if (rotationLimitsEqual(limits, constraint.limits)) return;
+      const command = buildSetConstraintCommand(
+        ids.nextCommandId(),
+        node.nodeId,
+        constraint.componentId,
+        limits,
+      );
+      const result = executeTransaction(
+        session,
+        ids,
+        [command],
+        "Edit constraint",
+      );
+      if (!result.ok) editor.pushNotice("error", result.message);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid constraint limits";
+      editor.pushNotice("error", message);
+    }
+  };
+  const reset = (): void => {
+    setValues(limitsToText(constraint.limits));
+  };
+  const reorder = (before: ComponentId | null): void => {
+    const command = buildReorderConstraintCommand(
+      ids.nextCommandId(),
+      node.nodeId,
+      constraint.componentId,
+      before,
+    );
+    const result = executeTransaction(
+      session,
+      ids,
+      [command],
+      "Reorder constraint",
+    );
+    if (!result.ok) editor.pushNotice("error", result.message);
+  };
+  const remove = (): void => {
+    const command = buildRemoveConstraintCommand(
+      ids.nextCommandId(),
+      node.nodeId,
+      constraint.componentId,
+    );
+    const result = executeTransaction(
+      session,
+      ids,
+      [command],
+      "Remove constraint",
+    );
+    if (!result.ok) editor.pushNotice("error", result.message);
+  };
+  const previous = holder.constraints[index - 1];
+  const next = holder.constraints[index + 1];
+  return (
+    <li className="component-row constraint-row">
+      <span className="component-kind">limits</span>
+      <div className="constraint-limits">
+        {CONSTRAINT_FIELDS.map(({ label, index: fieldIndex }) => (
+          <label key={label}>
+            <span>{label}</span>
+            <input
+              value={values[fieldIndex] ?? ""}
+              aria-label={`${label} (degrees)`}
+              onChange={(event) => {
+                const nextValues = [...values];
+                nextValues[fieldIndex] = event.target.value;
+                setValues(nextValues);
+              }}
+              onBlur={() => {
+                if (
+                  values.join(",") !== limitsToText(constraint.limits).join(",")
+                )
+                  commit();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  commit();
+                  (event.target as HTMLInputElement).blur();
+                }
+                if (event.key === "Escape") {
+                  reset();
+                  (event.target as HTMLInputElement).blur();
+                }
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      <button
+        type="button"
+        title="Move constraint up (earlier in order)"
+        disabled={index === 0}
+        onClick={() => {
+          reorder(previous?.componentId ?? null);
+        }}
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        title="Move constraint down (later in order)"
+        disabled={index === holder.constraints.length - 1}
+        onClick={() => {
+          // Moving down one slot means inserting before the constraint
+          // two slots ahead (or appending at the end for the last slot).
+          reorder(
+            next === undefined
+              ? null
+              : (holder.constraints[index + 2]?.componentId ?? null),
+          );
+        }}
+      >
+        ↓
+      </button>
+      <button type="button" title="Remove constraint" onClick={remove}>
+        ✕
+      </button>
+    </li>
+  );
+}
+
+/** Rounds degree display values like the inspector's other fields. */
+function roundDegrees(value: Vec3): Vec3 {
+  const round = (number: number): number => Math.round(number * 1e4) / 1e4;
+  return [round(value[0]), round(value[1]), round(value[2])];
 }

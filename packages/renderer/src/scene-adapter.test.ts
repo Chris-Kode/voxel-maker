@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import * as THREE from "three";
 import {
+  componentId,
   documentId,
   materialId,
   nodeId,
@@ -247,6 +248,58 @@ describe("scene adapter", () => {
     expect(childGroup.matrix.elements[13]).toBe(0);
     expect(childGroup.matrix.elements[14]).toBe(0);
     adapter.dispose();
+  });
+
+  it("projects the constrained local rotation (plan S9.6, ticket #27)", () => {
+    const harness = createHarness();
+    harness.commit({
+      mutateDocument: (document) => {
+        const child = document.nodes[CHILD];
+        if (child === undefined) return;
+        (child as { transform: Transform }).transform = {
+          ...child.transform,
+          rotation: [
+            Math.sin((60 * Math.PI) / 360),
+            0,
+            0,
+            Math.cos((60 * Math.PI) / 360),
+          ],
+        };
+        (child as { components: typeof child.components }).components = [
+          { kind: "voxel", schemaVersion: 1, volumeId: VOLUME },
+          {
+            kind: "constraint",
+            schemaVersion: 1,
+            constraints: [
+              {
+                componentId: componentId("component:scene:limit"),
+                type: "rotation-limits",
+                limits: {
+                  min: [(-30 * Math.PI) / 180, 0, 0],
+                  max: [(30 * Math.PI) / 180, 0, 0],
+                },
+              },
+            ],
+          },
+        ];
+      },
+      changedNodeIds: [CHILD],
+    });
+    const childGroup = harness.adapter.objectForNode(CHILD);
+    if (childGroup === undefined) throw new Error("missing group");
+    // The authored 60 deg rotation clamps to 30 deg: the group matrix
+    // shows cos(30)/sin(30), not cos(60)/sin(60) (column-major storage:
+    // row 1 col 1 at elements[5], row 2 col 1 at elements[9]).
+    expect(childGroup.matrix.elements[5]).toBeCloseTo(Math.cos(Math.PI / 6), 6);
+    expect(childGroup.matrix.elements[6]).toBeCloseTo(Math.sin(Math.PI / 6), 6);
+    expect(childGroup.matrix.elements[9]).toBeCloseTo(
+      -Math.sin(Math.PI / 6),
+      6,
+    );
+    // The base document is untouched.
+    const child = harness.store.getDocument().nodes[CHILD];
+    expect(child?.transform.rotation[0]).toBeCloseTo(Math.sin(Math.PI / 6), 10);
+    harness.adapter.dispose();
   });
 
   it("keeps the old geometry visible until the replacement mesh lands", () => {

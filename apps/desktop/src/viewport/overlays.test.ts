@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { documentId, materialId, nodeId, volumeId } from "@voxel-maker/shared";
+import {
+  componentId,
+  documentId,
+  materialId,
+  nodeId,
+  volumeId,
+} from "@voxel-maker/shared";
 import { createDocument } from "@voxel-maker/model";
 import {
   createDocumentStore,
@@ -258,6 +264,7 @@ describe("overlay manager", () => {
       bounds: true,
       pivots: true,
       joints: true,
+      constraints: true,
     });
     expect(overlays.toggle("grid")).toBe(false);
     expect(
@@ -299,6 +306,106 @@ describe("overlay manager", () => {
     overlays.dispose();
   });
 
+  it("shows per-axis constraint arcs for selected constrained nodes", () => {
+    const scene = new THREE.Scene();
+    const overlays = createOverlayManager(scene);
+    const store = buildStore([
+      {
+        kind: "constraint",
+        schemaVersion: 1,
+        constraints: [
+          {
+            componentId: componentId("component:overlay:limit"),
+            type: "rotation-limits",
+            limits: {
+              min: [-0.5, 0, -Math.PI],
+              max: [0.5, 0, Math.PI],
+            },
+          },
+        ],
+      },
+    ]);
+    overlays.update(store, [{ kind: "node", nodeId: BOX }]);
+    // One descriptor x three axes = three arcs, plus three world axis
+    // lines and three pivot marker lines: nine plain lines total.
+    const lines = objectsOfType(scene, THREE.Line).filter(
+      (object) => !(object instanceof THREE.LineSegments),
+    );
+    expect(lines).toHaveLength(9);
+    // Find the X arc by its first vertex: it sweeps the YZ plane around
+    // the world pivot (2, 0, 0) starting at min = -0.5, so its first
+    // point sits at (2, cos(-0.5), sin(-0.5)) * radius.
+    const arc = lines.find((line) => {
+      const position = (line as THREE.Line).geometry.getAttribute("position");
+      return (
+        Math.abs(position.getY(0) - Math.cos(-0.5) * 0.45) < 1e-6 &&
+        Math.abs(position.getZ(0) - Math.sin(-0.5) * 0.45) < 1e-6
+      );
+    });
+    expect(arc).toBeDefined();
+    if (arc !== undefined) {
+      const position = (arc as THREE.Line).geometry.getAttribute("position");
+      expect(position.getX(0)).toBeCloseTo(2, 6); // world pivot x
+      // The arc ends at max = 0.5.
+      const last = position.count - 1;
+      expect(position.getY(last)).toBeCloseTo(Math.cos(0.5) * 0.45, 6);
+      expect(position.getZ(last)).toBeCloseTo(Math.sin(0.5) * 0.45, 6);
+    }
+    // Deselecting removes every arc (and the pivot markers).
+    overlays.update(store, []);
+    expect(
+      objectsOfType(scene, THREE.Line).filter(
+        (object) => !(object instanceof THREE.LineSegments),
+      ),
+    ).toHaveLength(3);
+    overlays.dispose();
+  });
+
+  it("does not show constraint arcs without a constraint component", () => {
+    const scene = new THREE.Scene();
+    const overlays = createOverlayManager(scene);
+    const store = buildStore();
+    overlays.update(store, [{ kind: "node", nodeId: BOX }]);
+    // Three world axes + three pivot markers, no arcs.
+    expect(
+      objectsOfType(scene, THREE.Line).filter(
+        (object) => !(object instanceof THREE.LineSegments),
+      ),
+    ).toHaveLength(6);
+    overlays.dispose();
+  });
+
+  it("toggles constraint arcs off with the constraints key", () => {
+    const scene = new THREE.Scene();
+    const overlays = createOverlayManager(scene);
+    const store = buildStore([
+      {
+        kind: "constraint",
+        schemaVersion: 1,
+        constraints: [
+          {
+            componentId: componentId("component:overlay:limit"),
+            type: "rotation-limits",
+            limits: { min: [-1, -1, -1], max: [1, 1, 1] },
+          },
+        ],
+      },
+    ]);
+    overlays.update(store, [{ kind: "node", nodeId: BOX }]);
+    const lines = objectsOfType(scene, THREE.Line).filter(
+      (object) => !(object instanceof THREE.LineSegments),
+    );
+    expect(lines).toHaveLength(9);
+    overlays.setVisible("constraints", false);
+    // Only the three arcs hide (their group is hidden); axes and pivot
+    // markers remain effectively visible.
+    const effectivelyVisible = lines.filter((line) =>
+      effectivelyVisibleInScene(line),
+    );
+    expect(effectivelyVisible).toHaveLength(6);
+    overlays.dispose();
+  });
+
   it("does not mutate the store when updating overlays", () => {
     const scene = new THREE.Scene();
     const overlays = createOverlayManager(scene);
@@ -311,3 +418,13 @@ describe("overlay manager", () => {
     overlays.dispose();
   });
 });
+
+/** True when an object and every ancestor is visible (render policy). */
+function effectivelyVisibleInScene(object: THREE.Object3D): boolean {
+  let current: THREE.Object3D | null = object;
+  while (current !== null) {
+    if (!current.visible) return false;
+    current = current.parent;
+  }
+  return true;
+}

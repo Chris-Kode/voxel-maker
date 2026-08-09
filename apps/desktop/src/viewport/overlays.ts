@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { applyMatrix, type Vec3 } from "@voxel-maker/math";
+import { applyMatrix, type Mat4, type Vec3 } from "@voxel-maker/math";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import type { SceneNode } from "@voxel-maker/model";
 import {
@@ -35,9 +35,22 @@ import {
  *   pivot of each selected node carrying a joint annotation, always drawn
  *   on top. A joint annotates a node in the single transform hierarchy; it
  *   never introduces a skeleton graph.
+ * - Constraints (plan S9.7, ticket #27): per-axis rotation-limit arcs at
+ *   the world-space pivot of each selected node carrying constraints,
+ *   drawn in the axis colors (+X red / +Y green / +Z blue). Each arc
+ *   sweeps the allowed local Euler range in the node's runtime frame; an
+ *   axis whose limit spans a full revolution draws a full ring. Arcs are
+ *   projected through the constrained world matrices, so they follow the
+ *   same runtime result the viewport renders.
  */
 
-export type OverlayKey = "grid" | "axes" | "bounds" | "pivots" | "joints";
+export type OverlayKey =
+  | "grid"
+  | "axes"
+  | "bounds"
+  | "pivots"
+  | "joints"
+  | "constraints";
 
 export type OverlayVisibility = Readonly<Record<OverlayKey, boolean>>;
 
@@ -48,6 +61,7 @@ export const DEFAULT_OVERLAY_VISIBILITY: OverlayVisibility = {
   bounds: true,
   pivots: true,
   joints: true,
+  constraints: true,
 };
 
 const GRID_SIZE = 100;
@@ -55,6 +69,9 @@ const GRID_DIVISIONS = 100;
 const AXIS_LENGTH = 10;
 const PIVOT_MARKER_LENGTH = 0.5;
 const JOINT_MARKER_RADIUS = 0.35;
+const CONSTRAINT_MARKER_RADIUS = 0.45;
+/** Arc segments per full revolution; limited arcs scale proportionally. */
+const CONSTRAINT_ARC_SEGMENTS = 48;
 
 const AXIS_COLORS: readonly [number, number, number] = [
   0xff3b30, 0x34c759, 0x007aff,
@@ -97,6 +114,7 @@ class OverlayManagerImpl implements OverlayManager {
   readonly #boundsGroup: THREE.Group;
   readonly #pivotsGroup: THREE.Group;
   readonly #jointsGroup: THREE.Group;
+  readonly #constraintsGroup: THREE.Group;
   #contentBox: BoxProjection | undefined;
   #selectionBox: BoxProjection | undefined;
   #regionDraftBox: BoxProjection | undefined;
@@ -142,6 +160,8 @@ class OverlayManagerImpl implements OverlayManager {
     scene.add(this.#pivotsGroup);
     this.#jointsGroup = new THREE.Group();
     scene.add(this.#jointsGroup);
+    this.#constraintsGroup = new THREE.Group();
+    scene.add(this.#constraintsGroup);
     this.applyVisibility();
   }
 
@@ -169,6 +189,7 @@ class OverlayManagerImpl implements OverlayManager {
     this.#rebuildBounds(store, selection, regionDraft, transformPreview);
     this.#rebuildPivots(store, selection);
     this.#rebuildJoints(store, selection);
+    this.#rebuildConstraints(store, selection);
   }
 
   dispose(): void {
@@ -177,6 +198,7 @@ class OverlayManagerImpl implements OverlayManager {
     this.#disposeGroup(this.#boundsGroup);
     this.#disposeGroup(this.#pivotsGroup);
     this.#disposeGroup(this.#jointsGroup);
+    this.#disposeGroup(this.#constraintsGroup);
   }
 
   applyVisibility(): void {
@@ -192,6 +214,9 @@ class OverlayManagerImpl implements OverlayManager {
       this.#visibility.pivots && this.#pivotsGroup.children.length > 0;
     this.#jointsGroup.visible =
       this.#visibility.joints && this.#jointsGroup.children.length > 0;
+    this.#constraintsGroup.visible =
+      this.#visibility.constraints &&
+      this.#constraintsGroup.children.length > 0;
   }
 
   #createBox(
@@ -442,6 +467,101 @@ class OverlayManagerImpl implements OverlayManager {
     return ring;
   }
 
+  /**
+   * Rebuilds the constraint arcs: for every selected node carrying a
+   * constraint component, one arc per descriptor per axis sweeping the
+   * allowed local Euler range (plan S9.7, ticket #27). Arcs are drawn in
+   * the axis colors at the world-space transform pivot, projected through
+   * the constrained world matrices (the same runtime result the scene
+   * renders), and rebuilt/disposed wholesale like every other overlay.
+   */
+  #rebuildConstraints(
+    store: DocumentStoreRead | undefined,
+    selection: readonly SelectionEntry[],
+  ): void {
+    for (const child of [...this.#constraintsGroup.children]) {
+      this.#constraintsGroup.remove(child);
+      child.traverse(disposeGeometry);
+      child.traverse(disposeMaterials);
+    }
+    const nodeIds = selection
+      .filter((entry) => entry.kind === "node")
+      .map((entry) => entry.nodeId);
+    if (store === undefined || nodeIds.length === 0) {
+      this.applyVisibility();
+      return;
+    }
+    const matrices = nodeWorldMatrices(store);
+    const document = store.getDocument();
+    for (const nodeId of nodeIds) {
+      const node = document.nodes[nodeId];
+      const world = matrices.get(nodeId);
+      if (node === undefined || world === undefined) continue;
+      for (const component of node.components) {
+        if (component.kind !== "constraint") continue;
+        for (const constraint of component.constraints) {
+          // Version 1 constraints are always local rotation limits
+          // (ADR-0006); future kinds extend this overlay deliberately.
+          for (const axis of [0, 1, 2] as const) {
+            this.#constraintsGroup.add(
+              this.#createConstraintArc(
+                world,
+                node.transform.pivot,
+                axis,
+                constraint.limits.min[axis],
+                constraint.limits.max[axis],
+              ),
+            );
+          }
+        }
+      }
+    }
+    this.applyVisibility();
+  }
+
+  /**
+   * One per-axis rotation-limit arc: a polyline in the node's local frame
+   * around its pivot (X rotation sweeps the YZ plane, Y sweeps ZX, Z
+   * sweeps XY), transformed into world space by the constrained world
+   * matrix. A limit spanning a full revolution draws a complete ring.
+   */
+  #createConstraintArc(
+    world: Mat4,
+    pivot: Vec3,
+    axis: 0 | 1 | 2,
+    minAngle: number,
+    maxAngle: number,
+  ): THREE.Line {
+    const span = maxAngle - minAngle;
+    const fullCircle = span >= 2 * Math.PI;
+    const segments = fullCircle
+      ? CONSTRAINT_ARC_SEGMENTS
+      : Math.max(
+          4,
+          Math.ceil((span / (2 * Math.PI)) * CONSTRAINT_ARC_SEGMENTS),
+        );
+    const points: THREE.Vector3[] = [];
+    for (let index = 0; index <= segments; index += 1) {
+      const angle = fullCircle
+        ? (index / segments) * 2 * Math.PI
+        : minAngle + (index / segments) * span;
+      const local = constraintArcPoint(pivot, axis, angle);
+      const point = applyMatrix(world, local);
+      points.push(new THREE.Vector3(point[0], point[1], point[2]));
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({
+      color: AXIS_COLORS[axis],
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const arc = new THREE.Line(geometry, material);
+    arc.renderOrder = 3;
+    return arc;
+  }
+
   #createPivotMarker(pivot: Vec3): THREE.Group {
     const group = new THREE.Group();
     group.position.set(pivot[0], pivot[1], pivot[2]);
@@ -470,6 +590,25 @@ class OverlayManagerImpl implements OverlayManager {
     group.removeFromParent();
     group.traverse(disposeGeometry);
     group.traverse(disposeMaterials);
+  }
+}
+
+/**
+ * One point of a constraint arc in the node's local frame around its
+ * pivot: rotation about X sweeps the YZ plane `(0, cos, sin)`, Y sweeps
+ * the ZX plane `(sin, 0, cos)`, and Z sweeps the XY plane `(cos, sin, 0)`
+ * (right-handed +X right, +Y up, +Z forward).
+ */
+function constraintArcPoint(pivot: Vec3, axis: 0 | 1 | 2, angle: number): Vec3 {
+  const cos = Math.cos(angle) * CONSTRAINT_MARKER_RADIUS;
+  const sin = Math.sin(angle) * CONSTRAINT_MARKER_RADIUS;
+  switch (axis) {
+    case 0:
+      return [pivot[0], pivot[1] + cos, pivot[2] + sin];
+    case 1:
+      return [pivot[0] + sin, pivot[1], pivot[2] + cos];
+    case 2:
+      return [pivot[0] + cos, pivot[1] + sin, pivot[2]];
   }
 }
 

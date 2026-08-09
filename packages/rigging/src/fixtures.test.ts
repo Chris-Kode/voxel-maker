@@ -11,6 +11,7 @@ import {
   evaluateNodeWorldTransforms,
   evaluateWorldTransform,
 } from "./evaluate.js";
+import { evaluateConstrainedNodeWorldTransforms } from "./constraints.js";
 import {
   RIG_FIXTURES,
   createAbstractSculptureFixture,
@@ -53,11 +54,23 @@ describe("generic rig fixtures", () => {
       expect(validateDocument(document)).toEqual([]);
       expect(validateRigAnnotations(document)).toEqual([]);
       // No category-specific core symbols: only nodes, transforms, voxel
-      // components, pivot components, and joint components.
+      // components, pivot components, joint components, and rotation
+      // constraint components (plan S9.9/S9.4, ticket #27).
       for (const node of Object.values(document.nodes)) {
         for (const component of node.components) {
-          expect(["voxel", "pivot", "joint"]).toContain(component.kind);
+          expect(["voxel", "pivot", "joint", "constraint"]).toContain(
+            component.kind,
+          );
         }
+      }
+      // Every authored rotation sits inside its fixture constraints, so
+      // the constrained world pass matches the base pass exactly (the
+      // fixtures demonstrate limits without pre-clamped poses).
+      const baseWorld = evaluateNodeWorldTransforms(document);
+      const constrainedWorld = evaluateConstrainedNodeWorldTransforms(document);
+      expect(constrainedWorld.size).toBe(baseWorld.size);
+      for (const [nodeId, matrix] of baseWorld) {
+        expect(constrainedWorld.get(nodeId)).toEqual(matrix);
       }
       // Every fixture demonstrates at least one joint and one pivot.
       const joints = Object.values(document.nodes).filter((node) =>

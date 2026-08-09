@@ -2,8 +2,6 @@ import type { DocumentStoreRead } from "@voxel-maker/document";
 import {
   applyMatrix,
   invertMatrix,
-  multiplyMatrices,
-  transformToMatrix,
   type IntAabb,
   type Mat4,
   type Vec3,
@@ -11,6 +9,7 @@ import {
 } from "@voxel-maker/math";
 import type { NodeId, VolumeId } from "@voxel-maker/shared";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
+import { evaluateConstrainedNodeWorldTransforms } from "@voxel-maker/rigging";
 import { CHUNK_EDGE } from "./mesher.js";
 
 /**
@@ -136,19 +135,10 @@ const applyLinear = (matrix: Mat4, vector: Vec3): Vec3 => [
 export function nodeWorldMatrices(
   store: DocumentStoreRead,
 ): ReadonlyMap<NodeId, Mat4> {
-  const document = store.getDocument();
-  const matrices = new Map<NodeId, Mat4>();
-  const visit = (nodeId: NodeId, parentWorld: Mat4 | undefined): void => {
-    const node = document.nodes[nodeId];
-    if (node === undefined) return;
-    const local = transformToMatrix(node.transform);
-    const world =
-      parentWorld === undefined ? local : multiplyMatrices(parentWorld, local);
-    matrices.set(nodeId, world);
-    for (const childId of node.children) visit(childId, world);
-  };
-  visit(document.rootNodeId, undefined);
-  return matrices;
+  // Runtime projection: rotation constraints (plan S9.5, ticket #27)
+  // clamp local rotations before hierarchy composition, so rendering,
+  // overlays, bounds, and picking all agree on the constrained world.
+  return evaluateConstrainedNodeWorldTransforms(store.getDocument());
 }
 
 /** Transforms an integer AABB into its world-space AABB. */

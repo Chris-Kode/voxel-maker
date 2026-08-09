@@ -5,6 +5,10 @@ import type {
 } from "@voxel-maker/document";
 import { transformToMatrix } from "@voxel-maker/math";
 import type { SceneNode } from "@voxel-maker/model";
+import {
+  evaluateConstrainedLocalTransform,
+  rotationConstraintsOf,
+} from "@voxel-maker/rigging";
 import { chunkKey } from "@voxel-maker/voxel";
 import type { MaterialId, NodeId, VolumeId } from "@voxel-maker/shared";
 import type { Vec3i } from "@voxel-maker/math";
@@ -554,12 +558,22 @@ class SceneAdapterImpl implements SceneAdapter {
   }
 
   #applyNodeMatrix(group: THREE.Group, node: SceneNode): void {
-    // The canonical local matrix already folds in the pivot (ADR-0001);
+    // The canonical local matrix already folds in the pivot (ADR-0001)
+    // and the constrained local rotation (plan S9.5/S9.6, ticket #27);
     // Three.js recomposition would drift, so matrices are explicit. The
     // math package stores row-major arrays; THREE.Matrix4 is column-major,
     // so `fromArray` yields the transpose and must be flipped back.
     group.matrixAutoUpdate = false;
-    group.matrix.fromArray(transformToMatrix(node.transform)).transpose();
+    group.matrix
+      .fromArray(
+        transformToMatrix(
+          evaluateConstrainedLocalTransform(
+            node.transform,
+            rotationConstraintsOf(node),
+          ),
+        ),
+      )
+      .transpose();
   }
 
   #attachHierarchy(): void {

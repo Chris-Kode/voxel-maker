@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyMatrix,
   multiplyMatrices,
+  quaternionToEulerXYZ,
   transformToMatrix,
   type Mat4,
   type Transform,
@@ -157,5 +158,68 @@ describe("evaluateAnimationRuntime", () => {
       0.5,
     );
     expect(locals.size).toBe(Object.keys(document.nodes).length);
+  });
+});
+
+/** Constrained copy of the wheel fixture: Y limited to +-30 degrees. */
+function constrainedWheelDocument(): VoxelDocument {
+  const document = createAnimatedWheelDocument();
+  // createDocument freezes its records; clone through JSON like the
+  // renderer adapter tests so the mutation below is possible.
+  const clone = JSON.parse(JSON.stringify(document)) as VoxelDocument;
+  const wheel = clone.nodes[WHEEL];
+  if (wheel === undefined) throw new Error("missing wheel");
+  (wheel as { components: typeof wheel.components }).components = [
+    ...wheel.components,
+    {
+      kind: "constraint",
+      schemaVersion: 1,
+      constraints: [
+        {
+          componentId: "component:runtime:wheel-limit" as never,
+          type: "rotation-limits",
+          limits: {
+            min: [-Math.PI, (-30 * Math.PI) / 180, -Math.PI],
+            max: [Math.PI, (30 * Math.PI) / 180, Math.PI],
+          },
+        },
+      ],
+    },
+  ];
+  return clone;
+}
+
+describe("constraint layer (plan S9.5, ticket #27)", () => {
+  it("clamps the animated rotation before the world pass", () => {
+    const document = constrainedWheelDocument();
+    const clip = createWheelSpinClip();
+    // t = 0.5 of the 1s spin clip: 90 deg about Y, clamped to 30 deg.
+    const runtime = evaluateAnimationRuntime(document, clip, 0.5);
+    // The animated local rotation is the un-clamped override (45 deg
+    // about Y at the linear midpoint)...
+    const localRotation = localOf(runtime, WHEEL).rotation;
+    const animatedY = quaternionToEulerXYZ(localRotation)[1];
+    expect(animatedY).toBeCloseTo(Math.PI / 4, 9);
+    // ...but the world pass sees the clamped rotation: the wheel's Y
+    // rotation in the world matrix sits at the +-30 deg limit (row
+    // major: Ry[0][0] = cos, Ry[2][0] = -sin).
+    const world = worldOf(runtime, WHEEL);
+    const worldAngle = Math.atan2(-world[8], world[0]);
+    expect(Math.abs(worldAngle)).toBeCloseTo(Math.PI / 6, 6);
+    // The base document is untouched: the constraint is still there and
+    // the authored rotation is identity (voxel + pivot + joint +
+    // constraint).
+    expect(document.nodes[WHEEL]?.components).toHaveLength(4);
+    expect(document.nodes[WHEEL]?.transform.rotation).toEqual([0, 0, 0, 1]);
+  });
+
+  it("applies constraints to base state when no clip is active", () => {
+    const document = constrainedWheelDocument();
+    const runtime = evaluateAnimationRuntime(document, null, 0);
+    // Base rotation is identity, inside the limits: unchanged world.
+    expect(worldOf(runtime, WHEEL)).toEqual(
+      transformToMatrix(nodeTransform(createAnimatedWheelDocument(), WHEEL)),
+    );
+    expect(localOf(runtime, WHEEL).rotation).toEqual([0, 0, 0, 1]);
   });
 });

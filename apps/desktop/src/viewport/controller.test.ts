@@ -271,6 +271,10 @@ describe("viewport controller", () => {
     expect(composition.viewport.overlays.visible.grid).toBe(false);
     composition.viewport.setOverlay("grid", true);
     expect(composition.viewport.overlays.visible.grid).toBe(true);
+    expect(composition.viewport.toggleOverlay("constraints")).toBe(false);
+    expect(composition.viewport.overlays.visible.constraints).toBe(false);
+    composition.viewport.setOverlay("constraints", true);
+    expect(composition.viewport.overlays.visible.constraints).toBe(true);
     composition.dispose();
   });
 

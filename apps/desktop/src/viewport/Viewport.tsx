@@ -301,6 +301,10 @@ export function Viewport({
         case "J":
           controller.toggleOverlay("joints");
           break;
+        case "c":
+        case "C":
+          controller.toggleOverlay("constraints");
+          break;
         case "Escape":
           // Cancel any in-progress gesture (gizmo drag, region drag,
           // stroke, shape, transform drag) first, so a late pointer-up
