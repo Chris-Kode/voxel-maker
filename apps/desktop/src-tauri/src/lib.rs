@@ -309,6 +309,59 @@ fn recent_projects_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, St
         .map_err(|error| error.to_string())
 }
 
+
+/// OS-keychain credential commands (plan S12.4, ADR-0010, ticket #34): the
+/// webview never sees a stored secret except through its own
+/// `credential_get` call; keys are scoped by service + account (the agent
+/// package's `KEYCHAIN_SERVICE` + provider id) and live only in the
+/// operating-system credential store. The Rust side validates the service
+/// and account shape so a wildcard or oversized entry can never be
+/// addressed, and never logs values.
+fn validate_keychain_scope(service: &str, account: &str) -> Result<(), String> {
+    if service.is_empty() || service.len() > 128 || !service.chars().all(|c| c.is_ascii_graphic()) {
+        return Err("credential service is invalid".to_string());
+    }
+    if account.is_empty() || account.len() > 128 || !account.chars().all(|c| c.is_ascii_graphic()) {
+        return Err("credential account is invalid".to_string());
+    }
+    Ok(())
+}
+
+/// Stores one credential in the OS keychain (replaces any existing value).
+#[tauri::command]
+fn credential_save(service: String, account: String, value: String) -> Result<(), String> {
+    validate_keychain_scope(&service, &account)?;
+    if value.is_empty() || value.len() > 16_384 {
+        return Err("credential value is empty or exceeds the size limit".to_string());
+    }
+    let entry = keyring::Entry::new(&service, &account).map_err(|error| error.to_string())?;
+    entry.set_password(&value).map_err(|error| error.to_string())
+}
+
+/// Reads one credential from the OS keychain; `None` when absent.
+#[tauri::command]
+fn credential_get(service: String, account: String) -> Result<Option<String>, String> {
+    validate_keychain_scope(&service, &account)?;
+    let entry = keyring::Entry::new(&service, &account).map_err(|error| error.to_string())?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Removes one credential from the OS keychain; a missing entry is not an error.
+#[tauri::command]
+fn credential_delete(service: String, account: String) -> Result<(), String> {
+    validate_keychain_scope(&service, &account)?;
+    let entry = keyring::Entry::new(&service, &account).map_err(|error| error.to_string())?;
+    match entry.delete_password() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -326,7 +379,10 @@ pub fn run() {
             replace_journal_bytes,
             remove_journal,
             read_recent_projects,
-            write_recent_projects
+            write_recent_projects,
+            credential_save,
+            credential_get,
+            credential_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running the voxel-maker desktop shell");

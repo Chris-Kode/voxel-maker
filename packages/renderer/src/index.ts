@@ -67,6 +67,7 @@ export {
   type RendererDiagnostics,
   type SceneAdapter,
   type SceneAdapterOptions,
+  type ScenePreviewProjection,
 } from "./scene-adapter.js";
 export {
   isChunkMeshStale,

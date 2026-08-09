@@ -11,6 +11,12 @@ import type {
 } from "@voxel-maker/storage";
 import type { FilePicker } from "../composition.js";
 import {
+  KEYCHAIN_SERVICE,
+  Secret,
+  type CredentialReference,
+  type CredentialStore,
+} from "@voxel-maker/agent";
+import {
   parseRecentRecord,
   type RecentProjectEntry,
   type RecentProjectsPort,
@@ -171,5 +177,48 @@ export class TauriFilePicker implements FilePicker {
       filters: [{ name: "PNG image", extensions: ["png"] }],
     });
     return typeof selected === "string" ? selected : undefined;
+  }
+}
+
+/**
+ * OS-keychain credential store (plan S12.4, ADR-0010, ticket #34): maps
+ * the agent package's credential seam to the shell's allowlisted keychain
+ * commands. Secrets travel only between the webview's memory and the
+ * operating-system credential store; they are never written to project
+ * files, journals, localStorage, logs, or diagnostics. The Rust side
+ * validates scope and size before touching the keychain.
+ */
+export class TauriCredentialStore implements CredentialStore {
+  async save(service: string, account: string, value: Secret): Promise<void> {
+    await invoke("credential_save", {
+      service,
+      account,
+      value: value.reveal(),
+    });
+  }
+
+  async get(service: string, account: string): Promise<Secret | undefined> {
+    const raw = await invoke<string | null>("credential_get", {
+      service,
+      account,
+    });
+    return raw === null ? undefined : new Secret(raw);
+  }
+
+  async delete(service: string, account: string): Promise<boolean> {
+    await invoke("credential_delete", { service, account });
+    return true;
+  }
+
+  async list(): Promise<readonly CredentialReference[]> {
+    // The v1 shell addresses credentials by fixed service + provider
+    // account, so the list is derived from the one known account.
+    return [
+      {
+        service: KEYCHAIN_SERVICE,
+        account: "openai",
+        present: (await this.get(KEYCHAIN_SERVICE, "openai")) !== undefined,
+      },
+    ];
   }
 }

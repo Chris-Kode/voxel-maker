@@ -861,7 +861,6 @@ describe("scene adapter", () => {
   });
 });
 
-
 describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
   /** A second store standing in for a preview session overlay: the same
    * document and volume ids, with staged chunk geometry of its own. */
@@ -869,7 +868,9 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
     readonly store: DocumentStore;
     readonly writeCapability: VoxelWriteCapability;
     readonly namespace: `preview:${string}`;
-    commit(set: (volume: VoxelVolume, capability: VoxelWriteCapability) => void): void;
+    commit(
+      set: (volume: VoxelVolume, capability: VoxelWriteCapability) => void,
+    ): void;
   } {
     const document = createDocument({
       documentId: documentId("document:scene:0001"),
@@ -904,7 +905,9 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
           emissive: 0,
         },
       ],
-      volumes: [{ volumeId: VOLUME, bounds: { min: [0, 0, 0], max: [5, 5, 5] } }],
+      volumes: [
+        { volumeId: VOLUME, bounds: { min: [0, 0, 0], max: [5, 5, 5] } },
+      ],
     });
     // The staged overlay starts from a 2x2x2 box (staged geometry differs
     // from the live 4x4x4 box) and grows through preview commits.
@@ -918,9 +921,7 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
     }
     const handle = createDocumentStore({
       document,
-      volumes: new Map([
-        [VOLUME, [{ coordinate: [0, 0, 0], values }]],
-      ]),
+      volumes: new Map([[VOLUME, [{ coordinate: [0, 0, 0], values }]]]),
     });
     let serial = 0;
     return {
@@ -936,7 +937,11 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
         if (volume === undefined) throw new Error("missing staged volume");
         set(volume, handle.writeCapability);
         handle.store.commit(
-          { document: clone, volumes: new Map([[VOLUME, volume]]), removedVolumes: [] },
+          {
+            document: clone,
+            volumes: new Map([[VOLUME, volume]]),
+            removedVolumes: [],
+          },
           {
             revisionBefore: handle.store.revision,
             revisionAfter: clone.revision,
@@ -981,14 +986,16 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
     // projection is untouched.
     const rootGroup = harness.scene.getObjectByName(preview.namespace);
     if (rootGroup === undefined) throw new Error("missing preview root");
-    const overlayMeshes = chunkMeshes(harness.scene).filter((mesh) =>
-      rootGroup.getObjectById(mesh.id) !== undefined,
+    const overlayMeshes = chunkMeshes(harness.scene).filter(
+      (mesh) => rootGroup.getObjectById(mesh.id) !== undefined,
     );
     expect(overlayMeshes).toHaveLength(1);
     // Staged geometry: 2x2x2 box = 6*4 faces * 4 verts = 96.
     expect(overlayMeshes[0]?.geometry.getAttribute("position").count).toBe(96);
     // The live projection still shows the 4x4x4 box.
-    expect(childMesh(harness.adapter).geometry.getAttribute("position").count).toBe(384);
+    expect(
+      childMesh(harness.adapter).geometry.getAttribute("position").count,
+    ).toBe(384);
     expect(harness.adapter.chunkMeshCount).toBe(1);
     expect(overlay.chunkMeshCount).toBe(1);
     harness.adapter.dispose();
@@ -1005,25 +1012,28 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
     flushAll(harness.adapter);
     const rootGroup = harness.scene.getObjectByName(preview.namespace);
     if (rootGroup === undefined) throw new Error("missing preview root");
-    const overlayMeshBefore = chunkMeshes(harness.scene).filter((mesh) =>
-      rootGroup.getObjectById(mesh.id) !== undefined,
+    const overlayMeshBefore = chunkMeshes(harness.scene).filter(
+      (mesh) => rootGroup.getObjectById(mesh.id) !== undefined,
     )[0];
-    if (overlayMeshBefore === undefined) throw new Error("missing overlay mesh");
+    if (overlayMeshBefore === undefined)
+      throw new Error("missing overlay mesh");
 
     preview.commit((volume, capability) => {
       volume.setVoxel([10, 10, 10], 1, capability);
     });
     flushAll(harness.adapter);
 
-    const overlayMeshAfter = chunkMeshes(harness.scene).filter((mesh) =>
-      rootGroup.getObjectById(mesh.id) !== undefined,
+    const overlayMeshAfter = chunkMeshes(harness.scene).filter(
+      (mesh) => rootGroup.getObjectById(mesh.id) !== undefined,
     )[0];
     if (overlayMeshAfter === undefined) throw new Error("missing overlay mesh");
     // 2x2x2 (96) + one voxel (24) = 120 verts.
     expect(overlayMeshAfter.geometry.getAttribute("position").count).toBe(120);
     // The live mesh still shows the untouched 4x4x4 box and the live
     // store revision never moved.
-    expect(childMesh(harness.adapter).geometry.getAttribute("position").count).toBe(384);
+    expect(
+      childMesh(harness.adapter).geometry.getAttribute("position").count,
+    ).toBe(384);
     expect(harness.store.revision).toBe(0);
     expect(harness.adapter.chunkMeshCount).toBe(1);
     expect(overlay.chunkMeshCount).toBe(1);
@@ -1042,9 +1052,9 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
     expect(harness.adapter.previewProjectionCount).toBe(1);
     const previewRoot = harness.scene.getObjectByName(preview.namespace);
     if (previewRoot === undefined) throw new Error("missing preview root");
-    const geometry = chunkMeshes(harness.scene)
-      .filter((mesh) => previewRoot.getObjectById(mesh.id) !== undefined)[0]
-      ?.geometry;
+    const geometry = chunkMeshes(harness.scene).filter(
+      (mesh) => previewRoot.getObjectById(mesh.id) !== undefined,
+    )[0]?.geometry;
     const dispose = vi.spyOn(geometry as THREE.BufferGeometry, "dispose");
 
     overlay.dispose();
@@ -1055,18 +1065,23 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
     expect(harness.adapter.previewProjectionCount).toBe(0);
     expect(harness.scene.getObjectByName(preview.namespace)).toBeUndefined();
     expect(harness.adapter.chunkMeshCount).toBe(1);
-    expect(childMesh(harness.adapter).geometry.getAttribute("position").count).toBe(384);
+    expect(
+      childMesh(harness.adapter).geometry.getAttribute("position").count,
+    ).toBe(384);
     harness.adapter.dispose();
   });
 
   it("rejects invalid or duplicate preview namespaces", () => {
     const harness = createHarness();
     const preview = previewHarness();
+    expect(() => harness.adapter.projectPreview(preview.store, "live")).toThrow(
+      /preview:/,
+    );
     expect(() =>
-      harness.adapter.projectPreview(preview.store, "live"),
-    ).toThrow(/preview:/);
-    expect(() =>
-      harness.adapter.projectPreview(preview.store, "staging"),
+      harness.adapter.projectPreview(
+        preview.store,
+        "staging" as unknown as `preview:${string}`,
+      ),
     ).toThrow(/preview:/);
     const overlay = harness.adapter.projectPreview(
       preview.store,
