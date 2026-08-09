@@ -22,5 +22,12 @@
   },
   "devDependencies": {
     "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/commands": "workspace:*",
+    "@voxel-maker/agent": "workspace:*",
+    "@voxel-maker/model": "workspace:*",
+    "@voxel-maker/document": "workspace:*"
   }
 }

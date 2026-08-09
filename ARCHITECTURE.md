@@ -140,7 +140,7 @@ The intended workspace has one desktop application and deep semantic or adapter 
 | `storage` | Storage ports, atomic-save coordination, immutable revision snapshots, dirty state, memory adapter | `shared`, `model`, `voxel`, `document`, `formats` |
 | `session` | `DocumentSession` lifecycle coordinator: validated new/open/replace/recovery/close, a fresh bounded bus per install, lifecycle events | `shared`, `math`, `model`, `document`, `voxel`, `commands` |
 | `agent` | Tool contracts, bounded inspection, preview transactions, agent state machine | Semantic read modules and `commands` |
-| `skills` | Versioned domain instructions, recipes, deterministic generators, evaluations | Agent tool contracts and generic command proposal contracts |
+| `skills` | Versioned domain instructions, recipes, deterministic generators, evaluations | Agent tool contracts and generic command proposal contracts; the generic document stack is declared for generator lifecycle/boundary tests |
 | desktop app | Composition, React UI, Tauri adapters, provider adapters | All modules required for composition |
 
 Rules:
