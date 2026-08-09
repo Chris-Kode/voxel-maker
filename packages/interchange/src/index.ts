@@ -9,3 +9,9 @@ export {
   type ExportVoxOptions,
   type ExportVoxOutcome,
 } from "./export-vox.js";
+export {
+  exportFormatForPath,
+  exportGltf,
+  type ExportGltfOptions,
+  type ExportGltfOutcome,
+} from "./export-gltf.js";

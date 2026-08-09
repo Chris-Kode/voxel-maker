@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "golden": [
+    {
+      "file": "golden/cube.glb",
+      "vector": "2x2x2 two-material cube with a translated node",
+      "byteLength": 5276,
+      "documentJson": "golden/cube.document.json",
+      "volumesJson": "golden/cube.volumes.json",
+      "nodes": 2,
+      "meshes": 1,
+      "materials": 2,
+      "accessors": 4,
+      "faces": 32,
+      "voxels": 8,
+      "losses": 0,
+      "gltf": "golden/cube.gltf",
+      "gltfByteLength": 6573
+    },
+    {
+      "file": "golden/hierarchy-pivot.glb",
+      "vector": "nested pivoted arm with a helper-node chain and a child",
+      "byteLength": 4164,
+      "documentJson": "golden/hierarchy-pivot.document.json",
+      "volumesJson": "golden/hierarchy-pivot.volumes.json",
+      "nodes": 5,
+      "meshes": 2,
+      "materials": 1,
+      "accessors": 6,
+      "faces": 20,
+      "voxels": 4,
+      "losses": 0
+    },
+    {
+      "file": "golden/lossy.glb",
+      "vector": "transparent material, clip, joint, node/document metadata, empty volume",
+      "byteLength": 1692,
+      "documentJson": "golden/lossy.document.json",
+      "volumesJson": "golden/lossy.volumes.json",
+      "nodes": 3,
+      "meshes": 1,
+      "materials": 1,
+      "accessors": 3,
+      "faces": 6,
+      "voxels": 1,
+      "losses": 5
+    }
+  ]
+}
