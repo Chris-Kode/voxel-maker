@@ -1,7 +1,6 @@
 export {
   MAX_IMPORT_ENTRIES_PER_COMMAND,
   importVox,
-  voxColorHex,
   type ImportVoxOptions,
   type ImportVoxOutcome,
 } from "./import-vox.js";

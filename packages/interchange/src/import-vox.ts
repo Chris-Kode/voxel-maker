@@ -24,7 +24,6 @@ import {
   DEFAULT_VOX_PARSE_LIMITS,
   mapVoxImport,
   parseVox,
-  type VoxColor,
   type VoxParseLimits,
   type VoxWarning,
 } from "@voxel-maker/formats";
@@ -324,9 +323,4 @@ export function importVox(
     nodesCreated: plan.nodes.length,
     voxelsImported,
   };
-}
-
-/** Utility to read a VOX color for tests and tooling. */
-export function voxColorHex(color: VoxColor): string {
-  return hexColor(color);
 }

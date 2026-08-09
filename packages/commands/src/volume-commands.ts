@@ -5,7 +5,7 @@ import {
   type VolumeId,
 } from "@voxel-maker/shared";
 import { canonicalIntAabb, type IntAabb, type Vec3i } from "@voxel-maker/math";
-import type { DocumentLimits, VoxelDocument } from "@voxel-maker/model";
+import type { DocumentLimits } from "@voxel-maker/model";
 import {
   CHUNK_EDGE,
   MAX_VOXELS_PER_OPERATION,
@@ -468,17 +468,4 @@ const deleteVolumeHandler: CommandHandler<
 export function registerVolumeCommands(registry: CommandRegistry): void {
   registry.register(createVolumeHandler);
   registry.register(deleteVolumeHandler);
-}
-
-/** Stable resource helper for volume commands (plan 4.16). */
-export function volumeResources(
-  document: VoxelDocument,
-  volumeId: VolumeId,
-): CommandExecution["declaredAffectedResources"] {
-  return {
-    nodeIds: nodesReferencingVolume(document, volumeId),
-    materialIds: [],
-    animationIds: [],
-    volumeIds: [volumeId],
-  };
 }

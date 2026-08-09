@@ -443,6 +443,54 @@ describe("preflightVoxExport", () => {
     }
   });
 
+  it("reports materials that share a palette color with different opacity", () => {
+    const document = exportDocument();
+    const withPair: VoxelDocument = {
+      ...document,
+      materials: {
+        ...document.materials,
+        [materialId(1)]: {
+          materialId: materialId(1),
+          name: "red opaque",
+          color: "#ff0000",
+          opacity: 1,
+          roughness: 0,
+          metallic: 0,
+          emissive: 0,
+        },
+        [materialId(2)]: {
+          materialId: materialId(2),
+          name: "red translucent",
+          color: "#ff0000",
+          opacity: 0.5,
+          roughness: 0,
+          metallic: 0,
+          emissive: 0,
+        },
+      },
+    };
+    const { handle } = exportHarness(withPair, [
+      {
+        volumeId: VOLUME_A,
+        entries: [
+          { coordinate: [1, 2, -3], material: 1 },
+          { coordinate: [2, 2, -3], material: 2 },
+        ],
+      },
+    ]);
+    const result = preflightVoxExport(withPair, (id) =>
+      handle.store.getVolume(id),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(
+        result.losses.some(
+          (loss) => loss.code === "VOX_LOSS_MATERIAL_DISTINCTION",
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("blocks more than 255 distinct colors", () => {
     const document = exportDocument();
     const materials = Object.fromEntries(

@@ -13,7 +13,6 @@ import {
   VOX_MAX_COLOR_INDEX,
   VOX_PALETTE_ENTRIES,
 } from "./vox.js";
-import { VOX_DEFAULT_PALETTE } from "./vox-palette.js";
 import {
   VOX_EXPORT_LOSSES,
   VOX_IMPORT_WARNINGS,
@@ -197,6 +196,48 @@ interface VoxelNode {
   readonly transformIsIdentity: boolean;
   readonly hasChildren: boolean;
   readonly name: string | undefined;
+}
+
+/**
+ * Builds the deterministic export palette: indices 1..255 assigned in
+ * material-id order, one entry per distinct color (opacity maps to alpha
+ * with 8-bit rounding). Shared by preflight (loss checks) and plan.
+ */
+function buildExportPalette(
+  document: VoxelDocument,
+  usedMaterialIds: readonly MaterialId[],
+): { palette: VoxColor[]; materialToIndex: Map<MaterialId, number> } {
+  const sorted = [...usedMaterialIds].sort((a, b) => a - b);
+  const materialToIndex = new Map<MaterialId, number>();
+  const colorToIndex = new Map<string, number>();
+  const palette: VoxColor[] = [
+    { r: 0, g: 0, b: 0, a: 0 },
+    ...Array.from({ length: VOX_PALETTE_ENTRIES - 1 }, () => ({
+      r: 0,
+      g: 0,
+      b: 0,
+      a: 255,
+    })),
+  ];
+  const channel = (hex: string, offset: number): number =>
+    Number.parseInt(hex.slice(offset, offset + 2), 16);
+  for (const materialIdValue of sorted) {
+    const material = document.materials[materialIdValue];
+    if (material === undefined) continue;
+    let index = colorToIndex.get(material.color);
+    if (index === undefined) {
+      index = colorToIndex.size + 1;
+      colorToIndex.set(material.color, index);
+      palette[index] = {
+        r: channel(material.color, 1),
+        g: channel(material.color, 3),
+        b: channel(material.color, 5),
+        a: Math.round(material.opacity * 255),
+      };
+    }
+    materialToIndex.set(materialIdValue, index);
+  }
+  return { palette, materialToIndex };
 }
 
 /** Collects every node carrying a voxel component, in document order. */
@@ -388,19 +429,8 @@ export function preflightVoxExport(
       context: { colors: usedMaterialIds.size },
     });
   }
-  const sortedMaterials = [...usedMaterialIds].sort((a, b) => a - b);
-  const materialToIndex = new Map<MaterialId, number>();
-  const colorToIndex = new Map<string, number>();
-  const palette: VoxColor[] = [
-    { r: 0, g: 0, b: 0, a: 0 },
-    ...Array.from({ length: VOX_PALETTE_ENTRIES - 1 }, () => ({
-      r: 0,
-      g: 0,
-      b: 0,
-      a: 255,
-    })),
-  ];
-  for (const materialIdValue of sortedMaterials) {
+  void buildExportPalette(document, [...usedMaterialIds]);
+  for (const materialIdValue of [...usedMaterialIds].sort((a, b) => a - b)) {
     const material = document.materials[materialIdValue];
     if (material === undefined) {
       blocked.push({
@@ -424,54 +454,43 @@ export function preflightVoxExport(
         context: { material: String(materialIdValue) },
       });
     }
-    const colorKey = material.color;
-    let index = colorToIndex.get(colorKey);
-    if (index === undefined) {
-      index = colorToIndex.size + 1;
-      if (index > VOX_MAX_COLOR_INDEX) {
-        blocked.push({
-          code: VOX_EXPORT_LOSSES.colorLimit,
-          message: "More than 255 distinct colors cannot be exported",
-          severity: "block",
-          context: { colors: colorToIndex.size + 1 },
-        });
-        continue;
-      }
-      colorToIndex.set(colorKey, index);
-      const alpha = Math.round(material.opacity * 255);
-      const channel = (hex: string, offset: number): number =>
-        Number.parseInt(hex.slice(offset, offset + 2), 16);
-      const entry = {
-        r: channel(material.color, 1),
-        g: channel(material.color, 3),
-        b: channel(material.color, 5),
-        a: alpha,
-      };
-      palette[index] = entry;
-      if (material.opacity !== 1) {
-        losses.push({
-          code: VOX_EXPORT_LOSSES.materialSemantics,
-          message: "Material opacity maps to palette alpha with 8-bit rounding",
-          severity: "bake",
-          context: { material: String(materialIdValue) },
-        });
-      }
-    } else {
-      const existing = document.materials[materialIdValue];
-      if (existing !== undefined) {
-        const alpha = Math.round(existing.opacity * 255);
-        if (alpha !== palette[index]?.a) {
-          losses.push({
-            code: VOX_EXPORT_LOSSES.materialDistinction,
-            message:
-              "Materials with the same color but different opacity share one palette entry",
-            severity: "bake",
-            context: { material: String(materialIdValue) },
-          });
-        }
-      }
+    if (material.opacity !== 1) {
+      losses.push({
+        code: VOX_EXPORT_LOSSES.materialSemantics,
+        message: "Material opacity maps to palette alpha with 8-bit rounding",
+        severity: "bake",
+        context: { material: String(materialIdValue) },
+      });
     }
-    materialToIndex.set(materialIdValue, index);
+  }
+  const distinctColors = new Set<string>();
+  const alphaByColor = new Map<string, number>();
+  for (const id of usedMaterialIds) {
+    const material = document.materials[id];
+    if (material === undefined) continue;
+    distinctColors.add(material.color);
+    const alpha = Math.round(material.opacity * 255);
+    const previousAlpha = alphaByColor.get(material.color);
+    if (previousAlpha !== undefined && previousAlpha !== alpha) {
+      losses.push({
+        code: VOX_EXPORT_LOSSES.materialDistinction,
+        message:
+          "Materials with the same color but different opacity share one palette entry",
+        severity: "bake",
+        context: { material: String(id) },
+      });
+    } else if (previousAlpha === undefined) {
+      alphaByColor.set(material.color, alpha);
+    }
+  }
+  const distinctColorCount = distinctColors.size;
+  if (distinctColorCount > VOX_MAX_COLOR_INDEX) {
+    blocked.push({
+      code: VOX_EXPORT_LOSSES.colorLimit,
+      message: `Export needs ${String(distinctColorCount)} colors but the VOX palette holds 255`,
+      severity: "block",
+      context: { colors: distinctColorCount },
+    });
   }
 
   return blocked.length > 0 ? { ok: false, blocked } : { ok: true, losses };
@@ -522,36 +541,9 @@ export function planVoxExport(
       }
     }
   }
-  const sortedMaterials = [...usedMaterialIds].sort((a, b) => a - b);
-  const materialToIndex = new Map<MaterialId, number>();
-  const colorToIndex = new Map<string, number>();
-  const palette: VoxColor[] = [
-    { r: 0, g: 0, b: 0, a: 0 },
-    ...Array.from({ length: VOX_PALETTE_ENTRIES - 1 }, () => ({
-      r: 0,
-      g: 0,
-      b: 0,
-      a: 255,
-    })),
-  ];
-  for (const materialIdValue of sortedMaterials) {
-    const material = document.materials[materialIdValue];
-    if (material === undefined) continue;
-    let index = colorToIndex.get(material.color);
-    if (index === undefined) {
-      index = colorToIndex.size + 1;
-      colorToIndex.set(material.color, index);
-      const channel = (hex: string, offset: number): number =>
-        Number.parseInt(hex.slice(offset, offset + 2), 16);
-      palette[index] = {
-        r: channel(material.color, 1),
-        g: channel(material.color, 3),
-        b: channel(material.color, 5),
-        a: Math.round(material.opacity * 255),
-      };
-    }
-    materialToIndex.set(materialIdValue, index);
-  }
+  const { palette, materialToIndex } = buildExportPalette(document, [
+    ...usedMaterialIds,
+  ]);
 
   const models: VoxExportModel[] = [];
   for (const node of voxelNodes) {
@@ -561,7 +553,7 @@ export function planVoxExport(
     if (bounds === undefined) continue; // empty volumes were reported
     // Map every voxel to VOX space first, then rebase by the VOX-space
     // minimum so the model always fits the unsigned cube.
-    const mapped: { readonly voxel: VoxVoxel }[] = [];
+    const mapped: VoxVoxel[] = [];
     for (const coordinate of volume.chunkCoordinates()) {
       const chunk = volume.getChunk(coordinate);
       if (chunk === undefined) continue;
@@ -590,12 +582,10 @@ export function planVoxExport(
         // (vox x, vox y, vox z) = (X, -Z, Y)
         const mappedY = -editor[2];
         mapped.push({
-          voxel: {
-            x: editor[0],
-            y: Object.is(mappedY, -0) ? 0 : mappedY,
-            z: editor[1],
-            colorIndex,
-          },
+          x: editor[0],
+          y: Object.is(mappedY, -0) ? 0 : mappedY,
+          z: editor[1],
+          colorIndex,
         });
       }
     }
@@ -607,22 +597,22 @@ export function planVoxExport(
     let maxY = Number.NEGATIVE_INFINITY;
     let maxZ = Number.NEGATIVE_INFINITY;
     for (const item of mapped) {
-      minX = Math.min(minX, item.voxel.x);
-      minY = Math.min(minY, item.voxel.y);
-      minZ = Math.min(minZ, item.voxel.z);
-      maxX = Math.max(maxX, item.voxel.x);
-      maxY = Math.max(maxY, item.voxel.y);
-      maxZ = Math.max(maxZ, item.voxel.z);
+      minX = Math.min(minX, item.x);
+      minY = Math.min(minY, item.y);
+      minZ = Math.min(minZ, item.z);
+      maxX = Math.max(maxX, item.x);
+      maxY = Math.max(maxY, item.y);
+      maxZ = Math.max(maxZ, item.z);
     }
     // Preflight guarantees non-negative VOX-space bounds unless rebasing;
     // with no rebase the model keeps its absolute (non-negative) origin.
     const rebase: Vec3i =
       choices.rebaseOrigins === true ? [minX, minY, minZ] : [0, 0, 0];
     const voxels: VoxVoxel[] = mapped.map((item) => ({
-      x: item.voxel.x - rebase[0],
-      y: item.voxel.y - rebase[1],
-      z: item.voxel.z - rebase[2],
-      colorIndex: item.voxel.colorIndex,
+      x: item.x - rebase[0],
+      y: item.y - rebase[1],
+      z: item.z - rebase[2],
+      colorIndex: item.colorIndex,
     }));
     voxels.sort(
       (a, b) =>
@@ -639,6 +629,3 @@ export function planVoxExport(
   }
   return { palette, models, losses: preflight.losses };
 }
-
-/** The version-150 default palette, exposed for fixtures and tests. */
-export const voxDefaultPalette = (): readonly VoxColor[] => VOX_DEFAULT_PALETTE;
