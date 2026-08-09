@@ -1,5 +1,9 @@
 import type { DocumentStoreRead } from "@voxel-maker/document";
-import type { EditorSelectionSnapshot, DeterministicStep, ToolCall } from "@voxel-maker/agent";
+import type {
+  EditorSelectionSnapshot,
+  DeterministicStep,
+  ToolCall,
+} from "@voxel-maker/agent";
 import { STANDARD_PREVIEW_VIEWS } from "@voxel-maker/renderer";
 import type { IntAabb } from "@voxel-maker/math";
 import type { MaterialId } from "@voxel-maker/shared";
@@ -184,7 +188,9 @@ const RED_PRESENCE_SIGNAL: PreviewSignal = {
   name: "red pixels present in a rendered view",
   check: (_before, after) => {
     if (!after.completed) return false;
-    return STANDARD_VIEWS.some((view) => redPixelRatio(after.views[view].rgba) > 0);
+    return STANDARD_VIEWS.some(
+      (view) => redPixelRatio(after.views[view].rgba) > 0,
+    );
   },
 };
 
@@ -210,14 +216,50 @@ const CHAIR_CREATE: GeometryScenario = {
   fixture: "empty-scaffold",
   selection: [],
   goldenTrace: [
-    { text: "I will inspect the empty scaffold first.", toolCalls: [summary()] },
-    { text: "Building the seat.", toolCalls: [fillBox("call_seat", CHAIR_REGIONS.seat, EVAL_IDS.materialWood)] },
-    { text: "Building leg 1.", toolCalls: [fillBox("call_leg1", CHAIR_REGIONS.leg1, EVAL_IDS.materialWood)] },
-    { text: "Building leg 2.", toolCalls: [fillBox("call_leg2", CHAIR_REGIONS.leg2, EVAL_IDS.materialWood)] },
-    { text: "Building leg 3.", toolCalls: [fillBox("call_leg3", CHAIR_REGIONS.leg3, EVAL_IDS.materialWood)] },
-    { text: "Building leg 4.", toolCalls: [fillBox("call_leg4", CHAIR_REGIONS.leg4, EVAL_IDS.materialWood)] },
-    { text: "Building the backrest.", toolCalls: [fillBox("call_back", CHAIR_REGIONS.back, EVAL_IDS.materialWood)] },
-    { text: "Verifying the staged result.", toolCalls: [summary("call_summary2")] },
+    {
+      text: "I will inspect the empty scaffold first.",
+      toolCalls: [summary()],
+    },
+    {
+      text: "Building the seat.",
+      toolCalls: [
+        fillBox("call_seat", CHAIR_REGIONS.seat, EVAL_IDS.materialWood),
+      ],
+    },
+    {
+      text: "Building leg 1.",
+      toolCalls: [
+        fillBox("call_leg1", CHAIR_REGIONS.leg1, EVAL_IDS.materialWood),
+      ],
+    },
+    {
+      text: "Building leg 2.",
+      toolCalls: [
+        fillBox("call_leg2", CHAIR_REGIONS.leg2, EVAL_IDS.materialWood),
+      ],
+    },
+    {
+      text: "Building leg 3.",
+      toolCalls: [
+        fillBox("call_leg3", CHAIR_REGIONS.leg3, EVAL_IDS.materialWood),
+      ],
+    },
+    {
+      text: "Building leg 4.",
+      toolCalls: [
+        fillBox("call_leg4", CHAIR_REGIONS.leg4, EVAL_IDS.materialWood),
+      ],
+    },
+    {
+      text: "Building the backrest.",
+      toolCalls: [
+        fillBox("call_back", CHAIR_REGIONS.back, EVAL_IDS.materialWood),
+      ],
+    },
+    {
+      text: "Verifying the staged result.",
+      toolCalls: [summary("call_summary2")],
+    },
     { text: "The chair proposal is ready for approval." },
   ],
   goldenRounds: 9,
@@ -280,15 +322,25 @@ const SHORTER_LEGS: GeometryScenario = {
   name: "Shorter chair legs",
   description:
     "Shorten every chair leg by removing its bottom two rows; the seat and backrest must stay untouched.",
-  prompt: "Make the chair legs shorter by removing the bottom half of each leg.",
+  prompt:
+    "Make the chair legs shorter by removing the bottom half of each leg.",
   fixtureVersion: "v1",
   fixture: "chair",
   selection: [regionSelection(EVAL_IDS.volumeMain, CHAIR_REGIONS.legBottoms)],
   goldenTrace: [
-    { text: "I will inspect the chair and the selected legs.", toolCalls: [summary()] },
+    {
+      text: "I will inspect the chair and the selected legs.",
+      toolCalls: [summary()],
+    },
     { text: "Checking the selection context.", toolCalls: [getSelection()] },
-    { text: "Removing the bottom two rows of every leg.", toolCalls: [deleteRegion("call_shorten", CHAIR_REGIONS.legBottoms)] },
-    { text: "Verifying the staged result.", toolCalls: [summary("call_summary2")] },
+    {
+      text: "Removing the bottom two rows of every leg.",
+      toolCalls: [deleteRegion("call_shorten", CHAIR_REGIONS.legBottoms)],
+    },
+    {
+      text: "Verifying the staged result.",
+      toolCalls: [summary("call_summary2")],
+    },
     { text: "The shortened-leg proposal is ready for approval." },
   ],
   goldenRounds: 5,
@@ -362,10 +414,7 @@ const SHORTER_LEGS: GeometryScenario = {
       },
     },
   ],
-  previewSignals: [
-    CHANGED_SIGNAL,
-    SIMILARITY_SIGNAL(0.9),
-  ],
+  previewSignals: [CHANGED_SIGNAL, SIMILARITY_SIGNAL(0.9)],
 };
 
 /** red-seat: full chair, seat region selected. */
@@ -380,9 +429,27 @@ const RED_SEAT: GeometryScenario = {
   selection: [regionSelection(EVAL_IDS.volumeMain, CHAIR_REGIONS.seat)],
   goldenTrace: [
     { text: "I will inspect the chair materials.", toolCalls: [summary()] },
-    { text: "Creating a red material.", toolCalls: [createMaterial("call_mat", EVAL_IDS.materialRed, "red", EVAL_RED_COLOR)] },
-    { text: "Painting only the seat voxels red.", toolCalls: [replaceVoxelMaterial("call_paint", CHAIR_REGIONS.seat, EVAL_IDS.materialWood, EVAL_IDS.materialRed)] },
-    { text: "Verifying the staged result.", toolCalls: [summary("call_summary2")] },
+    {
+      text: "Creating a red material.",
+      toolCalls: [
+        createMaterial("call_mat", EVAL_IDS.materialRed, "red", EVAL_RED_COLOR),
+      ],
+    },
+    {
+      text: "Painting only the seat voxels red.",
+      toolCalls: [
+        replaceVoxelMaterial(
+          "call_paint",
+          CHAIR_REGIONS.seat,
+          EVAL_IDS.materialWood,
+          EVAL_IDS.materialRed,
+        ),
+      ],
+    },
+    {
+      text: "Verifying the staged result.",
+      toolCalls: [summary("call_summary2")],
+    },
     { text: "The red-seat proposal is ready for approval." },
   ],
   goldenRounds: 5,
@@ -464,13 +531,22 @@ const MIRROR_LEFT: GeometryScenario = {
   prompt: "Mirror the left side to the right side to make the chair symmetric.",
   fixtureVersion: "v1",
   fixture: "chair-armrest",
-  selection: [
-    regionSelection(EVAL_IDS.volumeMain, CHAIR_REGIONS.wholeChair),
-  ],
+  selection: [regionSelection(EVAL_IDS.volumeMain, CHAIR_REGIONS.wholeChair)],
   goldenTrace: [
-    { text: "I will inspect the chair with the left armrest.", toolCalls: [summary()] },
-    { text: "Copying the left armrest to its mirrored position at x in [7,8).", toolCalls: [copyRegion("call_copy", CHAIR_REGIONS.leftArmrest, [7, 5, 0])] },
-    { text: "Verifying the staged result.", toolCalls: [summary("call_summary2")] },
+    {
+      text: "I will inspect the chair with the left armrest.",
+      toolCalls: [summary()],
+    },
+    {
+      text: "Copying the left armrest to its mirrored position at x in [7,8).",
+      toolCalls: [
+        copyRegion("call_copy", CHAIR_REGIONS.leftArmrest, [7, 5, 0]),
+      ],
+    },
+    {
+      text: "Verifying the staged result.",
+      toolCalls: [summary("call_summary2")],
+    },
     { text: "The mirrored proposal is ready for approval." },
   ],
   goldenRounds: 4,
@@ -521,10 +597,7 @@ const MIRROR_LEFT: GeometryScenario = {
           .voxelCount === 220,
     },
   ],
-  previewSignals: [
-    CHANGED_SIGNAL,
-    SIMILARITY_SIGNAL(0.9),
-  ],
+  previewSignals: [CHANGED_SIGNAL, SIMILARITY_SIGNAL(0.9)],
 };
 
 /** All four fixed scenarios in canonical order. */

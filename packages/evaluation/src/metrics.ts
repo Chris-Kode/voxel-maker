@@ -126,11 +126,17 @@ export function symmetryScore(
   region: IntAabb,
   axis: "x" | "y" | "z",
   plane: number,
-): { readonly score: number; readonly matched: number; readonly occupied: number } {
+): {
+  readonly score: number;
+  readonly matched: number;
+  readonly occupied: number;
+} {
   const occupied = new Set<string>();
   const mirrorOf = (coordinate: Vec3i): Vec3i => {
-    if (axis === "x") return [2 * plane - coordinate[0] - 1, coordinate[1], coordinate[2]];
-    if (axis === "y") return [coordinate[0], 2 * plane - coordinate[1] - 1, coordinate[2]];
+    if (axis === "x")
+      return [2 * plane - coordinate[0] - 1, coordinate[1], coordinate[2]];
+    if (axis === "y")
+      return [coordinate[0], 2 * plane - coordinate[1] - 1, coordinate[2]];
     return [coordinate[0], coordinate[1], 2 * plane - coordinate[2] - 1];
   };
   for (let x = region.min[0]; x < region.max[0]; x += 1) {
@@ -147,9 +153,7 @@ export function symmetryScore(
     const [x, y, z] = key.split(",").map(Number) as [number, number, number];
     const twin = mirrorOf([x, y, z]);
     if (
-      occupied.has(
-        `${String(twin[0])},${String(twin[1])},${String(twin[2])}`,
-      )
+      occupied.has(`${String(twin[0])},${String(twin[1])},${String(twin[2])}`)
     ) {
       matched += 1;
     }
@@ -175,7 +179,9 @@ export function structuralIssues(store: DocumentStoreRead): readonly string[] {
     const node = document.nodes[key as NodeId];
     if (node === undefined) continue;
     if (node.parentId !== null && document.nodes[node.parentId] === undefined) {
-      messages.push(`Orphan node ${key} references missing parent ${node.parentId}`);
+      messages.push(
+        `Orphan node ${key} references missing parent ${node.parentId}`,
+      );
     }
     for (const component of node.components) {
       if (
@@ -206,7 +212,10 @@ export function changedVoxels(
     for (let y = region.min[1]; y < region.max[1]; y += 1) {
       for (let z = region.min[2]; z < region.max[2]; z += 1) {
         const coordinate: Vec3i = [x, y, z];
-        if (before.getVoxel(volumeId, coordinate) !== after.getVoxel(volumeId, coordinate)) {
+        if (
+          before.getVoxel(volumeId, coordinate) !==
+          after.getVoxel(volumeId, coordinate)
+        ) {
           changed.push(coordinate);
         }
       }
@@ -216,12 +225,11 @@ export function changedVoxels(
 }
 
 /** Canonical JSON of one material record (stable comparison key). */
-function materialKey(
-  document: VoxelDocument,
-  materialId: MaterialId,
-): string {
+function materialKey(document: VoxelDocument, materialId: MaterialId): string {
   return JSON.stringify(
-    (document.materials as Readonly<Record<string, unknown>>)[String(materialId)],
+    (document.materials as Readonly<Record<string, unknown>>)[
+      String(materialId)
+    ],
   );
 }
 
@@ -232,8 +240,14 @@ function materialKey(
 export function changedMaterials(
   before: VoxelDocument,
   after: VoxelDocument,
-): readonly { readonly materialId: string; readonly kind: "added" | "removed" | "updated" }[] {
-  const changes: { materialId: string; kind: "added" | "removed" | "updated" }[] = [];
+): readonly {
+  readonly materialId: string;
+  readonly kind: "added" | "removed" | "updated";
+}[] {
+  const changes: {
+    materialId: string;
+    kind: "added" | "removed" | "updated";
+  }[] = [];
   const beforeIds = Object.keys(before.materials);
   const afterIds = Object.keys(after.materials);
   const beforeMaterials = before.materials as Readonly<Record<string, unknown>>;

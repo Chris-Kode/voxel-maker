@@ -205,7 +205,10 @@ function scoreUnrelatedChanges(
       ? 1
       : 1 - unrelatedMaterialChanges / materialChanges.length;
 
-  const changedNodeIds = changedNodes(before.getDocument(), after.getDocument());
+  const changedNodeIds = changedNodes(
+    before.getDocument(),
+    after.getDocument(),
+  );
   const nodeScore = changedNodeIds.length === 0 ? 1 : 0;
 
   return {
@@ -243,7 +246,9 @@ function scoreEfficiency(
 }
 
 /** Invalid calls: schema-invalid and unknown tool calls over the run. */
-function scoreInvalidCalls(toolLog: readonly ToolLogEntry[]): InvalidCallsScore {
+function scoreInvalidCalls(
+  toolLog: readonly ToolLogEntry[],
+): InvalidCallsScore {
   const invalid = toolLog.filter((entry) => !entry.ok);
   const categories: Record<string, number> = {};
   for (const entry of invalid) {

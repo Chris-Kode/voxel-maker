@@ -81,7 +81,13 @@ export function renderPreviewEvidence(
 export function silhouetteCount(rgba: Uint8Array): number {
   let count = 0;
   for (let i = 0; i < rgba.length; i += 4) {
-    if (!isBackground(rgba[i] as number, rgba[i + 1] as number, rgba[i + 2] as number)) {
+    if (
+      !isBackground(
+        rgba[i] as number,
+        rgba[i + 1] as number,
+        rgba[i + 2] as number,
+      )
+    ) {
       count += 1;
     }
   }
@@ -110,8 +116,16 @@ export function silhouetteOverlap(
   let intersection = 0;
   let union = 0;
   for (let i = 0; i < before.length; i += 4) {
-    const b = !isBackground(before[i] as number, before[i + 1] as number, before[i + 2] as number);
-    const a = !isBackground(after[i] as number, after[i + 1] as number, after[i + 2] as number);
+    const b = !isBackground(
+      before[i] as number,
+      before[i + 1] as number,
+      before[i + 2] as number,
+    );
+    const a = !isBackground(
+      after[i] as number,
+      after[i + 1] as number,
+      after[i + 2] as number,
+    );
     if (b || a) {
       union += 1;
       if (b && a) intersection += 1;
@@ -179,8 +193,14 @@ export function silhouetteSimilarity(
     const bCellCount = bCount[cell] ?? 0;
     const aCellTotal = aTotal[cell];
     const aCellCount = aCount[cell] ?? 0;
-    const bFraction = bCellTotal === undefined || bCellTotal === 0 ? 0 : bCellCount / bCellTotal;
-    const aFraction = aCellTotal === undefined || aCellTotal === 0 ? 0 : aCellCount / aCellTotal;
+    const bFraction =
+      bCellTotal === undefined || bCellTotal === 0
+        ? 0
+        : bCellCount / bCellTotal;
+    const aFraction =
+      aCellTotal === undefined || aCellTotal === 0
+        ? 0
+        : aCellCount / aCellTotal;
     difference += Math.abs(bFraction - aFraction);
   }
   return 1 - difference / cells;

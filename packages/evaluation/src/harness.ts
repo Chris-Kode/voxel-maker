@@ -41,7 +41,11 @@ import {
   type ToolLogEntry,
 } from "./score.js";
 import { evaluationVersions, type EvaluationVersions } from "./versions.js";
-import { scenarioById, type GeometryScenario, type ScenarioId } from "./scenarios.js";
+import {
+  scenarioById,
+  type GeometryScenario,
+  type ScenarioId,
+} from "./scenarios.js";
 
 /**
  * Fixed geometry evaluation harness (plan S12.12, ticket #35): runs one
@@ -126,9 +130,10 @@ export interface EvaluateScenarioOptions {
 }
 
 /** Builds a committed fixture store of a scenario. */
-function createFixtureStore(
-  scenario: GeometryScenario,
-): { readonly store: DocumentStoreRead; readonly handle: DocumentStoreHandle } {
+function createFixtureStore(scenario: GeometryScenario): {
+  readonly store: DocumentStoreRead;
+  readonly handle: DocumentStoreHandle;
+} {
   switch (scenario.fixture) {
     case "empty-scaffold":
       return createEmptyScaffoldStore();
@@ -250,9 +255,7 @@ export async function evaluateScenario(
   // preview and releases its counters).
   const stagedCommands = result.ok ? result.stagedCommands : 0;
   const voxelEstimate = result.ok ? preview.voxelEstimate : 0;
-  const usage = result.ok
-    ? result.usage
-    : { inputTokens: 0, outputTokens: 0 };
+  const usage = result.ok ? result.usage : { inputTokens: 0, outputTokens: 0 };
   let applyOk = false;
   let applyLabel: string | undefined;
   if (result.ok) {
@@ -318,8 +321,7 @@ export async function evaluateScenario(
       historyBefore,
       historyAfter,
       partialCommit: !applyOk && revisionAfter !== revisionBefore,
-      zeroStateChangeOnFailure:
-        applyOk || revisionAfter === revisionBefore,
+      zeroStateChangeOnFailure: applyOk || revisionAfter === revisionBefore,
     },
     metrics: {
       before: beforeMetrics,

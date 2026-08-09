@@ -192,7 +192,10 @@ export function createEmptyScaffoldDocument(): VoxelDocument {
  */
 export function commitFixtureVoxels(
   handle: DocumentStoreHandle,
-  entries: readonly { readonly coordinate: Vec3i; readonly material: MaterialId }[],
+  entries: readonly {
+    readonly coordinate: Vec3i;
+    readonly material: MaterialId;
+  }[],
   transactionSuffix: string,
 ): void {
   const { store, writeCapability } = handle;
@@ -266,7 +269,9 @@ export function createChairStore(withArmrest = false): {
   readonly store: DocumentStoreRead;
   readonly handle: DocumentStoreHandle;
 } {
-  const handle = createDocumentStore({ document: createChairDocument(withArmrest) });
+  const handle = createDocumentStore({
+    document: createChairDocument(withArmrest),
+  });
   commitFixtureVoxels(
     handle,
     shapeEntries(

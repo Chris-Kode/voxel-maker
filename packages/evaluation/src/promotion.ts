@@ -80,9 +80,7 @@ const BASELINE_DIMENSIONS = [
   "renderedPreviews",
 ] as const;
 
-function suiteBaselines(
-  scenarioId: string,
-): readonly BaselineRecord[] {
+function suiteBaselines(scenarioId: string): readonly BaselineRecord[] {
   return BASELINE_DIMENSIONS.map((dimension) => ({
     scenarioId,
     dimension,
@@ -110,8 +108,7 @@ export function recordedBaseline(
   dimension: BaselineRecord["dimension"],
 ): number | undefined {
   const record = RECORDED_BASELINES.find(
-    (entry) =>
-      entry.scenarioId === scenarioId && entry.dimension === dimension,
+    (entry) => entry.scenarioId === scenarioId && entry.dimension === dimension,
   );
   return record?.score;
 }
@@ -211,7 +208,8 @@ export function evaluatePromotion(
   let totalCalls = 0;
   for (const result of results) {
     validCalls +=
-      result.scores.invalidCalls.totalCalls - result.scores.invalidCalls.invalidCalls;
+      result.scores.invalidCalls.totalCalls -
+      result.scores.invalidCalls.invalidCalls;
     totalCalls += result.scores.invalidCalls.totalCalls;
   }
   const validRate = totalCalls === 0 ? 1 : validCalls / totalCalls;
@@ -228,8 +226,11 @@ export function evaluatePromotion(
   }
 
   // 3. Task-invariant success (>= 90% per scenario and on average).
-  const taskScores = results.map((result) => result.scores.taskCompletion.score);
-  const averageTask = taskScores.reduce((sum, score) => sum + score, 0) /
+  const taskScores = results.map(
+    (result) => result.scores.taskCompletion.score,
+  );
+  const averageTask =
+    taskScores.reduce((sum, score) => sum + score, 0) /
     Math.max(1, taskScores.length);
   const allTasksPass = taskScores.every(
     (score) => score >= PROMOTION_THRESHOLDS.taskSuccess,

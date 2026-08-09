@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeterministicStep } from "@voxel-maker/agent";
-import {
-  evaluateScenario,
-  type GeometryEvalResult,
-} from "./harness.js";
+import { evaluateScenario, type GeometryEvalResult } from "./harness.js";
 import {
   evaluatePromotion,
   PROMOTION_THRESHOLDS,
@@ -184,8 +181,7 @@ describe("fixed geometry evaluation: promotion gates", () => {
       ] as const) {
         const baseline = RECORDED_BASELINES.find(
           (entry) =>
-            entry.scenarioId === scenarioId &&
-            entry.dimension === dimension,
+            entry.scenarioId === scenarioId && entry.dimension === dimension,
         );
         expect(baseline, `${scenarioId} ${dimension}`).toBeDefined();
         expect(baseline?.score).toBe(1);
