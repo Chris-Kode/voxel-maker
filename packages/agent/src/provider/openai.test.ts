@@ -532,7 +532,7 @@ describe("OpenAI adapter: vision evidence (plan S15.3, ticket #40)", () => {
               content: "x",
               images: [
                 {
-                  mimeType: "image/jpeg",
+                  mimeType: "image/jpeg" as never,
                   bytes: new Uint8Array([1]),
                   view: "front",
                   width: 8,

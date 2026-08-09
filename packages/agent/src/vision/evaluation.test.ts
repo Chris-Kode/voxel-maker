@@ -12,6 +12,7 @@ import {
   type RefinementEvaluation,
 } from "./evaluation.js";
 import { measureStructure } from "./structural.js";
+import type { DocumentStoreRead } from "@voxel-maker/document";
 import type { VisualEvidenceSet } from "./evidence.js";
 
 /**
@@ -20,9 +21,7 @@ import type { VisualEvidenceSet } from "./evidence.js";
  * prevents promotion when a regression or oscillation was detected.
  */
 
-function capture(
-  store: ReturnType<typeof createInspectionStore>["handle"]["store"],
-): VisualEvidenceSet {
+function capture(store: DocumentStoreRead): VisualEvidenceSet {
   return createFakeEvidenceCapture().captureEvidence({
     store,
     source: "preview",
@@ -130,7 +129,7 @@ describe("evaluateRefinement", () => {
     const { baseline, refined, baselineEvidence, refinedEvidence } =
       stagedWithFill(
         { min: [0, 0, 0], max: [2, 2, 2] },
-        "region.delete",
+        "voxel.deleteRegion",
       );
     // Deleting the whole occupied region drops 4 -> 0 voxels (100% loss).
     const evaluation = evaluateRefinement({

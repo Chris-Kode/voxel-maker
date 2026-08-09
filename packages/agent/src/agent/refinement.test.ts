@@ -353,7 +353,7 @@ describe("visual refinement: evidence and consent (AC1/AC2)", () => {
     });
     const result = runErr(await session.run());
     expect(result.reason).toBe("provider");
-    expect(result.error.code).toBe("IMAGE_CONSENT_REQUIRED");
+    expect((result.error as { code?: string }).code).toBe("IMAGE_CONSENT_REQUIRED");
     // The base run staged work but refinement refused before transmission:
     // no critique request ever left the device.
     expect(
@@ -405,7 +405,7 @@ describe("visual refinement: budgets (AC3)", () => {
     );
     const result = runErr(await session.run());
     expect(result.reason).toBe("limit");
-    expect(result.error.code).toBe("LIMIT_EXCEEDED");
+    expect((result.error as { code?: string }).code).toBe("LIMIT_EXCEEDED");
     expect(session.preview.closed).toBe(true);
   });
 
@@ -439,7 +439,7 @@ describe("visual refinement: budgets (AC3)", () => {
     // reservation must fail the 1s duration budget.
     const result = runErr(await session.run());
     expect(result.reason).toBe("limit");
-    expect(result.error.code).toBe("LIMIT_EXCEEDED");
+    expect((result.error as { code?: string }).code).toBe("LIMIT_EXCEEDED");
     const context = (result.error as { context?: { resource?: string } })
       .context;
     expect(context?.resource).toBe("duration");
@@ -455,7 +455,7 @@ describe("visual refinement: budgets (AC3)", () => {
     // second and must fail closed as a limit, never staged.
     const result = runErr(await session.run());
     expect(result.reason).toBe("limit");
-    expect(result.error.code).toBe("LIMIT_EXCEEDED");
+    expect((result.error as { code?: string }).code).toBe("LIMIT_EXCEEDED");
     const context = (result.error as { context?: { resource?: string } })
       .context;
     expect(context?.resource).toBe("commands");
@@ -518,6 +518,7 @@ describe("visual refinement: corrections stay staged commands (AC4)", () => {
     const undone = h.bus.undo({
       transactionId: transactionId("transaction:undo:refine"),
       expectedRevision: h.store.revision,
+      source: "ai",
     });
     expect(undone.ok).toBe(true);
     expect(measureStructure(h.store).occupiedVoxels).toBe(4);
@@ -526,6 +527,7 @@ describe("visual refinement: corrections stay staged commands (AC4)", () => {
     const redo = h.bus.redo({
       transactionId: transactionId("transaction:redo:refine"),
       expectedRevision: h.store.revision,
+      source: "ai",
     });
     expect(redo.ok).toBe(true);
     expect(measureStructure(h.store).occupiedVoxels).toBe(8);

@@ -305,3 +305,7 @@ export {
   type RefinementPolicy,
   type ViewVisualComparison,
 } from "./vision/evaluation.js";
+export {
+  createFakeEvidenceCapture,
+  fakeSemanticHash,
+} from "./vision/test-fixtures.js";

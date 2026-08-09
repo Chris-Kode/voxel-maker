@@ -85,7 +85,6 @@ describe("evidence sets", () => {
       capture.captureEvidence({
         store: handle.store,
         source: "live",
-        sessionId: undefined,
       }),
     );
     expect(set.images.map((image) => image.view)).toEqual(STANDARD_VIEWS);
@@ -175,7 +174,9 @@ describe("evidence sets", () => {
         totalPngBytes: 0,
       }),
     ).toThrow(WorkspaceError);
-    const duplicated = [...base.images, base.images[0]];
+    const first = base.images[0];
+    if (first === undefined) throw new Error("expected image");
+    const duplicated = [...base.images, first];
     if (duplicated[4] === undefined) throw new Error("expected image");
     expect(() =>
       validateEvidenceSet({

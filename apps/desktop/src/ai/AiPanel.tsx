@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PROVIDER_PRIVACY_POLICY } from "@voxel-maker/agent";
 import type { AiController, AiControllerState } from "./ai-controller.js";
 import {
   DEFAULT_AI_APPLY_LABEL,
@@ -17,6 +18,12 @@ import {
 
 /** Staged proposals above this voxel estimate are flagged as large. */
 const LARGE_PROPOSAL_VOXELS = 10_000;
+
+/** Formats a signed occupancy delta for the evaluation summary. */
+function formatDelta(delta: number | undefined): string {
+  if (delta === undefined) return "n/a";
+  return delta > 0 ? `+${String(delta)}` : String(delta);
+}
 
 /** Subscribes to the controller snapshot for the panel. */
 function useAiState(controller: AiController): AiControllerState {
@@ -41,6 +48,7 @@ export function AiPanel({
   const [label, setLabel] = useState(DEFAULT_AI_APPLY_LABEL);
   const [keyText, setKeyText] = useState("");
   const [costCap, setCostCap] = useState("1.00");
+  const [evidenceResolution, setEvidenceResolution] = useState("512");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const keyInputRef = useRef<HTMLInputElement | null>(null);
@@ -81,6 +89,22 @@ export function AiPanel({
     if (prompt.trim().length === 0) return;
     void controller.run(prompt);
   };
+
+  const consentImages = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const resolution = Number(evidenceResolution);
+      await controller.consentImages(
+        Number.isInteger(resolution) && resolution >= 256 && resolution <= 1024
+          ? resolution
+          : undefined,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const gated = state.refinement?.evaluation?.promotable === false;
 
   return (
     <section className="panel ai-panel" aria-label="AI assistant">
@@ -146,6 +170,101 @@ export function AiPanel({
           </div>
         )}
       </details>
+
+      {state.configured && state.consented ? (
+        <div
+          className="ai-visual"
+          role="group"
+          aria-label="Visual refinement evidence"
+        >
+          <label className="ai-check">
+            <input
+              type="checkbox"
+              checked={state.visualEnabled}
+              disabled={!state.imageConsent || busy}
+              aria-label="Enable visual refinement evidence"
+              onChange={(event) => {
+                controller.setVisualEnabled(event.target.checked);
+              }}
+            />
+            <span>Refine proposals with standard-view images</span>
+          </label>
+          {state.visualEnabled && state.imageConsent === undefined ? (
+            <div className="ai-image-consent">
+              <p>
+                Images are off by default and are a separate disclosure from
+                text AI. Approving enables the visual-refinement phase to
+                transmit the four standard views (perspective, front, side,
+                top) of your staged proposal at a bounded resolution, count,
+                and estimated cost.
+              </p>
+              <p className="ai-hint">
+                {state.providerId} privacy policy: {PROVIDER_PRIVACY_POLICY.summary}{" "}
+                (policy as of {PROVIDER_PRIVACY_POLICY.recordedAt},{" "}
+                <a
+                  href={PROVIDER_PRIVACY_POLICY.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  provider policy
+                </a>
+                ).
+              </p>
+              <label className="ai-cost-cap">
+                <span>Evidence resolution (px)</span>
+                <select
+                  value={evidenceResolution}
+                  disabled={busy}
+                  aria-label="Evidence resolution"
+                  onChange={(event) => {
+                    setEvidenceResolution(event.target.value);
+                  }}
+                >
+                  <option value="256">256×256</option>
+                  <option value="512">512×512</option>
+                  <option value="1024">1024×1024</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void consentImages()}
+              >
+                Approve image transmission
+              </button>
+            </div>
+          ) : null}
+          {state.imageConsent !== undefined ? (
+            <p className="ai-hint">
+              Image transmission approved for{" "}
+              {String(state.imageConsent.views.length)} standard views at up
+              to {String(state.imageConsent.maxResolution)}px, {String(
+                state.imageConsent.maxImages,
+              )}{" "}
+              images per session, est. ${String(
+                state.imageConsent.estimatedCostUsd,
+              )}
+              .{" "}
+              <button
+                type="button"
+                className="link"
+                disabled={busy}
+                onClick={() => void controller.clearImageConsent()}
+              >
+                Revoke
+              </button>
+            </p>
+          ) : null}
+          {state.refinement !== undefined ? (
+            <p className="ai-hint">
+              Last run: {String(state.refinement.iterations)} visual
+              iteration{state.refinement.iterations === 1 ? "" : "s"},{" "}
+              {String(state.refinement.imagesSent)} image
+              {state.refinement.imagesSent === 1 ? "" : "s"} transmitted.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {state.configured && !state.consented ? (
         <div className="ai-consent" role="group" aria-label="Provider consent">
@@ -243,6 +362,27 @@ export function AiPanel({
                   voxels). Review it carefully before applying.
                 </p>
               ) : null}
+              {state.refinement?.evaluation !== undefined ? (
+                <div className="ai-refinement-eval" role="group">
+                  <p>
+                    Visual refinement evaluation: structural occupancy changed
+                    by {formatDelta(state.refinement.evaluation.occupancyDelta)}
+                    , visual similarity{" "}
+                    {Math.round(
+                      state.refinement.evaluation.overallSimilarity * 100,
+                    )}
+                    %.
+                  </p>
+                  {state.refinement.evaluation.regressions.length > 0 ? (
+                    <p className="ai-review-warning" role="alert">
+                      Regression gate:{" "}
+                      {state.refinement.evaluation.regressions.join(", ")}.
+                      This proposal is not promoted automatically — review it
+                      before applying.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <label className="ai-label">
                 <span>History label</span>
                 <input
@@ -256,15 +396,27 @@ export function AiPanel({
                 />
               </label>
               <div className="ai-actions">
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => {
-                    controller.apply(label);
-                  }}
-                >
-                  Apply
-                </button>
+                {gated ? (
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => {
+                      controller.applyForced(label);
+                    }}
+                  >
+                    Apply anyway
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => {
+                      controller.apply(label);
+                    }}
+                  >
+                    Apply
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
