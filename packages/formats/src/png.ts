@@ -1,3 +1,8 @@
+import {
+  WorkspaceError,
+  PREVIEW_IMAGE_MAX_DIMENSION,
+  PREVIEW_IMAGE_MAX_PIXELS,
+} from "@voxel-maker/shared";
 import { crc32 } from "./crc32.js";
 
 /**
@@ -19,11 +24,11 @@ import { crc32 } from "./crc32.js";
  * "preview image 2048x2048 and 16 MiB decoded RGBA").
  */
 
-/** Maximum width or height of one encoded image. */
-export const PNG_MAX_DIMENSION = 4096;
+/** Maximum width or height of one encoded image (ARCHITECTURE.md). */
+export const PNG_MAX_DIMENSION = PREVIEW_IMAGE_MAX_DIMENSION;
 
 /** Maximum total pixels of one encoded image (16 MiB decoded RGBA). */
-export const PNG_MAX_PIXELS = 4_194_304;
+export const PNG_MAX_PIXELS = PREVIEW_IMAGE_MAX_PIXELS;
 
 /** The raw RGBA row length for one scanline including its filter byte. */
 const ROW_STRIDE_OFFSET = 1;
@@ -52,29 +57,44 @@ export function validatePngInput(
   height: number,
 ): void {
   if (!Number.isInteger(width) || !Number.isInteger(height)) {
-    throw new Error(
-      `PNG dimensions must be integers, got ${String(width)}x${String(height)}`,
-    );
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_IMAGE_DIMENSIONS",
+      message: `PNG dimensions must be integers, got ${String(width)}x${String(height)}`,
+      context: { width, height },
+    });
   }
   if (width < 1 || height < 1) {
-    throw new Error(
-      `PNG dimensions must be positive, got ${String(width)}x${String(height)}`,
-    );
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_IMAGE_DIMENSIONS",
+      message: `PNG dimensions must be positive, got ${String(width)}x${String(height)}`,
+      context: { width, height },
+    });
   }
   if (width > PNG_MAX_DIMENSION || height > PNG_MAX_DIMENSION) {
-    throw new Error(
-      `PNG dimensions exceed the ${String(PNG_MAX_DIMENSION)}px limit: ${String(width)}x${String(height)}`,
-    );
+    throw new WorkspaceError({
+      family: "limit",
+      code: "IMAGE_DIMENSION_LIMIT",
+      message: `PNG dimensions exceed the ${String(PNG_MAX_DIMENSION)}px limit: ${String(width)}x${String(height)}`,
+      context: { width, height },
+    });
   }
   if (width * height > PNG_MAX_PIXELS) {
-    throw new Error(
-      `PNG pixel count exceeds the ${String(PNG_MAX_PIXELS)}px limit: ${String(width * height)}`,
-    );
+    throw new WorkspaceError({
+      family: "limit",
+      code: "IMAGE_PIXEL_LIMIT",
+      message: `PNG pixel count exceeds the ${String(PNG_MAX_PIXELS)}px limit: ${String(width * height)}`,
+      context: { width, height },
+    });
   }
   if (rgba.byteLength !== width * height * 4) {
-    throw new Error(
-      `PNG buffer holds ${String(rgba.byteLength)} bytes, expected ${String(width * height * 4)} for ${String(width)}x${String(height)} RGBA`,
-    );
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_IMAGE_BUFFER_LENGTH",
+      message: `PNG buffer holds ${String(rgba.byteLength)} bytes, expected ${String(width * height * 4)} for ${String(width)}x${String(height)} RGBA`,
+      context: { width, height },
+    });
   }
 }
 

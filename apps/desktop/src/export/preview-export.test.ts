@@ -33,15 +33,26 @@ const PNG_SIGNATURE = Uint8Array.of(
 
 function makePicker(
   savePath?: string | ((suggested: string) => string | undefined),
-): FilePicker {
-  return {
+): FilePicker & { readonly imagePickCalls: number } {
+  let imagePickCalls = 0;
+  const base = {
     pickOpenPath: () => Promise.resolve(undefined),
-    pickSavePath: (suggested) =>
+    pickSavePath: (suggested: string) =>
       Promise.resolve(
         typeof savePath === "function"
           ? savePath(suggested)
           : (savePath ?? suggested),
       ),
+    pickSaveImagePath: (suggested: string) => {
+      imagePickCalls += 1;
+      return base.pickSavePath(suggested);
+    },
+  };
+  return {
+    ...base,
+    get imagePickCalls() {
+      return imagePickCalls;
+    },
   };
 }
 
@@ -258,5 +269,44 @@ describe("createPreviewExportService (through the composition)", () => {
     await composition.fileService.newProject();
     const result = await composition.previewExport.exportPreviews({ size: 32 });
     expect(result).toBeUndefined();
+  });
+
+  it("uses the PNG-filtered save picker for preview exports", async () => {
+    const picker = makePicker("/tmp/out.png");
+    const composition = createDesktopComposition({
+      storage: new MemoryProjectStorage(),
+      imageStorage: new MemoryImageStorage(),
+      picker,
+      prompts: createScriptedPrompts(true),
+      recent: createMemoryRecentProjects(),
+    });
+    await composition.fileService.newProject();
+    const result = await composition.previewExport.exportPreviews({ size: 32 });
+    expect(result?.ok).toBe(true);
+    expect(picker.imagePickCalls).toBe(1);
+  });
+
+  it("surfaces a structured error when the overwrite preflight fails", async () => {
+    const failing = {
+      exists() {
+        return Promise.reject(new Error("disk unavailable"));
+      },
+      writeImageAtomic() {
+        return Promise.resolve({
+          tempPath: "",
+          backupCreated: false,
+          directorySyncSucceeded: true,
+        } as AtomicWriteResult);
+      },
+    } satisfies ImageStoragePort;
+    const composition = createComposition({
+      imageStorage: failing,
+      savePath: "/tmp/out.png",
+    });
+    await composition.fileService.newProject();
+    const result = await composition.previewExport.exportPreviews({ size: 32 });
+    expect(result?.ok).toBe(false);
+    expect(result?.error?.code).toBe("PREVIEW_IO_FAILED");
+    expect(result?.paths).toEqual([]);
   });
 });

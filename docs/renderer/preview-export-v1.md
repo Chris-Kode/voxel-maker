@@ -59,10 +59,12 @@ radius 8).
 
 ### Requested dimensions
 
-The caller requests square dimensions. Bounds follow ARCHITECTURE.md:
-`MAX_PREVIEW_DIMENSION = 4096` per side and `MAX_PREVIEW_PIXELS =
-4,194,304` (16 MiB decoded RGBA). The shell offers 512/1024/2048 presets;
-the default is 1024.
+The caller requests square dimensions. Bounds follow ARCHITECTURE.md's
+hard default ("preview image | 2048x2048 and 16 MiB decoded RGBA"):
+`MAX_PREVIEW_DIMENSION = 2048` per side and `MAX_PREVIEW_PIXELS =
+4,194,304` (16 MiB decoded RGBA). The constants live once in
+`@voxel-maker/shared` and are shared by the renderer protocol and the PNG
+encoder. The shell offers 512/1024/2048 presets; the default is 1024.
 
 ## Rendering (`@voxel-maker/renderer`, S15.2 service)
 
@@ -100,7 +102,7 @@ allocation.
 validate requested size
         │
         ▼
-save dialog (suggested <title>.png)
+PNG-filtered save dialog (suggested <title>.png)
         │  user cancels -> abort
         ▼
 derive four paths: <base>-perspective.png, -front.png, -side.png, -top.png
@@ -114,6 +116,10 @@ per view: render -> encode -> scoped atomic write (progress: view + phase)
         ▼
 completed / cancelled (partial paths) / failed (structured error)
 ```
+
+The overwrite preflight (`exists` checks plus the confirmation prompt)
+is part of the run's error contract: a failing storage port surfaces a
+structured `PREVIEW_IO_FAILED` error instead of an unhandled rejection.
 
 ### Scoped atomic native writes
 
@@ -155,7 +161,7 @@ revision, semantic hash, and dirty state across runs.
   partial paths, structured errors, and unchanged revision/hash/dirty.
 - **PNG codec** (`packages/formats/src/png.test.ts`): independent-decoder
   round trips, multi-block streams, byte determinism, canonical
-  structure, and bounded-input rejection.
+  structure, and bounded-input rejection with structured error codes.
 
 ## Follow-ups
 

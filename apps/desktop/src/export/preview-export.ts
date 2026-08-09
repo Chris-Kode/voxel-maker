@@ -214,21 +214,38 @@ export function createPreviewExportService(
       const suggested = suggestedPreviewName(
         typeof title === "string" ? title : undefined,
       );
-      const base = await picker.pickSavePath(suggested);
+      // PNG-filtered save dialog when the picker supports it.
+      const base = await (picker.pickSaveImagePath ?? picker.pickSavePath)(
+        suggested,
+      );
       if (base === undefined) return undefined;
       const basePath = stripPngExtension(base);
       const paths = previewImagePaths(base);
       // Overwrite confirmation before any render or write: the user
-      // decides once, and declining aborts the whole run.
+      // decides once, and declining aborts the whole run. The preflight
+      // is part of the run's error contract: a failing port surfaces a
+      // structured error instead of an unhandled rejection.
       const existing: string[] = [];
-      for (const path of paths) {
-        if (await imageStorage.exists(path)) existing.push(path);
-      }
-      if (
-        existing.length > 0 &&
-        !(await prompts.confirm(PROMPT_MESSAGES.overwritePreviews(existing)))
-      ) {
-        return undefined;
+      try {
+        for (const path of paths) {
+          if (await imageStorage.exists(path)) existing.push(path);
+        }
+        if (
+          existing.length > 0 &&
+          !(await prompts.confirm(PROMPT_MESSAGES.overwritePreviews(existing)))
+        ) {
+          return undefined;
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          cancelled: false,
+          paths: [],
+          error: toWorkspaceError(error, {
+            family: "io",
+            code: "PREVIEW_IO_FAILED",
+          }),
+        };
       }
       cancelled = false;
       runSerial += 1;

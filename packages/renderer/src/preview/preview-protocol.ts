@@ -1,6 +1,11 @@
-import { WorkspaceError } from "@voxel-maker/shared";
+import {
+  PREVIEW_IMAGE_MAX_DIMENSION,
+  PREVIEW_IMAGE_MAX_PIXELS,
+  WorkspaceError,
+} from "@voxel-maker/shared";
 import type { Vec3 } from "@voxel-maker/math";
 import type { WorldBounds } from "../pick.js";
+import { add, normalize, scale } from "./vec3.js";
 
 /**
  * Standard preview render protocol (plan S15.1/S8.5, ticket #25): the
@@ -40,10 +45,10 @@ export interface PreviewSpec {
 export const DEFAULT_PREVIEW_SIZE = 1024;
 
 /** Maximum width or height of one exported preview (ARCHITECTURE.md bounds). */
-export const MAX_PREVIEW_DIMENSION = 4096;
+export const MAX_PREVIEW_DIMENSION = PREVIEW_IMAGE_MAX_DIMENSION;
 
 /** Maximum total pixels of one exported preview (16 MiB decoded RGBA). */
-export const MAX_PREVIEW_PIXELS = 4_194_304;
+export const MAX_PREVIEW_PIXELS = PREVIEW_IMAGE_MAX_PIXELS;
 
 /** Fixed vertical field of view in radians (matches the viewport, 50 deg). */
 export const PREVIEW_FOV_Y = (50 * Math.PI) / 180;
@@ -79,7 +84,9 @@ export const PREVIEW_DIFFUSE = 0.65;
  * from the upper-front-left of the asset. Constant across all views so
  * exported images share one consistent look.
  */
-export const PREVIEW_LIGHT_DIRECTION: Vec3 = normalize([-0.5, 0.8, 0.5]);
+export const PREVIEW_LIGHT_DIRECTION: Vec3 = normalize([-0.5, 0.8, 0.5]) ?? [
+  0, 0, 1,
+];
 
 /** Fallback color for a material id missing from the document (magenta). */
 export const PREVIEW_MISSING_MATERIAL: Vec3 = [1, 0, 1];
@@ -87,7 +94,7 @@ export const PREVIEW_MISSING_MATERIAL: Vec3 = [1, 0, 1];
 /** Unit camera direction for each standard view (toward the camera). */
 const VIEW_DIRECTIONS: Readonly<Record<PreviewViewId, Vec3>> = {
   // Same direction as the viewport's default camera (24, 20, 24).
-  perspective: normalize([24, 20, 24]),
+  perspective: normalize([24, 20, 24]) ?? [0, 0, 1],
   front: [0, 0, 1],
   // "Side" is the asset's right side, matching the viewport's right view.
   side: [1, 0, 0],
@@ -230,18 +237,4 @@ export function frameStandardView(
         : { kind: "orthographic", halfWidth, halfHeight },
     contentBounds: bounds,
   };
-}
-
-function normalize(v: Vec3): Vec3 {
-  const length = Math.hypot(v[0], v[1], v[2]);
-  if (length === 0) return [0, 0, 0];
-  return [v[0] / length, v[1] / length, v[2] / length];
-}
-
-function scale(v: Vec3, factor: number): Vec3 {
-  return [v[0] * factor, v[1] * factor, v[2] * factor];
-}
-
-function add(a: Vec3, b: Vec3): Vec3 {
-  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 }

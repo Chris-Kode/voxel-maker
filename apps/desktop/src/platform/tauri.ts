@@ -162,18 +162,14 @@ export class TauriFilePicker implements FilePicker {
     });
     return typeof selected === "string" ? selected : undefined;
   }
-}
 
-/**
- * Save-dialog picker for one preview image (PNG extension); the caller
- * derives the four standard-view names from the chosen base path.
- */
-export async function pickPreviewImagePath(
-  suggestedName: string,
-): Promise<string | undefined> {
-  const selected = await saveDialog({
-    defaultPath: suggestedName,
-    filters: [{ name: "PNG image", extensions: ["png"] }],
-  });
-  return typeof selected === "string" ? selected : undefined;
+  async pickSaveImagePath(suggestedName: string): Promise<string | undefined> {
+    // Preview exports use a PNG filter; the caller derives the four
+    // standard-view names from the chosen base path (ticket #25).
+    const selected = await saveDialog({
+      defaultPath: suggestedName,
+      filters: [{ name: "PNG image", extensions: ["png"] }],
+    });
+    return typeof selected === "string" ? selected : undefined;
+  }
 }

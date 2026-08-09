@@ -66,6 +66,11 @@ import {
 export interface FilePicker {
   pickOpenPath(): Promise<string | undefined>;
   pickSavePath(suggestedName: string): Promise<string | undefined>;
+  /**
+   * PNG-filtered save picker for preview exports (ticket #25). Optional:
+   * services fall back to `pickSavePath` when a picker predates it.
+   */
+  pickSaveImagePath?(suggestedName: string): Promise<string | undefined>;
 }
 
 export interface RendererService {

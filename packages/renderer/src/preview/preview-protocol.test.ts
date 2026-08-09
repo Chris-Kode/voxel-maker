@@ -88,11 +88,9 @@ describe("validatePreviewSpec", () => {
     expect(() =>
       validatePreviewSpec({ ...base, height: MAX_PREVIEW_DIMENSION + 1 }),
     ).toThrow(/limit/);
-    // Within the dimension bound but above the pixel budget.
-    expect(() =>
-      validatePreviewSpec({ view: "front", width: 4096, height: 4096 }),
-    ).toThrow(/pixel count/);
-    expect(MAX_PREVIEW_PIXELS).toBe(MAX_PREVIEW_DIMENSION ** 2 / 4);
+    // The pixel budget equals 2048x2048 (16 MiB decoded RGBA), so every
+    // in-bounds size is at or below it; the check stays as defense.
+    expect(MAX_PREVIEW_PIXELS).toBe(MAX_PREVIEW_DIMENSION ** 2);
   });
 });
 

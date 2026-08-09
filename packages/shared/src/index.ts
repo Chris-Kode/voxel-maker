@@ -27,6 +27,16 @@ export type VolumeId = OpaqueId<"VolumeId">;
 export type MaterialId = number & { readonly __kind: "MaterialId" };
 
 /**
+ * Hard default limits for standard preview images (ARCHITECTURE.md
+ * "preview image | 2048x2048 and 16 MiB decoded RGBA"). Single source of
+ * truth for every package that encodes or bounds preview images.
+ */
+export const PREVIEW_IMAGE_MAX_DIMENSION = 2048;
+/** 2048x2048 pixels = 16 MiB decoded RGBA. */
+export const PREVIEW_IMAGE_MAX_PIXELS =
+  PREVIEW_IMAGE_MAX_DIMENSION * PREVIEW_IMAGE_MAX_DIMENSION;
+
+/**
  * A small, exception-isolated listener set (ARCHITECTURE.md assigns event
  * utilities to `shared`). `emit` runs every listener and swallows listener
  * failures so one bad subscriber can never break the notifier; `add`

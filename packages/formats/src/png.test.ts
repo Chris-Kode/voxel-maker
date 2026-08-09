@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { inflateSync } from "node:zlib";
-import { encodePng, PNG_MAX_DIMENSION } from "./png.js";
+import { WorkspaceError } from "@voxel-maker/shared";
+import { encodePng, PNG_MAX_DIMENSION, validatePngInput } from "./png.js";
 
 /**
  * PNG encoder tests (plan S8.5/S15.2, ticket #25). The encoder is
@@ -149,9 +150,9 @@ describe("encodePng", () => {
   });
 
   it("splits large payloads across multiple stored blocks", () => {
-    // 4096x5 raw scanlines exceed the 65535-byte stored block limit.
+    // 2048x10 raw scanlines exceed the 65535-byte stored block limit.
     const width = PNG_MAX_DIMENSION;
-    const height = 5;
+    const height = 10;
     const pixels = new Uint8Array(width * height * 4);
     for (let i = 0; i < pixels.length; i += 1) pixels[i] = (i * 13) & 0xff;
     const decoded = decodePng(encodePng(pixels, width, height));
@@ -193,8 +194,27 @@ describe("encodePng", () => {
     expect(() => encodePng(pixels, -2, 2)).toThrow(/positive/);
     expect(() => encodePng(pixels, PNG_MAX_DIMENSION + 1, 2)).toThrow(/limit/);
     expect(() => encodePng(pixels, 2, PNG_MAX_DIMENSION + 1)).toThrow(/limit/);
-    // 4096x4096 is within the dimension limit but exceeds the pixel budget.
-    expect(() => encodePng(pixels, 4096, 4096)).toThrow(/pixel count/);
     expect(() => encodePng(new Uint8Array(15), 2, 2)).toThrow(/expected 16/);
+  });
+
+  it("throws structured WorkspaceError codes for rejected inputs", () => {
+    let caught: unknown;
+    try {
+      validatePngInput(pattern2x2(), PNG_MAX_DIMENSION + 1, 2);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(WorkspaceError);
+    expect((caught as WorkspaceError).family).toBe("limit");
+    expect((caught as WorkspaceError).code).toBe("IMAGE_DIMENSION_LIMIT");
+    let bufferError: unknown;
+    try {
+      validatePngInput(new Uint8Array(15), 2, 2);
+    } catch (error) {
+      bufferError = error;
+    }
+    expect((bufferError as WorkspaceError).code).toBe(
+      "INVALID_IMAGE_BUFFER_LENGTH",
+    );
   });
 });

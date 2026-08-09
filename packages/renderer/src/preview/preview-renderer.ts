@@ -8,6 +8,7 @@ import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 import type { ChunkSampler } from "../types.js";
 import { buildChunkMesh } from "../mesher.js";
 import { nodeWorldMatrices, worldContentBounds } from "../pick.js";
+import { cross, dot, normalize, sub } from "./vec3.js";
 import {
   PREVIEW_AMBIENT,
   PREVIEW_BACKGROUND,
@@ -470,28 +471,6 @@ function rasterize(
     draw(transparent[i] as ProjectedTriangle, false);
   }
   return rgba;
-}
-
-function sub(a: Vec3, b: Vec3): Vec3 {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-
-function dot(a: Vec3, b: Vec3): number {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-function cross(a: Vec3, b: Vec3): Vec3 {
-  return [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-}
-
-function normalize(v: Vec3): Vec3 | undefined {
-  const length = Math.hypot(v[0], v[1], v[2]);
-  if (length === 0) return undefined;
-  return [v[0] / length, v[1] / length, v[2] / length];
 }
 
 /** Renders one standard preview view of the document (S15.2 service). */

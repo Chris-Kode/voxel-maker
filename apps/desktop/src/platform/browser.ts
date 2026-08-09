@@ -1,8 +1,9 @@
-import type {
-  AtomicWriteResult,
-  ImageStoragePort,
-  ProjectStoragePort,
-  RecoveryJournalPort,
+import {
+  MemoryImageStorage,
+  type AtomicWriteResult,
+  type ImageStoragePort,
+  type ProjectStoragePort,
+  type RecoveryJournalPort,
 } from "@voxel-maker/storage";
 import { journalPathFor } from "@voxel-maker/storage";
 import type { FilePicker } from "../composition.js";
@@ -90,35 +91,28 @@ export class BrowserProjectStorage
   }
 }
 
-/** Browser preview-image storage: in-memory map + download fallback. */
+/**
+ * Browser preview-image storage: the shared in-memory adapter plus a
+ * download fallback (the plain-browser dev build has no native surface).
+ */
 export class BrowserImageStorage implements ImageStoragePort {
-  readonly #files = new Map<string, Uint8Array>();
+  readonly #inner = new MemoryImageStorage();
 
   writeImageAtomic(
     path: string,
     bytes: Uint8Array,
   ): Promise<AtomicWriteResult> {
-    this.#files.set(path, Uint8Array.from(bytes));
     downloadBytes(path, bytes);
-    return Promise.resolve({
-      tempPath: path,
-      backupCreated: false,
-      directorySyncSucceeded: true,
-    });
+    return this.#inner.writeImageAtomic(path, bytes);
   }
 
   exists(path: string): Promise<boolean> {
-    return Promise.resolve(this.#files.has(path));
+    return this.#inner.exists(path);
   }
 
   /** Copies of every stored path (tests and diagnostics). */
   files(): ReadonlyMap<string, Uint8Array> {
-    return new Map(
-      [...this.#files.entries()].map(([path, bytes]) => [
-        path,
-        Uint8Array.from(bytes),
-      ]),
-    );
+    return this.#inner.files();
   }
 }
 
@@ -138,6 +132,10 @@ export class BrowserFilePicker implements FilePicker {
   }
 
   pickSavePath(suggestedName: string): Promise<string | undefined> {
+    return Promise.resolve(suggestedName);
+  }
+
+  pickSaveImagePath(suggestedName: string): Promise<string | undefined> {
     return Promise.resolve(suggestedName);
   }
 }
