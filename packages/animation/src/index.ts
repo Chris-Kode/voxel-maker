@@ -34,7 +34,20 @@ export {
   type PlaybackState,
 } from "./playback.js";
 export {
+  ANIMATED_DEMOS,
+  createAbstractAnimationDocument,
+  createAbstractSculptureClip,
   createAnimatedWheelDocument,
+  createCharacterWaveDocument,
+  createCharacterWaveClip,
   createChestLidClip,
+  createConstrainedChestLidDocument,
+  createContinuousWheelClip,
+  createContinuousWheelDocument,
+  createLinkedArmDocument,
+  createLinkedArmReachClip,
   createWheelSpinClip,
+  createWingFlapClip,
+  createWingFlapDocument,
+  type AnimatedDemo,
 } from "./fixtures.js";

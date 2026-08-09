@@ -200,8 +200,8 @@ export function createChestLidFixture(): VoxelDocument {
           joint,
           constraint(
             componentId("component:rig:chest-lid:hinge"),
-            [FREE[0], FREE[0], -Math.PI / 6],
-            [FREE[1], FREE[1], Math.PI / 12],
+            [-Math.PI / 6, FREE[0], FREE[0]],
+            [Math.PI / 4, FREE[1], FREE[1]],
           ),
         ],
         volume: {
@@ -395,14 +395,36 @@ export function createWingsFixture(): VoxelDocument {
         },
       },
       {
+        nodeId: nodeId("node:rig:wings:left-mirror"),
+        name: "Left Mirror",
+        parentId: null,
+        // The mirror lives on a parent so that rotation animation of the
+        // wing node (ticket #30) composes through it instead of replacing
+        // the mirror: the left wing flaps mirrored about the body.
+        transform: { ...identity, rotation: [0, 1, 0, 0] },
+        components: [],
+        volume: {
+          volumeId: volumeId("volume:rig:wings:left-mirror"),
+          bounds: [
+            [0, 0, 0],
+            [1, 1, 1],
+          ],
+        },
+      },
+      {
         nodeId: nodeId("node:rig:wings:left"),
         name: "Left Wing",
-        parentId: null,
-        transform: { ...identity, rotation: [0, 1, 0, 0] },
+        parentId: nodeId("node:rig:wings:left-mirror"),
+        transform: identity,
         components: [
           voxel(volumeId("volume:rig:wings:left")),
           pivot([0, 0, 0]),
           joint,
+          constraint(
+            componentId("component:rig:wings:left-flap"),
+            [FREE[0], FREE[0], -Math.PI / 4],
+            [FREE[1], FREE[1], Math.PI / 6],
+          ),
         ],
         volume: {
           volumeId: volumeId("volume:rig:wings:left"),
