@@ -134,3 +134,107 @@ export {
   SEARCH_NODES_CONTRACT,
   MEASURE_DISTANCE_CONTRACT,
 } from "./tools/index.js";
+
+export {
+  AGENT_SYSTEM_PROMPT,
+  createAgentSession,
+  type AgentEvent,
+  type AgentLoopOptions,
+  type AgentRunReason,
+  type AgentRunResult,
+  type AgentSession,
+} from "./agent/loop.js";
+export {
+  AGENT_STATES,
+  AgentStateMachine,
+  TERMINAL_STATES,
+  TRANSITIONS,
+  type AgentState,
+} from "./agent/state.js";
+export {
+  DEFAULT_AGENT_BUDGETS,
+  BudgetLedger,
+  budgetLimitError,
+  resolveAgentBudgets,
+  type AgentBudgets,
+  type AnimationReservation,
+} from "./agent/budgets.js";
+export {
+  AgentTranscript,
+  type RetentionDays,
+  type TranscriptEntry,
+  type TranscriptOptions,
+  type TranscriptSnapshot,
+} from "./agent/transcript.js";
+export {
+  DEFAULT_RETRY_POLICY,
+  ProviderError,
+  chatResponse,
+  estimateRequestTokens,
+  estimateTextTokens,
+  isProviderError,
+  isRetryable,
+  shouldRetry,
+  streamToResponse,
+  validateToolCall,
+  type ChatMessage,
+  type ChatOptions,
+  type ChatResponse,
+  type ProviderAdapter,
+  type ProviderChatRequest,
+  type ProviderErrorData,
+  type ProviderErrorFamily,
+  type ProviderEvent,
+  type ProviderFinishReason,
+  type ProviderUsage,
+  type RetryPolicy,
+  type ToolCall,
+  type ToolCallResult,
+} from "./provider/types.js";
+export {
+  DeterministicProvider,
+  type DeterministicProviderOptions,
+  type DeterministicStep,
+} from "./provider/deterministic.js";
+export {
+  OpenAIProvider,
+  type OpenAIAdapterOptions,
+} from "./provider/openai.js";
+export {
+  CONSENT_VERSION,
+  DEFAULT_CONSENT_DURATION_MS,
+  DISCLOSURE_CATEGORIES,
+  MemoryConsentStore,
+  consentCovers,
+  consentExpired,
+  consentRequiredError,
+  createConsent,
+  type ConsentInput,
+  type ConsentStore,
+  type DisclosureCategory,
+  type ProviderConsent,
+} from "./provider/consent.js";
+export {
+  KEYCHAIN_SERVICE,
+  MemoryCredentialStore,
+  Secret,
+  secret,
+  type CredentialReference,
+  type CredentialStore,
+} from "./provider/credentials.js";
+export {
+  REDACTION_MARKER,
+  isRedacted,
+  redactDiagnostics,
+  redactJson,
+  redactProviderPayload,
+  redactSecrets,
+} from "./provider/redact.js";
+export {
+  OPENAI_ALLOWED_MODELS,
+  OPENAI_MODEL_PRICES,
+  estimateCostUsd,
+  estimateReservedCostUsd,
+  priceForModel,
+  type ModelPrice,
+} from "./provider/cost.js";
