@@ -4,7 +4,6 @@ import type {
   SceneAdapter,
   ScenePreviewProjection,
 } from "@voxel-maker/renderer";
-import type { ChunkNamespace } from "@voxel-maker/renderer";
 import {
   consentCovers,
   createAgentSession,
@@ -296,26 +295,37 @@ class AiControllerImpl implements AiController {
   }
 
   async refreshStatus(): Promise<void> {
-    const reference = await this.#credentials.get(
-      KEYCHAIN_SERVICE,
-      this.#provider.providerId,
-    );
-    const configured = reference !== undefined && reference.reveal().length > 0;
-    const record = await this.#consentStore.get(
-      this.#provider.providerId,
-      this.#model,
-    );
-    const consented =
-      record !== undefined &&
-      consentCovers(
-        record,
-        { providerId: this.#provider.providerId, model: this.#model },
-        this.#clock?.now() ?? Date.now(),
+    // Store failures (e.g. an unavailable OS keychain) degrade to the
+    // unconfigured state instead of rejecting: the panel then shows the
+    // configuration guidance and manual editing keeps working.
+    try {
+      const reference = await this.#credentials.get(
+        KEYCHAIN_SERVICE,
+        this.#provider.providerId,
       );
-    if (this.#configured !== configured || this.#consented !== consented) {
-      this.#configured = configured;
-      this.#consented = consented;
-      this.#emit();
+      const configured =
+        reference !== undefined && reference.reveal().length > 0;
+      const record = await this.#consentStore.get(
+        this.#provider.providerId,
+        this.#model,
+      );
+      const consented =
+        record !== undefined &&
+        consentCovers(
+          record,
+          { providerId: this.#provider.providerId, model: this.#model },
+          this.#clock?.now() ?? Date.now(),
+        );
+      if (this.#configured !== configured || this.#consented !== consented) {
+        this.#configured = configured;
+        this.#consented = consented;
+        this.#emit();
+      }
+    } catch {
+      if (this.#configured) {
+        this.#configured = false;
+        this.#emit();
+      }
     }
   }
 
@@ -413,10 +423,19 @@ class AiControllerImpl implements AiController {
     }
     // Authoritative configuration check at run time: a stored key (e.g.
     // the OS keychain after a restart) is never stale in the snapshot.
-    const storedKey = await this.#credentials.get(
-      KEYCHAIN_SERVICE,
-      this.#provider.providerId,
-    );
+    let storedKey: Awaited<ReturnType<CredentialStore["get"]>>;
+    try {
+      storedKey = await this.#credentials.get(
+        KEYCHAIN_SERVICE,
+        this.#provider.providerId,
+      );
+    } catch {
+      this.#editor.pushNotice(
+        "error",
+        "The provider credential store is unavailable; AI runs are disabled",
+      );
+      return;
+    }
     if (storedKey === undefined || storedKey.reveal().length === 0) {
       this.#editor.pushNotice(
         "info",
@@ -487,10 +506,7 @@ class AiControllerImpl implements AiController {
 
     this.#agentSession = agent;
     this.#preview = preview;
-    const projection = this.#adapter.projectPreview(
-      preview,
-      preview.namespace as ChunkNamespace,
-    );
+    const projection = this.#adapter.projectPreview(preview, preview.namespace);
     this.#projection = projection;
     this.#prompt = trimmed;
     this.#lastPrompt = trimmed;

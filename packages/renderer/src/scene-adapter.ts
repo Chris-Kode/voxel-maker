@@ -190,12 +190,14 @@ export interface SceneAdapter {
    * commits, meshes through the shared pool tagged with the preview
    * namespace, and installs into a dedicated root group. The returned
    * handle's `dispose()` removes exactly this overlay; live revision,
-   * history, autosave, and journal are never touched. A namespace can be
-   * projected at most once; projecting the same namespace twice throws.
+   * history, autosave, and journal are never touched. The namespace is
+   * validated against the worker-protocol pattern (a non-`preview:`
+   * namespace throws), and a namespace can be projected at most once
+   * (projecting the same namespace twice throws).
    */
   projectPreview(
     store: DocumentStoreRead,
-    namespace: ChunkNamespace,
+    namespace: string,
   ): ScenePreviewProjection;
   /**
    * Per-frame step: dispatch and install meshes within the frame budgets,
@@ -706,7 +708,7 @@ class ChunkProjection {
 }
 
 /** True when a namespace is a valid `preview:<session>` namespace. */
-function isPreviewNamespace(namespace: ChunkNamespace): boolean {
+function isPreviewNamespace(namespace: string): namespace is ChunkNamespace {
   return isValidChunkNamespace(namespace) && namespace !== "live";
 }
 
@@ -793,7 +795,7 @@ class SceneAdapterImpl implements SceneAdapter {
 
   projectPreview(
     store: DocumentStoreRead,
-    namespace: ChunkNamespace,
+    namespace: string,
   ): ScenePreviewProjection {
     if (!isPreviewNamespace(namespace)) {
       throw new Error(

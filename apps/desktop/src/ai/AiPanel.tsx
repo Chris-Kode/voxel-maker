@@ -4,7 +4,6 @@ import {
   DEFAULT_AI_APPLY_LABEL,
   MAX_AI_PROMPT_LENGTH,
 } from "./ai-controller.js";
-import { OPENAI_ALLOWED_MODELS } from "@voxel-maker/agent";
 
 /**
  * Integrated AI panel (plan S12.10/S12.14, ticket #34): prompt entry,
@@ -440,6 +439,3 @@ function AiDiffSummary({
     </div>
   );
 }
-
-/** The v1 provider surface rendered in the settings (allowlist). */
-export const AI_MODELS = OPENAI_ALLOWED_MODELS;
