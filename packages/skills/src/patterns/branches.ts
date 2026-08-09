@@ -24,12 +24,10 @@ export type BranchesParams = {
   readonly trunkSize: number;
   /** Number of branching generations after the trunk (1..4). */
   readonly levels: number;
-  /** Segment length per branch generation. */
+  /** Horizontal run length of each branch segment in voxels. */
   readonly branchLength: number;
   /** Branch cross-section thickness in voxels. */
   readonly branchSize: number;
-  /** Horizontal offset of each branch from its parent tip. */
-  readonly spread: number;
   /** Vertical rise of each branch from its parent tip. */
   readonly rise: number;
 };
@@ -92,7 +90,6 @@ export const BRANCHES_GENERATOR: GeneratorDefinition<BranchesParams> = {
       levels: boundedIntSchema(1, MAX_BRANCH_LEVELS),
       branchLength: boundedIntSchema(1, MAX_BRANCH_LENGTH),
       branchSize: boundedIntSchema(1, 8),
-      spread: boundedIntSchema(1, 32),
       rise: boundedIntSchema(1, 32),
     },
     required: [
@@ -102,7 +99,6 @@ export const BRANCHES_GENERATOR: GeneratorDefinition<BranchesParams> = {
       "levels",
       "branchLength",
       "branchSize",
-      "spread",
       "rise",
     ],
   },
@@ -133,9 +129,9 @@ export const BRANCHES_GENERATOR: GeneratorDefinition<BranchesParams> = {
             seededInt(random, HORIZONTAL_DIRECTIONS.length)
           ] as readonly [number, number];
           const end: Vec3i = [
-            tip[0] + dx * params.spread,
+            tip[0] + dx * params.branchLength,
             tip[1] + params.rise,
-            tip[2] + dz * params.spread,
+            tip[2] + dz * params.branchLength,
           ];
           const segment = segmentBox(tip, end, params.branchSize);
           proposed.push(commands.fillBox(segment));

@@ -3,6 +3,7 @@ import { canonicalJson } from "@voxel-maker/shared";
 import { GENERATOR_DEFINITIONS, proposeGenerator } from "./registry.js";
 import {
   DEFAULT_GENERATOR_LIMITS,
+  GENERATOR_BOUNDS_CODE,
   GENERATOR_COMMAND_LIMIT_CODE,
   GENERATOR_CONTRACT_VERSION,
   GENERATOR_VOXEL_LIMIT_CODE,
@@ -205,6 +206,35 @@ describe("cost preflight and budgets (AC2)", () => {
       }),
     ).toThrowError(
       expect.objectContaining({ code: GENERATOR_VOXEL_LIMIT_CODE }) as Error,
+    );
+  });
+
+  it("rejects derived geometry outside the engine coordinate interval", () => {
+    // Parameter schemas bound the inputs; composed placements must stay
+    // inside the engine coordinate interval too.
+    expect(() =>
+      proposeGenerator(
+        "generator.linearRepeat",
+        {
+          source: { min: [0, 0, 0], max: [2, 1, 1] },
+          count: 3,
+          delta: [1_000_000, 0, 0],
+        },
+        CONTEXT,
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: GENERATOR_BOUNDS_CODE }) as Error,
+    );
+    // A step box starting near the interval edge must not push its max
+    // corner past the engine limit either.
+    expect(() =>
+      proposeGenerator(
+        "generator.stairs",
+        { ...STAIRS, start: [1_048_573, 0, 0] },
+        CONTEXT,
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: GENERATOR_BOUNDS_CODE }) as Error,
     );
   });
 

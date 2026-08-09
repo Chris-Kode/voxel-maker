@@ -2,9 +2,13 @@ import type { GeneratorDefinition, GeneratorContext } from "../generator.js";
 import { createCommandFactory } from "../generator.js";
 import type { Command } from "@voxel-maker/commands";
 import type { IntAabb, ShapeAxis, Vec3i } from "../geometry.js";
-import { unionAabb } from "../geometry.js";
-import { AXIS_SCHEMA, VEC3I_SCHEMA, boundedIntSchema } from "../schemas.js";
-import { WorkspaceError } from "@voxel-maker/shared";
+import { axisIndex, unionAabb } from "../geometry.js";
+import {
+  AXIS_SCHEMA,
+  VEC3I_SCHEMA,
+  boundedIntSchema,
+  invalidGeneratorParams,
+} from "../schemas.js";
 
 /**
  * Wheel generator (plan S14.5, ticket #37): a deterministic wheel built
@@ -43,12 +47,6 @@ function axisExtent(
 ): [number, number] {
   const coordinate = center[axisIndex(axis)] as number;
   return [coordinate, coordinate + thickness];
-}
-
-function axisIndex(axis: ShapeAxis): number {
-  if (axis === "x") return 0;
-  if (axis === "y") return 1;
-  return 2;
 }
 
 /** Half-open box for one cardinal spoke along `along` with sign. */
@@ -128,12 +126,7 @@ export const WHEEL_GENERATOR: GeneratorDefinition<WheelParams> = {
   parse(value: unknown): WheelParams {
     const params = value as WheelParams;
     if (params.hubRadius > params.radius) {
-      throw new WorkspaceError({
-        family: "validation",
-        code: "INVALID_GENERATOR_PARAMS",
-        message: "hubRadius must not exceed radius",
-        path: ["hubRadius"],
-      });
+      invalidGeneratorParams("hubRadius must not exceed radius", ["hubRadius"]);
     }
     return params;
   },

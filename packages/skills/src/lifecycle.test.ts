@@ -14,7 +14,7 @@ import {
   previewSessionId,
 } from "@voxel-maker/agent";
 import { commandId, materialId, transactionId } from "@voxel-maker/shared";
-import { proposeGenerator } from "./registry.js";
+import { GENERATOR_DEFINITIONS, proposeGenerator } from "./registry.js";
 import { FIXTURE_IDS, createGeneratorFixture } from "./fixtures.js";
 
 /**
@@ -77,6 +77,85 @@ function recordingFixture() {
   );
   return { ...fixture, bus, records };
 }
+
+describe("cost preflight matches the enforced preview budget (AC2)", () => {
+  it("agrees with the preview session's estimator for every generator", () => {
+    const representative: Readonly<Record<string, unknown>> = {
+      "generator.mirror": {
+        region: { min: [0, 0, 0], max: [4, 4, 4] },
+        axis: "x",
+      },
+      "generator.linearRepeat": {
+        source: { min: [0, 0, 0], max: [2, 1, 1] },
+        count: 3,
+        delta: [0, 0, 4],
+      },
+      "generator.radialRepeat": {
+        source: { min: [0, 0, 0], max: [2, 2, 2] },
+        center: [10, 0, 10],
+        axis: "y",
+        count: 4,
+        radius: 8,
+      },
+      "generator.stairs": STAIRS,
+      "generator.wall": {
+        min: [0, 0, 0],
+        size: [10, 4, 1],
+        opening: { min: [2, 0, 0], max: [4, 2, 1] },
+      },
+      "generator.roof": {
+        min: [0, 5, 0],
+        width: 6,
+        depth: 4,
+        style: "gable",
+        thickness: 1,
+      },
+      "generator.branches": {
+        base: [0, 0, 0],
+        trunkHeight: 6,
+        trunkSize: 2,
+        levels: 2,
+        branchLength: 4,
+        branchSize: 1,
+        rise: 3,
+      },
+      "generator.wheel": {
+        center: [0, 0, 0],
+        axis: "y",
+        radius: 4,
+        thickness: 2,
+        hubRadius: 1,
+        spokeCount: 4,
+        spokeWidth: 1,
+      },
+      "generator.linkage": {
+        start: [0, 0, 0],
+        axis: "x",
+        count: 5,
+        segmentLength: 4,
+        thickness: 2,
+        pattern: "zigzag",
+      },
+    };
+    const { store } = recordingFixture();
+    for (const definition of GENERATOR_DEFINITIONS) {
+      const proposal = proposeGenerator(
+        definition.name,
+        representative[definition.name],
+        CONTEXT,
+      );
+      const session = createPreviewSession({ live: store });
+      const staged = session.stageMany(proposal.commands);
+      expect(staged.ok, `${definition.name}: ${JSON.stringify(staged)}`).toBe(
+        true,
+      );
+      // The preflight total equals the cumulative estimate the preview
+      // session enforces command by command (agent estimator).
+      expect(session.voxelEstimate).toBe(proposal.voxelEstimate);
+      session.discard();
+    }
+  });
+});
 
 describe("previewed and inspected (AC3)", () => {
   it("stages a proposal into the preview session and inspects the overlay", () => {

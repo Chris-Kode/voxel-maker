@@ -70,14 +70,15 @@ describe("generator.linearRepeat", () => {
     const destinations = proposal.commands.map(
       (command) => (command.payload as { destination: number[] }).destination,
     );
+    // Copies start one delta away; the source position is not re-copied.
     expect(destinations).toEqual([
-      [0, 0, 0],
       [0, 0, 4],
       [0, 0, 8],
+      [0, 0, 12],
     ]);
     // copyRegion estimates source + destination writes (2x region volume).
     expect(proposal.voxelEstimate).toBe(3 * 2 * (2 * 1 * 1));
-    expect(proposal.bounds).toEqual({ min: [0, 0, 0], max: [2, 1, 9] });
+    expect(proposal.bounds).toEqual({ min: [0, 0, 0], max: [2, 1, 13] });
   });
 });
 
@@ -243,7 +244,6 @@ describe("generator.branches", () => {
         levels: 2,
         branchLength: 4,
         branchSize: 1,
-        spread: 3,
         rise: 3,
       },
       CONTEXT,
@@ -280,7 +280,6 @@ describe("generator.branches", () => {
       levels: 3,
       branchLength: 4,
       branchSize: 1,
-      spread: 3,
       rise: 3,
     };
     const seededA = proposeGenerator("generator.branches", params, {

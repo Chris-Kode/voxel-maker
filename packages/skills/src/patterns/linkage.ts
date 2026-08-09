@@ -2,7 +2,12 @@ import type { GeneratorDefinition, GeneratorContext } from "../generator.js";
 import { createCommandFactory } from "../generator.js";
 import type { Command } from "@voxel-maker/commands";
 import type { IntAabb, ShapeAxis, Vec3i } from "../geometry.js";
-import { boxFromMinSize, unionAabb, type Vec3Size } from "../geometry.js";
+import {
+  axisIndex,
+  boxFromMinSize,
+  unionAabb,
+  type Vec3Size,
+} from "../geometry.js";
 import { createSeededRandom } from "../prng.js";
 import { AXIS_SCHEMA, VEC3I_SCHEMA, boundedIntSchema } from "../schemas.js";
 
@@ -35,13 +40,6 @@ export type LinkageParams = {
 export const MAX_LINKAGE_COUNT = 64;
 export const MAX_LINKAGE_LENGTH = 128;
 export const MAX_LINKAGE_THICKNESS = 16;
-
-/** Run-axis index of a ShapeAxis. */
-function axisIndex(axis: ShapeAxis): number {
-  if (axis === "x") return 0;
-  if (axis === "y") return 1;
-  return 2;
-}
 
 /** The primary perpendicular axis used for zigzag/seeded bends. */
 function bendAxis(axis: ShapeAxis): ShapeAxis {

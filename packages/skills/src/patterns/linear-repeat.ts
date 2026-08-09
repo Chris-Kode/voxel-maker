@@ -61,7 +61,9 @@ export const LINEAR_REPEAT_GENERATOR: GeneratorDefinition<LinearRepeatParams> =
         min: [...params.source.min],
         max: [...params.source.max],
       };
-      for (let index = 0; index < params.count; index += 1) {
+      // Copies start one delta away: the source's own position is not
+      // re-copied, so `count` means `count` new placements.
+      for (let index = 1; index <= params.count; index += 1) {
         const delta: Vec3i = [
           params.delta[0] * index,
           params.delta[1] * index,

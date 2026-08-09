@@ -12,6 +12,12 @@ import {
 import type { JsonSchema } from "@voxel-maker/agent";
 import { schemaErrors } from "@voxel-maker/agent";
 import {
+  VOXEL_COPY_REGION_COMMAND,
+  VOXEL_DELETE_REGION_COMMAND,
+  VOXEL_FILL_BOX_COMMAND,
+  VOXEL_FILL_CYLINDER_COMMAND,
+  VOXEL_MIRROR_REGION_COMMAND,
+  VOXEL_SET_BATCH_COMMAND,
   copyRegionCommand,
   deleteRegionCommand,
   fillBoxCommand,
@@ -87,6 +93,13 @@ export const INVALID_GENERATOR_PARAMS_CODE = "INVALID_GENERATOR_PARAMS";
 export const INVALID_GENERATOR_CONTEXT_CODE = "INVALID_GENERATOR_CONTEXT";
 export const GENERATOR_COMMAND_LIMIT_CODE = "GENERATOR_COMMAND_LIMIT";
 export const GENERATOR_VOXEL_LIMIT_CODE = "GENERATOR_VOXEL_LIMIT";
+export const GENERATOR_BOUNDS_CODE = "GENERATOR_OUT_OF_BOUNDS";
+
+/** Engine coordinate interval (ARCHITECTURE.md default limits). */
+const MIN_COORDINATE = -1_048_575;
+const MAX_COORDINATE = 1_048_575;
+/** Engine region extent bound per axis (ARCHITECTURE.md default limits). */
+const MAX_REGION_EXTENT = 2_048;
 
 /**
  * Ambient inputs shared by every generator: the target volume, the fill
@@ -353,7 +366,8 @@ export function createCommandFactory<P>(
 /**
  * Assembles the final bounded proposal: runs the definition, freezes the
  * commands, preflights the cumulative voxel estimate, and rejects any
- * proposal that exceeds the configured command or voxel budgets.
+ * proposal that exceeds the configured command or voxel budgets or whose
+ * derived geometry leaves the engine coordinate/region limits.
  */
 export function assembleProposal<P>(
   definition: GeneratorDefinition<P>,
@@ -366,6 +380,7 @@ export function assembleProposal<P>(
   const commands = Object.freeze(
     result.commands.map((command) => Object.freeze(command)),
   );
+  validateDerivedBounds(commands, definition.name);
   if (commands.length > limits.maxProposedCommands) {
     throw new WorkspaceError({
       family: "limit",
@@ -402,7 +417,7 @@ export function assembleProposal<P>(
     commands,
     commandCount: commands.length,
     voxelEstimate,
-    bounds: Object.freeze({ ...result.bounds }),
+    bounds: deepFreeze({ ...result.bounds }) as IntAabb,
     fingerprint: proposalFingerprint(
       definition.name,
       definition.version,
@@ -410,4 +425,179 @@ export function assembleProposal<P>(
       params as JsonValue,
     ),
   };
+}
+
+/**
+ * Preflight check over the DERIVED geometry of a proposal: parameter
+ * schemas bound the inputs, but composed placements (copy destinations,
+ * step positions, batch coordinates) are computed inside the patterns and
+ * must stay inside the engine coordinate interval and region-extent
+ * limits. Rejects with the stable GENERATOR_OUT_OF_BOUNDS error before
+ * any command is handed to the engine, so a proposal can never fail
+ * staging with a raw command-validation error.
+ */
+function validateDerivedBounds(
+  commands: readonly Command[],
+  generator: string,
+): void {
+  for (const command of commands) {
+    const payload = command.payload as
+      | Readonly<Record<string, JsonValue>>
+      | undefined;
+    if (payload === undefined) continue;
+    switch (command.type) {
+      case VOXEL_FILL_BOX_COMMAND:
+      case VOXEL_DELETE_REGION_COMMAND:
+      case VOXEL_MIRROR_REGION_COMMAND:
+        checkRegion(payload.region, generator, command.type);
+        break;
+      case VOXEL_FILL_CYLINDER_COMMAND: {
+        const center = payload.center;
+        const radius = finiteBoundNumber(payload.radius);
+        const height = finiteBoundNumber(payload.height);
+        if (Array.isArray(center)) {
+          checkPoint(center, generator, command.type);
+          for (let axis = 0; axis < 3; axis += 1) {
+            checkRange(
+              (center[axis] as number) - radius,
+              (center[axis] as number) + radius,
+              generator,
+              command.type,
+            );
+          }
+          const axis = payload.axis;
+          if (typeof axis === "string") {
+            const index = axis === "x" ? 0 : axis === "y" ? 1 : 2;
+            checkRange(
+              center[index] as number,
+              (center[index] as number) + height,
+              generator,
+              command.type,
+            );
+          }
+        }
+        break;
+      }
+      case VOXEL_COPY_REGION_COMMAND: {
+        checkRegion(payload.source, generator, command.type);
+        const source = payload.source;
+        const destination = payload.destination;
+        if (
+          Array.isArray(destination) &&
+          typeof source === "object" &&
+          source !== null &&
+          !Array.isArray(source)
+        ) {
+          // Array.isArray's guard cannot exclude readonly tuples, so the
+          // record cast happens after the explicit runtime checks.
+          const record = source as Readonly<Record<string, JsonValue>>;
+          const min = record.min;
+          const max = record.max;
+          if (Array.isArray(min) && Array.isArray(max)) {
+            const size = [
+              (max[0] as number) - (min[0] as number),
+              (max[1] as number) - (min[1] as number),
+              (max[2] as number) - (min[2] as number),
+            ];
+            for (let axis = 0; axis < 3; axis += 1) {
+              checkRange(
+                destination[axis] as number,
+                (destination[axis] as number) + (size[axis] as number),
+                generator,
+                command.type,
+              );
+            }
+          }
+        }
+        break;
+      }
+      case VOXEL_SET_BATCH_COMMAND: {
+        const entries = payload.entries;
+        if (Array.isArray(entries)) {
+          for (const entry of entries) {
+            if (
+              typeof entry === "object" &&
+              entry !== null &&
+              Array.isArray(
+                (entry as Readonly<Record<string, JsonValue>>).coordinate,
+              )
+            ) {
+              checkPoint(
+                (entry as Readonly<Record<string, JsonValue>>).coordinate,
+                generator,
+                command.type,
+              );
+            }
+          }
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
+function checkPoint(point: unknown, generator: string, type: string): void {
+  if (!Array.isArray(point)) return;
+  for (const component of point) {
+    if (
+      typeof component !== "number" ||
+      component < MIN_COORDINATE ||
+      component > MAX_COORDINATE
+    ) {
+      outOfBounds(generator, type);
+    }
+  }
+}
+
+function checkRange(
+  min: number,
+  max: number,
+  generator: string,
+  type: string,
+): void {
+  if (min < MIN_COORDINATE || max > MAX_COORDINATE + 1) {
+    outOfBounds(generator, type);
+  }
+}
+
+function checkRegion(region: unknown, generator: string, type: string): void {
+  if (typeof region !== "object" || region === null || Array.isArray(region)) {
+    return;
+  }
+  const record = region as Readonly<Record<string, JsonValue>>;
+  const min = record.min;
+  const max = record.max;
+  if (!Array.isArray(min) || !Array.isArray(max)) return;
+  for (let axis = 0; axis < 3; axis += 1) {
+    const lo = min[axis] as number;
+    const hi = max[axis] as number;
+    if (lo < MIN_COORDINATE || hi > MAX_COORDINATE + 1) {
+      outOfBounds(generator, type);
+    }
+    if (hi - lo > MAX_REGION_EXTENT) {
+      outOfBounds(generator, type);
+    }
+  }
+}
+
+function finiteBoundNumber(value: JsonValue | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function outOfBounds(generator: string, type: string): never {
+  throw new WorkspaceError({
+    family: "validation",
+    code: GENERATOR_BOUNDS_CODE,
+    message: `${generator} proposes geometry outside the engine coordinate interval or region-extent limits`,
+    context: { generator, commandType: type },
+  });
+}
+
+/** True when `value` is a plain JSON object (not array/null). */
+export function isRecord(
+  value: unknown,
+): value is Readonly<Record<string, JsonValue>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -8,6 +8,7 @@ import {
   VOXEL_FILL_BOX_COMMAND,
   VOXEL_FILL_CYLINDER_COMMAND,
   VOXEL_MIRROR_REGION_COMMAND,
+  VOXEL_SET_BATCH_COMMAND,
 } from "@voxel-maker/commands";
 import { createPreviewRegistry } from "@voxel-maker/agent";
 import { GENERATOR_DEFINITIONS, proposeGenerator } from "./registry.js";
@@ -69,7 +70,6 @@ const REPRESENTATIVE_PARAMS: Readonly<Record<string, unknown>> = {
     levels: 2,
     branchLength: 4,
     branchSize: 1,
-    spread: 3,
     rise: 3,
   },
   "generator.wheel": {
@@ -97,6 +97,7 @@ const GENERIC_COMMAND_TYPES: ReadonlySet<string> = new Set([
   VOXEL_COPY_REGION_COMMAND,
   VOXEL_DELETE_REGION_COMMAND,
   VOXEL_MIRROR_REGION_COMMAND,
+  VOXEL_SET_BATCH_COMMAND,
 ]);
 
 describe("no renderer or asset-category core type (AC4)", () => {

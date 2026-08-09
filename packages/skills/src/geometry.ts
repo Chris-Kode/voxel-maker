@@ -62,6 +62,13 @@ export function translateAabb(aabb: IntAabb, delta: Vec3i): IntAabb {
   };
 }
 
+/** Index of a shape axis in a Vec3i (0 = x, 1 = y, 2 = z). */
+export function axisIndex(axis: ShapeAxis): number {
+  if (axis === "x") return 0;
+  if (axis === "y") return 1;
+  return 2;
+}
+
 /** Half-open box covering `[min, min + size)` for a positive size triple. */
 export function boxFromMinSize(min: Vec3i, size: Vec3Size): IntAabb {
   return {
@@ -77,4 +84,74 @@ export function isVec3i(value: unknown): value is Vec3i {
     value.length === 3 &&
     value.every((part) => Number.isInteger(part))
   );
+}
+
+/**
+ * Deterministic cosine/sine for radial placements. ECMAScript leaves
+ * `Math.cos`/`Math.sin` implementation-approximated, so byte-identical
+ * geometry across engines is not guaranteed by the platform. These
+ * approximations use only IEEE-754 exact operations (+, -, *, /) over a
+ * fixed Taylor series with quadrant reduction into [0, pi/2), which is
+ * fully specified by IEEE 754 and therefore identical on every engine.
+ * Accuracy is well below one voxel for the bounded radii generators use.
+ */
+
+const HALF_PI = Math.PI / 2;
+
+/** Deterministic cosine of an angle in radians (IEEE-only arithmetic). */
+export function deterministicCos(angle: number): number {
+  const [quadrant, reduced] = reduceQuadrant(angle);
+  const value = taylorCos(reduced);
+  if (quadrant === 0) return value;
+  if (quadrant === 1) return -taylorSin(reduced);
+  if (quadrant === 2) return -value;
+  return taylorSin(reduced);
+}
+
+/** Deterministic sine of an angle in radians (IEEE-only arithmetic). */
+export function deterministicSin(angle: number): number {
+  const [quadrant, reduced] = reduceQuadrant(angle);
+  const value = taylorSin(reduced);
+  if (quadrant === 0) return value;
+  if (quadrant === 1) return taylorCos(reduced);
+  if (quadrant === 2) return -value;
+  return -taylorCos(reduced);
+}
+
+/** Integer quadrant in [0, 4) plus the angle reduced into [0, pi/2). */
+function reduceQuadrant(angle: number): readonly [number, number] {
+  const turns = angle / HALF_PI;
+  const quadrant = Math.floor(turns) % 4;
+  const reduced = angle - Math.floor(turns) * HALF_PI;
+  return [quadrant < 0 ? quadrant + 4 : quadrant, reduced];
+}
+
+/** Taylor series of cos around 0 (14 terms, IEEE-only operations). */
+function taylorCos(value: number): number {
+  let result = 1;
+  let term = 1;
+  const squared = value * value;
+  for (let n = 1; n <= 14; n += 1) {
+    term = (term * -squared) / ((2 * n - 1) * (2 * n));
+    result += term;
+  }
+  return result;
+}
+
+/** Taylor series of sin around 0 (14 terms, IEEE-only operations). */
+function taylorSin(value: number): number {
+  let result = value;
+  let term = value;
+  const squared = value * value;
+  for (let n = 1; n <= 14; n += 1) {
+    term = (term * -squared) / (2 * n * (2 * n + 1));
+    result += term;
+  }
+  return result;
+}
+
+/** Rounds to the nearest integer, normalizing IEEE negative zero to +0. */
+export function roundToInt(value: number): number {
+  const rounded = Math.round(value);
+  return rounded === 0 ? 0 : rounded;
 }

@@ -40,7 +40,7 @@ export {
 export { estimateCommandVoxels, estimateCommandsVoxels } from "./estimate.js";
 export type { IntAabb, ShapeAxis, Vec3i } from "./geometry.js";
 export { digestHex } from "./hash.js";
-export { createSeededRandom, hashSeed } from "./prng.js";
+
 export type { MirrorParams } from "./patterns/mirror.js";
 export type { LinearRepeatParams } from "./patterns/linear-repeat.js";
 export type { RadialRepeatParams } from "./patterns/radial-repeat.js";

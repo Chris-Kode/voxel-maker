@@ -2,7 +2,12 @@ import type { GeneratorDefinition, GeneratorContext } from "../generator.js";
 import { createCommandFactory } from "../generator.js";
 import type { Command } from "@voxel-maker/commands";
 import type { IntAabb, ShapeAxis, Vec3i } from "../geometry.js";
-import { unionAabb } from "../geometry.js";
+import {
+  deterministicCos,
+  deterministicSin,
+  roundToInt,
+  unionAabb,
+} from "../geometry.js";
 import {
   AXIS_SCHEMA,
   REGION_SCHEMA,
@@ -80,8 +85,8 @@ export const RADIAL_REPEAT_GENERATOR: GeneratorDefinition<RadialRepeatParams> =
       };
       for (let index = 0; index < params.count; index += 1) {
         const angle = (2 * Math.PI * index) / params.count;
-        const du = Math.round(params.radius * Math.cos(angle));
-        const dv = Math.round(params.radius * Math.sin(angle));
+        const du = roundToInt(params.radius * deterministicCos(angle));
+        const dv = roundToInt(params.radius * deterministicSin(angle));
         const offset = planeOffset(params.axis, du, dv);
         const destination: Vec3i = [
           params.center[0] + offset[0],
