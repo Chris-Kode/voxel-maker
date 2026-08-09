@@ -1,6 +1,6 @@
 {
   "name": "voxel-maker",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.28.1",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "check": "pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm coverage && pnpm build && pnpm check:boundaries && pnpm check:entrypoints && pnpm demo:headless",
+    "check": "pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm coverage && pnpm build && pnpm check:boundaries && pnpm check:entrypoints && pnpm demo:headless && pnpm check:genericity && pnpm release:smoke",
     "check:boundaries": "node scripts/check-boundaries.mjs && depcruise --validate .dependency-cruiser.cjs apps packages",
     "check:entrypoints": "node scripts/check-entrypoints.mjs",
     "check:security": "node scripts/check-native-capabilities.mjs && node scripts/check-licenses.mjs && node scripts/check-secrets.mjs",
@@ -26,7 +26,12 @@
     "dev:desktop": "pnpm --filter @voxel-maker/desktop dev",
     "bench:smoke": "pnpm exec turbo run build --filter @voxel-maker/bench-cli... && node --expose-gc apps/bench-cli/dist/cli.js --tier auto --sizes 100000 --kinds compact,checkerboard --samples 30 --save-load-runs 3 --preview-samples 4 --preview-size 128 --animation-frames 20 --json benchmarks/out/smoke.json --no-progress",
     "bench:full": "pnpm exec turbo run build --filter @voxel-maker/bench-cli... && node --expose-gc apps/bench-cli/dist/cli.js --tier auto --full --samples 100 --save-load-runs 5 --preview-samples 8 --animation-frames 60 --json benchmarks/out/full.json --trends benchmarks/trends.json --no-progress",
-    "bench:local": "pnpm exec turbo run build --filter @voxel-maker/bench-cli... && node --expose-gc apps/bench-cli/dist/cli.js --tier auto --sizes 100000,500000 --kinds compact,sparse,checkerboard --samples 40 --save-load-runs 3 --preview-samples 4 --animation-frames 30 --json benchmarks/out/local.json --no-progress"
+    "bench:local": "pnpm exec turbo run build --filter @voxel-maker/bench-cli... && node --expose-gc apps/bench-cli/dist/cli.js --tier auto --sizes 100000,500000 --kinds compact,sparse,checkerboard --samples 40 --save-load-runs 3 --preview-samples 4 --animation-frames 30 --json benchmarks/out/local.json --no-progress",
+    "release:smoke": "node apps/headless/dist/release-smoke-cli.js",
+    "release:package": "pnpm build && node scripts/release-package.mjs",
+    "release:checksums": "node scripts/release-checksums.mjs release/artifacts",
+    "release:verify-checksums": "node scripts/release-checksums.mjs release/artifacts --verify",
+    "check:genericity": "node scripts/check-genericity.mjs"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
