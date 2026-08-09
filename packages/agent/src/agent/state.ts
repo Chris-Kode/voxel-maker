@@ -47,22 +47,33 @@ export const TERMINAL_STATES: readonly AgentState[] = Object.freeze([
  */
 export const TRANSITIONS: Readonly<Record<AgentState, readonly AgentState[]>> =
   Object.freeze({
-    understand: Object.freeze(["inspect", "cancel", "error"]),
-    inspect: Object.freeze(["inspect", "plan", "stage", "cancel", "error"]),
-    plan: Object.freeze(["stage", "inspect", "cancel", "error"]),
-    stage: Object.freeze(["stage", "inspect-staged", "cancel", "error"]),
+    understand: Object.freeze(["inspect", "cancel", "error"] as const),
+    inspect: Object.freeze([
+      "inspect",
+      "plan",
+      "stage",
+      "cancel",
+      "error",
+    ] as const),
+    plan: Object.freeze(["stage", "inspect", "cancel", "error"] as const),
+    stage: Object.freeze([
+      "stage",
+      "inspect-staged",
+      "cancel",
+      "error",
+    ] as const),
     "inspect-staged": Object.freeze([
       "stage",
       "validate",
       "cancel",
       "error",
-    ]),
-    validate: Object.freeze(["stage", "approve", "cancel", "error"]),
-    approve: Object.freeze(["commit", "discard", "cancel", "error"]),
-    commit: Object.freeze([]),
-    discard: Object.freeze([]),
-    cancel: Object.freeze([]),
-    error: Object.freeze([]),
+    ] as const),
+    validate: Object.freeze(["stage", "approve", "cancel", "error"] as const),
+    approve: Object.freeze(["commit", "discard", "cancel", "error"] as const),
+    commit: Object.freeze([] as const),
+    discard: Object.freeze([] as const),
+    cancel: Object.freeze([] as const),
+    error: Object.freeze([] as const),
   });
 
 /** Stable error code for invalid machine transitions. */
