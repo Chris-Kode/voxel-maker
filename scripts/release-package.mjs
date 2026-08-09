@@ -27,11 +27,12 @@ import {
   mkdir,
   readdir,
   readFile,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { writeChecksums } from "./release-checksums.mjs";
 
 const workspaceRoot = process.cwd();
@@ -55,6 +56,8 @@ const gitCommit = (() => {
 
 const platform = process.platform;
 const arch = process.arch;
+/** macOS DMG bundle directory (defined lazily for the zip fallback). */
+let dmgDir = undefined;
 
 /** Bundle output roots produced by `tauri build` per platform. */
 function bundleRoots() {
@@ -67,6 +70,7 @@ function bundleRoots() {
   );
   const roots = [];
   for (const kind of [
+    "macos",
     "dmg",
     "app",
     "msi",
@@ -82,14 +86,22 @@ function bundleRoots() {
   return roots;
 }
 
+/** Installer/bundle file name patterns that are publishable artifacts. */
+const INSTALLER_PATTERNS = [/\.(dmg|pkg|msi|exe|deb|rpm|AppImage|app)$/iu];
+
 async function collectArtifacts() {
   const artifacts = [];
   for (const root of bundleRoots()) {
     const entries = await readdir(root);
     for (const entry of entries) {
+      // Skip build support files (bundle_dmg.sh, icons, raw images, ...).
+      if (/^(bundle_|icon|rw\.|.*\.sh$)/iu.test(entry)) continue;
       const path = join(root, entry);
       const info = await stat(path);
-      if (info.isFile()) {
+      const publishable =
+        info.isFile() &&
+        INSTALLER_PATTERNS.some((pattern) => pattern.test(entry));
+      if (publishable) {
         artifacts.push({ name: entry, source: path, bytes: info.size });
       } else if (info.isDirectory() && entry.endsWith(".app")) {
         // macOS .app bundles are directories; package them as-is.
@@ -146,6 +158,75 @@ try {
   );
 }
 
+// macOS DMG fallback: tauri's create-dmg script runs an AppleScript
+// "make Finder pretty" step that times out in headless/CI sessions and
+// aborts the bundle. The .app bundle is already produced at that point,
+// so rebuild the DMG with --skip-jenkins (no Finder cosmetics), which is
+// exactly what CI needs. The fallback is only used when no .dmg exists.
+if (platform === "darwin" && !bundle.ok) {
+  const appBundle = join(
+    desktopDirectory,
+    "src-tauri",
+    "target",
+    "release",
+    "bundle",
+    "macos",
+    "Voxel Maker.app",
+  );
+  dmgDir = join(
+    desktopDirectory,
+    "src-tauri",
+    "target",
+    "release",
+    "bundle",
+    "dmg",
+  );
+  const dmgName = `Voxel Maker_${version}_${arch}.dmg`;
+  // Stale raw images from failed attempts break hdiutil attach; remove them.
+  for (const root of [join(dmgDir, "..", "macos"), dmgDir]) {
+    try {
+      for (const entry of await readdir(root)) {
+        if (entry.startsWith("rw."))
+          await rm(join(root, entry), { force: true });
+      }
+    } catch {
+      // directory may not exist yet
+    }
+  }
+  if (existsSync(appBundle) && !existsSync(join(dmgDir, dmgName))) {
+    const script = join(dmgDir, "bundle_dmg.sh");
+    if (existsSync(script)) {
+      console.log(
+        "[release-package] retrying DMG bundling with --skip-jenkins (headless-safe)",
+      );
+      const dmg = spawnSync(
+        "bash",
+        [
+          script,
+          "--skip-jenkins",
+          "--volname",
+          "Voxel Maker",
+          dmgName,
+          dirname(appBundle),
+        ],
+        { cwd: dmgDir, stdio: "inherit" },
+      );
+      if (dmg.status === 0) {
+        bundle.ok = true;
+        bundle.reason = null;
+        bundle.artifacts = (await collectArtifacts()).map(
+          (artifact) => artifact.name,
+        );
+        console.log("[release-package] DMG fallback succeeded");
+      } else {
+        console.error(
+          `[release-package] DMG fallback failed (status ${dmg.status}); publishing without a DMG`,
+        );
+      }
+    }
+  }
+}
+
 // macOS signing hook (plan S17.10): when the maintainer's signing
 // identity is configured, sign the freshly built .app bundle before the
 // artifacts are copied, so the published checksums cover signed bytes.
@@ -189,13 +270,31 @@ if (platform === "darwin" && process.env.APPLE_SIGNING_IDENTITY) {
 await mkdir(outDirectory, { recursive: true });
 const artifacts = [];
 for (const artifact of await collectArtifacts()) {
-  const destination = join(outDirectory, artifact.name);
-  await copyFile(artifact.source, destination);
+  let name = artifact.name;
+  let source = artifact.source;
+  if (artifact.directory === true) {
+    // .app bundles are directories; checksums need a single file, so the
+    // published artifact is a ditto zip (preserves resource forks).
+    const zipPath = join(dmgDir ?? outDirectory, `${artifact.name}.zip`);
+    const ditto = spawnSync(
+      "ditto",
+      ["-c", "-k", "--sequesterRsrc", "--keepParent", artifact.source, zipPath],
+      { stdio: "inherit" },
+    );
+    if (ditto.status !== 0) {
+      console.error(
+        `[release-package] ditto failed for ${artifact.name}; skipping`,
+      );
+      continue;
+    }
+    name = `${artifact.name}.zip`;
+    source = zipPath;
+  }
+  const destination = join(outDirectory, name);
+  await copyFile(source, destination);
   const info = await stat(destination);
-  artifacts.push({ name: artifact.name, bytes: info.size });
-  console.log(
-    `[release-package] artifact ${artifact.name} (${info.size} bytes)`,
-  );
+  artifacts.push({ name, bytes: info.size });
+  console.log(`[release-package] artifact ${name} (${info.size} bytes)`);
 }
 
 // Headless CLI binaries are released alongside installers so headless
@@ -218,7 +317,6 @@ for (const actualName of [
   }
 }
 
-const checksumCount = await writeChecksums(outDirectory);
 const manifest = {
   release: version,
   platform,
@@ -234,7 +332,7 @@ const manifest = {
   artifacts: artifacts.sort((a, b) => a.name.localeCompare(b.name)),
   checksums: {
     file: "SHASUMS256.txt",
-    entries: checksumCount,
+    entries: 0,
   },
   notes:
     "Checksums are SHA-256 over the exact artifact bytes. Verify with `pnpm release:verify-checksums`.",
@@ -245,6 +343,12 @@ await writeFile(
 );
 console.log(
   `[release-package] manifest written to ${join(outDirectory, "manifest.json")}`,
+);
+const checksumCount = await writeChecksums(outDirectory);
+manifest.checksums.entries = checksumCount;
+await writeFile(
+  join(outDirectory, "manifest.json"),
+  `${JSON.stringify(manifest, null, 2)}\n`,
 );
 console.log(
   `[release-package] artifact set complete: ${artifacts.length} files, ${checksumCount} checksum entries`,
