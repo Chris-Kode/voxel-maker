@@ -12,20 +12,22 @@ state, maintains a transient runtime preview, and constructs registered
 commands on commit (ARCHITECTURE.md "Editor interaction"). It never
 mutates semantic state itself.
 
-- `StrokeToolHost` — services injected by the desktop composition root:
+- `ToolHost` — services injected by the desktop composition root:
   the authoritative `DocumentStoreRead` of the open document, the
   deterministic voxel picker (S6.12), a fresh command-id source, an
   atomic labeled commit through the session's `CommandBus`, and the
-  per-stroke voxel budget (ADR-0009 `MAX_VOXELS_PER_OPERATION`).
+  per-gesture voxel budget (ADR-0009 `MAX_VOXELS_PER_OPERATION`).
 - `StrokeTool` — `pointerDown` / `pointerMove` / `pointerUp` /
   `pointerCancel` / `reset` over viewport-relative pointer coordinates,
   plus a `draft` preview and an `active` flag.
 - `createStrokeTool({ kind: "pencil" | "erase", host, editor })` — the
   headless implementation shared by the desktop viewport controller.
 
-The desktop viewport controller owns one pencil and one erase tool and
-routes primary-button gestures to the tool matching `EditorStore.activeTool`
-("select" keeps the #16 orbit/pan/click-select behavior).
+The desktop viewport controller owns one tool instance per tool id and
+routes primary-button gestures to the tool matching
+`EditorStore.activeTool` ("select" keeps the #16 orbit/pan/click-select
+behavior; ticket #18 adds paint, eyedropper, and the shape tools — see
+docs/editor/selection-and-shape-tools-v1.md).
 
 ## Gesture lifecycle
 
@@ -86,7 +88,7 @@ document opens, so the pencil works without a materials panel (ticket
 - Strokes are bounded by `MAX_VOXELS_PER_OPERATION` (1,000,000), the same
   ADR-0009 budget the batch command parsers enforce, so a legal stroke is
   always a legal transaction. The desktop composition accepts a lowered
-  per-stroke budget (`CompositionOptions.strokeVoxelLimit`, ADR-0009
+  per-gesture budget (`CompositionOptions.gestureVoxelLimit`, ADR-0009
   "callers may lower") — used by tests to exercise the limit seam through
   the real pick/commit path.
 - Rasterization uses exact integer arithmetic; intermediate products are

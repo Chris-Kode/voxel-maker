@@ -2,17 +2,24 @@ import {
   createListenerSet,
   materialId,
   type MaterialId,
-  type NodeId,
 } from "@voxel-maker/shared";
 import type { VoxelDocument } from "@voxel-maker/model";
-import type { EditorToolId, StrokeDraft } from "./types.js";
+import type {
+  EditorToolId,
+  RegionDraft,
+  SelectionEntry,
+  SelectionMode,
+  ToolDraft,
+} from "./types.js";
 
 /**
  * Runtime-only editor interaction state (plan S7.1, ARCHITECTURE.md
- * "Editor interaction"): selection, active tool, active material, draft
- * gesture preview, and notices. None of this is ever persisted or
- * authoritative; the document store and command bus own semantic state.
- * Ticket #15 ships the store, ticket #17 adds the pencil/erase tool state.
+ * "Editor interaction"): selection, selection mode, active tool, active
+ * material, draft gesture preview, and notices. None of this is ever
+ * persisted or authoritative; the document store and command bus own
+ * semantic state. Ticket #15 ships the store, ticket #17 adds the
+ * pencil/erase tool state, ticket #18 adds node/voxel/region selection,
+ * the selection mode, and the region-select preview.
  */
 
 export interface EditorNotice {
@@ -23,16 +30,26 @@ export interface EditorNotice {
 
 export interface EditorStore {
   readonly activeTool: EditorToolId;
+  /** Select-tool granularity (plan S7.2/S7.4). */
+  readonly selectionMode: SelectionMode;
   /** Runtime-only active paint material; undefined when none is usable. */
   readonly activeMaterial: MaterialId | undefined;
-  /** Transient in-progress stroke preview; undefined outside a gesture. */
-  readonly draft: StrokeDraft | undefined;
-  readonly selection: readonly NodeId[];
+  /** Transient in-progress gesture preview; undefined outside a gesture. */
+  readonly draft: ToolDraft | undefined;
+  /**
+   * Transient in-progress region-select preview (plan S7.2); undefined
+   * outside a region drag.
+   */
+  readonly regionDraft: RegionDraft | undefined;
+  /** Runtime-only selection; mixed node/voxel/region entries (S7.2). */
+  readonly selection: readonly SelectionEntry[];
   readonly notices: readonly EditorNotice[];
   setActiveTool(tool: EditorToolId): void;
+  setSelectionMode(mode: SelectionMode): void;
   setActiveMaterial(material: MaterialId | undefined): void;
-  setDraft(draft: StrokeDraft | undefined): void;
-  setSelection(selection: readonly NodeId[]): void;
+  setDraft(draft: ToolDraft | undefined): void;
+  setRegionDraft(draft: RegionDraft | undefined): void;
+  setSelection(selection: readonly SelectionEntry[]): void;
   pushNotice(level: EditorNotice["level"], message: string): void;
   dismissNotice(id: number): void;
   clearNotices(): void;
@@ -42,18 +59,22 @@ export interface EditorStore {
 
 export interface EditorStoreSnapshot {
   readonly activeTool: EditorToolId;
+  readonly selectionMode: SelectionMode;
   readonly activeMaterial: MaterialId | undefined;
-  readonly draft: StrokeDraft | undefined;
-  readonly selection: readonly NodeId[];
+  readonly draft: ToolDraft | undefined;
+  readonly regionDraft: RegionDraft | undefined;
+  readonly selection: readonly SelectionEntry[];
   readonly notices: readonly EditorNotice[];
 }
 
 /** Creates the runtime interaction store with an empty initial state. */
 export function createEditorStore(): EditorStore {
   let activeTool: EditorToolId = "select";
+  let selectionMode: SelectionMode = "node";
   let activeMaterial: MaterialId | undefined;
-  let draft: StrokeDraft | undefined;
-  let selection: readonly NodeId[] = [];
+  let draft: ToolDraft | undefined;
+  let regionDraft: RegionDraft | undefined;
+  let selection: readonly SelectionEntry[] = [];
   let notices: EditorNotice[] = [];
   let nextNoticeId = 1;
   const listeners = createListenerSet<undefined>();
@@ -66,11 +87,17 @@ export function createEditorStore(): EditorStore {
     get activeTool() {
       return activeTool;
     },
+    get selectionMode() {
+      return selectionMode;
+    },
     get activeMaterial() {
       return activeMaterial;
     },
     get draft() {
       return draft;
+    },
+    get regionDraft() {
+      return regionDraft;
     },
     get selection() {
       return selection;
@@ -82,12 +109,20 @@ export function createEditorStore(): EditorStore {
       activeTool = tool;
       notify();
     },
+    setSelectionMode(mode) {
+      selectionMode = mode;
+      notify();
+    },
     setActiveMaterial(material) {
       activeMaterial = material;
       notify();
     },
     setDraft(next) {
       draft = next;
+      notify();
+    },
+    setRegionDraft(next) {
+      regionDraft = next;
       notify();
     },
     setSelection(next) {
@@ -117,8 +152,10 @@ export function createEditorStore(): EditorStore {
 export function snapshotEditorStore(store: EditorStore): EditorStoreSnapshot {
   return {
     activeTool: store.activeTool,
+    selectionMode: store.selectionMode,
     activeMaterial: store.activeMaterial,
     draft: store.draft,
+    regionDraft: store.regionDraft,
     selection: [...store.selection],
     notices: [...store.notices],
   };

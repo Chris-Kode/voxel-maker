@@ -25,7 +25,7 @@ import {
 } from "@voxel-maker/document";
 import { createEditorStore, createStrokeTool } from "./index.js";
 import type { StrokeTool } from "./stroke-tool.js";
-import type { StrokeToolHost, ToolPick } from "./types.js";
+import type { ToolHost, ToolPick } from "./types.js";
 
 /**
  * Stroke tool tests (plan S7.3/S7.5, ticket #17): the headless gesture
@@ -115,7 +115,7 @@ interface Harness {
   prefill(coordinates: readonly (readonly [number, number, number])[]): void;
 }
 
-function createHarness(options?: { maxStrokeVoxels?: number }): Harness {
+function createHarness(options?: { maxGestureVoxels?: number }): Harness {
   const document = buildDocument();
   const { store, writeCapability } = createDocumentStore({ document });
   const registry = new CommandRegistry();
@@ -178,11 +178,11 @@ function createHarness(options?: { maxStrokeVoxels?: number }): Harness {
       if (!result.ok) throw new Error(`prefill failed: ${result.error.code}`);
     },
   };
-  const host: StrokeToolHost = {
+  const host: ToolHost = {
     get store() {
       return harness.store;
     },
-    maxStrokeVoxels: options?.maxStrokeVoxels ?? 1_000_000,
+    maxGestureVoxels: options?.maxGestureVoxels ?? 1_000_000,
     pick(clientX, clientY) {
       return harness.pick(clientX, clientY);
     },
@@ -209,8 +209,10 @@ function createHarness(options?: { maxStrokeVoxels?: number }): Harness {
 /** Pointer -> voxel stub: x maps to x, y to y, z to 0, on the first volume. */
 function planePicker(
   volumeId = VOLUME,
+  nodeIdValue = CHILD,
 ): (clientX: number, clientY: number) => ToolPick {
   return (clientX, clientY) => ({
+    nodeId: nodeIdValue,
     volumeId,
     voxel: [clientX, clientY, 0],
   });
@@ -371,8 +373,8 @@ describe("pencil stroke tool", () => {
     const harness = createHarness();
     harness.pick = (clientX, clientY) =>
       clientX > 10
-        ? { volumeId: VOLUME_B, voxel: [clientX, clientY, 0] }
-        : { volumeId: VOLUME, voxel: [clientX, clientY, 0] };
+        ? { nodeId: CHILD, volumeId: VOLUME_B, voxel: [clientX, clientY, 0] }
+        : { nodeId: CHILD, volumeId: VOLUME, voxel: [clientX, clientY, 0] };
     harness.pencil.pointerDown(0, 0);
     // A pick over the other volume is ignored...
     harness.pencil.pointerMove(12, 0);
@@ -389,7 +391,7 @@ describe("pencil stroke tool", () => {
   });
 
   it("rejects a stroke that exceeds the voxel budget atomically", () => {
-    const harness = createHarness({ maxStrokeVoxels: 5 });
+    const harness = createHarness({ maxGestureVoxels: 5 });
     harness.pick = planePicker();
     harness.pencil.pointerDown(0, 0);
     const result = harness.pencil.pointerMove(10, 0);
@@ -450,8 +452,8 @@ describe("pencil stroke tool", () => {
       kind: "pencil",
       host: {
         store: undefined,
-        maxStrokeVoxels: 1_000_000,
-        pick: () => ({ volumeId: VOLUME, voxel: [0, 0, 0] }),
+        maxGestureVoxels: 1_000_000,
+        pick: () => ({ nodeId: CHILD, volumeId: VOLUME, voxel: [0, 0, 0] }),
         nextCommandId: () => commandId("command:stroke:closed"),
         commit: () => undefined,
       },

@@ -125,8 +125,20 @@ body {
   padding: 6px 10px;
 }
 
-.toolbar .tools button.active {
+.toolbar .tools button.active,
+.toolbar .selection-modes button.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+.toolbar .selection-modes {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.toolbar .selection-modes button {
+  padding: 6px 10px;
+  font-size: 12px;
 }

@@ -1,10 +1,14 @@
 import * as THREE from "three";
 import { applyMatrix, type Vec3 } from "@voxel-maker/math";
-import type { NodeId } from "@voxel-maker/shared";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import {
+  selectionWorldBounds,
+  volumeLocalWorldBounds,
+  type RegionDraft,
+  type SelectionEntry,
+} from "@voxel-maker/editor";
+import {
   nodeWorldMatrices,
-  worldBoundsForNodes,
   worldContentBounds,
   type WorldBounds,
 } from "@voxel-maker/renderer";
@@ -54,12 +58,14 @@ export interface OverlayManager {
   /** Toggles one overlay; returns the new visibility. */
   toggle(key: OverlayKey): boolean;
   /**
-   * Rebuilds the document-dependent overlays from the current store and
-   * selection. Pass `undefined` when no document is open.
+   * Rebuilds the document-dependent overlays from the current store, the
+   * mixed selection (node/voxel/region entries), and the in-progress
+   * region-select draft. Pass `undefined` when no document is open.
    */
   update(
     store: DocumentStoreRead | undefined,
-    selection: readonly NodeId[],
+    selection: readonly SelectionEntry[],
+    regionDraft?: RegionDraft,
   ): void;
   /** Removes every overlay object from the scene and releases resources. */
   dispose(): void;
@@ -78,6 +84,7 @@ class OverlayManagerImpl implements OverlayManager {
   readonly #pivotsGroup: THREE.Group;
   #contentBox: BoxProjection | undefined;
   #selectionBox: BoxProjection | undefined;
+  #regionDraftBox: BoxProjection | undefined;
   #visibility: OverlayVisibility = { ...DEFAULT_OVERLAY_VISIBILITY };
 
   constructor(scene: THREE.Scene) {
@@ -136,9 +143,10 @@ class OverlayManagerImpl implements OverlayManager {
 
   update(
     store: DocumentStoreRead | undefined,
-    selection: readonly NodeId[],
+    selection: readonly SelectionEntry[],
+    regionDraft?: RegionDraft,
   ): void {
-    this.#rebuildBounds(store, selection);
+    this.#rebuildBounds(store, selection, regionDraft);
     this.#rebuildPivots(store, selection);
   }
 
@@ -154,7 +162,9 @@ class OverlayManagerImpl implements OverlayManager {
     this.#axes.visible = this.#visibility.axes;
     this.#boundsGroup.visible =
       this.#visibility.bounds &&
-      (this.#contentBox !== undefined || this.#selectionBox !== undefined);
+      (this.#contentBox !== undefined ||
+        this.#selectionBox !== undefined ||
+        this.#regionDraftBox !== undefined);
     this.#pivotsGroup.visible =
       this.#visibility.pivots && this.#pivotsGroup.children.length > 0;
   }
@@ -198,14 +208,23 @@ class OverlayManagerImpl implements OverlayManager {
 
   #rebuildBounds(
     store: DocumentStoreRead | undefined,
-    selection: readonly NodeId[],
+    selection: readonly SelectionEntry[],
+    regionDraft?: RegionDraft,
   ): void {
     const nextContent =
       store === undefined ? undefined : worldContentBounds(store);
     const nextSelection =
       store === undefined || selection.length === 0
         ? undefined
-        : worldBoundsForNodes(store, selection);
+        : this.#selectionBounds(store, selection);
+    const nextRegionDraft =
+      store === undefined || regionDraft === undefined
+        ? undefined
+        : volumeLocalWorldBounds(
+            store,
+            regionDraft.volumeId,
+            regionDraft.region,
+          );
     const contentChanged =
       this.#contentBox !== undefined &&
       (nextContent === undefined ||
@@ -214,6 +233,10 @@ class OverlayManagerImpl implements OverlayManager {
       this.#selectionBox !== undefined &&
       (nextSelection === undefined ||
         !sameBounds(this.#selectionBox.bounds, nextSelection));
+    const draftChanged =
+      this.#regionDraftBox !== undefined &&
+      (nextRegionDraft === undefined ||
+        !sameBounds(this.#regionDraftBox.bounds, nextRegionDraft));
     if (contentChanged || this.#contentBox === undefined) {
       this.#disposeBox(this.#contentBox);
       this.#contentBox = undefined;
@@ -221,6 +244,10 @@ class OverlayManagerImpl implements OverlayManager {
     if (selectionChanged || this.#selectionBox === undefined) {
       this.#disposeBox(this.#selectionBox);
       this.#selectionBox = undefined;
+    }
+    if (draftChanged || this.#regionDraftBox === undefined) {
+      this.#disposeBox(this.#regionDraftBox);
+      this.#regionDraftBox = undefined;
     }
     if (this.#contentBox === undefined && nextContent !== undefined) {
       this.#contentBox = this.#createBox(nextContent, 0x4dc3ff, 0.85);
@@ -230,25 +257,42 @@ class OverlayManagerImpl implements OverlayManager {
       this.#selectionBox = this.#createBox(nextSelection, 0xffd60a, 0.9);
       this.#boundsGroup.add(this.#selectionBox.object);
     }
+    if (this.#regionDraftBox === undefined && nextRegionDraft !== undefined) {
+      // Transient region-select preview: a bright wireframe box that
+      // exists only while the drag is in progress.
+      this.#regionDraftBox = this.#createBox(nextRegionDraft, 0xff9f0a, 0.9);
+      this.#boundsGroup.add(this.#regionDraftBox.object);
+    }
     this.applyVisibility();
+  }
+
+  /** Union world bounds of the mixed selection entries (plan S7.2). */
+  #selectionBounds(
+    store: DocumentStoreRead,
+    selection: readonly SelectionEntry[],
+  ): WorldBounds | undefined {
+    return selectionWorldBounds(store, selection);
   }
 
   #rebuildPivots(
     store: DocumentStoreRead | undefined,
-    selection: readonly NodeId[],
+    selection: readonly SelectionEntry[],
   ): void {
     for (const child of [...this.#pivotsGroup.children]) {
       this.#pivotsGroup.remove(child);
       child.traverse(disposeGeometry);
       child.traverse(disposeMaterials);
     }
-    if (store === undefined || selection.length === 0) {
+    const nodeIds = selection
+      .filter((entry) => entry.kind === "node")
+      .map((entry) => entry.nodeId);
+    if (store === undefined || nodeIds.length === 0) {
       this.applyVisibility();
       return;
     }
     const matrices = nodeWorldMatrices(store);
     const document = store.getDocument();
-    for (const nodeId of selection) {
+    for (const nodeId of nodeIds) {
       const node = document.nodes[nodeId];
       const world = matrices.get(nodeId);
       if (node === undefined || world === undefined) continue;

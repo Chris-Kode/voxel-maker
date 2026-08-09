@@ -10,17 +10,22 @@ describe("editor runtime store", () => {
     expect(store.notices).toEqual([]);
   });
 
-  it("tracks the active tool and selection copies", () => {
+  it("tracks the active tool, selection mode, and selection copies", () => {
     const store = createEditorStore();
     store.setActiveTool("select");
-    const a = nodeId("node:a");
-    const b = nodeId("node:b");
+    expect(store.selectionMode).toBe("node");
+    const a = { kind: "node" as const, nodeId: nodeId("node:a") };
+    const b = { kind: "node" as const, nodeId: nodeId("node:b") };
     store.setSelection([a, b]);
     expect(store.selection).toEqual([a, b]);
+    store.setSelectionMode("voxel");
+    expect(store.selectionMode).toBe("voxel");
     // Caller mutations must not leak into the store.
     const snapshot = snapshotEditorStore(store);
     (snapshot.selection as unknown as string[]).push("node:c");
     expect(store.selection).toEqual([a, b]);
+    expect(snapshot.selectionMode).toBe("voxel");
+    expect(snapshot.regionDraft).toBeUndefined();
   });
 
   it("collects and dismisses notices", () => {

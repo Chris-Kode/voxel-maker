@@ -589,6 +589,7 @@ export function seedReadView(
     occupiedBounds(): IntAabb | undefined {
       return bounds;
     },
+    limits: DEFAULT_VOXEL_VOLUME_LIMITS,
   };
 }
 
@@ -633,5 +634,6 @@ function emptyVolumeReadView(volumeId: VolumeId): VoxelVolumeReadView {
     occupiedBounds(): IntAabb | undefined {
       return undefined;
     },
+    limits: DEFAULT_VOXEL_VOLUME_LIMITS,
   };
 }

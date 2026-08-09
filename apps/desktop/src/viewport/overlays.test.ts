@@ -168,7 +168,7 @@ describe("overlay manager", () => {
     const scene = new THREE.Scene();
     const overlays = createOverlayManager(scene);
     const store = buildStore();
-    overlays.update(store, [BOX]);
+    overlays.update(store, [{ kind: "node", nodeId: BOX }]);
     const lines = objectsOfType(scene, THREE.Line).filter(
       (object) => !(object instanceof THREE.LineSegments),
     );
@@ -222,7 +222,7 @@ describe("overlay manager", () => {
     const store = buildStore();
     const revisionBefore = store.revision;
     const documentBefore = store.getDocument();
-    overlays.update(store, [BOX]);
+    overlays.update(store, [{ kind: "node", nodeId: BOX }]);
     expect(store.revision).toBe(revisionBefore);
     expect(store.getDocument()).toBe(documentBefore);
     overlays.dispose();

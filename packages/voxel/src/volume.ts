@@ -119,6 +119,12 @@ export interface VoxelPatchChunk {
 /** Immutable read surface of a voxel volume. */
 export interface VoxelVolumeReadView {
   readonly volumeId: VolumeId;
+  /**
+   * The volume's resource limits (ADR-0009; callers may lower them).
+   * Read-only: consumers can preflight bounded operations but never
+   * change the limits.
+   */
+  readonly limits: VoxelVolumeLimits;
   /** Material at a voxel coordinate; 0 when empty or the volume has no chunk. */
   getVoxel(coordinate: Vec3i): MaterialId;
   /**

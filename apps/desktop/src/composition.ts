@@ -64,12 +64,13 @@ export interface CompositionOptions {
   readonly storage: ProjectStoragePort;
   readonly picker: FilePicker;
   /**
-   * Per-stroke voxel budget for the pencil/erase tools. Defaults to
-   * ADR-0009 `MAX_VOXELS_PER_OPERATION`; callers may lower (never raise)
-   * the limit, matching the ADR-0009 escalation policy. Tests use small
-   * budgets to exercise the limit seam through the real composition.
+   * Per-gesture voxel budget shared by the stroke and shape tools.
+   * Defaults to ADR-0009 `MAX_VOXELS_PER_OPERATION`; callers may lower
+   * (never raise) the limit, matching the ADR-0009 escalation policy.
+   * Tests use small budgets to exercise the limit seam through the real
+   * composition.
    */
-  readonly strokeVoxelLimit?: number;
+  readonly gestureVoxelLimit?: number;
 }
 
 export function createDesktopComposition(
@@ -91,9 +92,9 @@ export function createDesktopComposition(
     session,
     editor,
     scene,
-    ...(options.strokeVoxelLimit === undefined
+    ...(options.gestureVoxelLimit === undefined
       ? {}
-      : { strokeVoxelLimit: options.strokeVoxelLimit }),
+      : { gestureVoxelLimit: options.gestureVoxelLimit }),
   });
   const draftOverlay = createDraftOverlay({
     scene,

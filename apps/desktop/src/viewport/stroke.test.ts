@@ -200,13 +200,13 @@ describe("desktop stroke workflows", () => {
     expect(middle.voxel[1]).toBeGreaterThan(start.voxel[1]);
     expect(end.voxel).not.toEqual(start.voxel);
 
-    expect(viewport.strokeActive).toBe(false);
-    expect(viewport.strokePointerDown(400, 300)).toEqual({ ok: true });
-    expect(viewport.strokeActive).toBe(true);
-    expect(viewport.strokePointerMove(400, 180)).toEqual({ ok: true });
-    expect(viewport.strokePointerMove(480, 180)).toEqual({ ok: true });
-    expect(viewport.strokePointerUp()).toEqual({ ok: true });
-    expect(viewport.strokeActive).toBe(false);
+    expect(viewport.toolActive).toBe(false);
+    expect(viewport.toolPointerDown(400, 300)).toEqual({ ok: true });
+    expect(viewport.toolActive).toBe(true);
+    expect(viewport.toolPointerMove(400, 180)).toEqual({ ok: true });
+    expect(viewport.toolPointerMove(480, 180)).toEqual({ ok: true });
+    expect(viewport.toolPointerUp()).toEqual({ ok: true });
+    expect(viewport.toolActive).toBe(false);
 
     // The rasterized path is committed: start, every gap-free step, end.
     expect(
@@ -258,9 +258,9 @@ describe("desktop stroke workflows", () => {
     if (start === undefined || end === undefined) {
       throw new Error("fixture voxels must be pickable");
     }
-    expect(viewport.strokePointerDown(400, 300)).toEqual({ ok: true });
-    expect(viewport.strokePointerMove(460, 300)).toEqual({ ok: true });
-    expect(viewport.strokePointerUp()).toEqual({ ok: true });
+    expect(viewport.toolPointerDown(400, 300)).toEqual({ ok: true });
+    expect(viewport.toolPointerMove(460, 300)).toEqual({ ok: true });
+    expect(viewport.toolPointerUp()).toEqual({ ok: true });
 
     const state = composition.session.current;
     if (state === undefined) throw new Error("no open session");
@@ -295,7 +295,7 @@ describe("desktop stroke workflows", () => {
     if (start === undefined) throw new Error("fixture voxels must be pickable");
 
     expect(previewMesh(composition)).toBeUndefined();
-    viewport.strokePointerDown(400, 300);
+    viewport.toolPointerDown(400, 300);
     const mesh = previewMesh(composition);
     expect(mesh).toBeDefined();
     expect(mesh?.count).toBe(1);
@@ -312,14 +312,14 @@ describe("desktop stroke workflows", () => {
     // The stroke grows beyond the initial capacity: the projected mesh
     // must hold a matrix for every previewed voxel (instance capacity is
     // fixed at construction, so the overlay rebuilds the mesh).
-    viewport.strokePointerMove(520, 300);
+    viewport.toolPointerMove(520, 300);
     const grown = previewMesh(composition);
     expect(grown).toBeDefined();
     expect(grown?.count).toBe(composition.draftOverlay.voxelCount);
     expect(grown?.instanceMatrix.array.length).toBe(
       composition.draftOverlay.voxelCount * 16,
     );
-    viewport.strokePointerUp();
+    viewport.toolPointerUp();
     expect(previewMesh(composition)).toBeUndefined();
     expect(composition.draftOverlay.voxelCount).toBe(0);
     composition.dispose();
@@ -335,17 +335,17 @@ describe("desktop stroke workflows", () => {
     composition.editor.setActiveTool("erase");
     const viewport = composition.viewport;
     const before = materialAt(composition, [-1, -1, -1]);
-    viewport.strokePointerDown(400, 300);
-    viewport.strokePointerMove(430, 300);
-    expect(viewport.strokeActive).toBe(true);
-    viewport.strokePointerCancel();
-    expect(viewport.strokeActive).toBe(false);
+    viewport.toolPointerDown(400, 300);
+    viewport.toolPointerMove(430, 300);
+    expect(viewport.toolActive).toBe(true);
+    viewport.toolPointerCancel();
+    expect(viewport.toolActive).toBe(false);
     const state = composition.session.current;
     if (state === undefined) throw new Error("no open session");
     expect(state.bus.historySnapshot().past).toHaveLength(0);
     expect(materialAt(composition, [-1, -1, -1])).toBe(before);
     // A late up after the lost pointer is a no-op.
-    expect(viewport.strokePointerUp()).toEqual({ ok: true });
+    expect(viewport.toolPointerUp()).toEqual({ ok: true });
     composition.dispose();
   });
 
@@ -381,10 +381,10 @@ describe("desktop stroke workflows", () => {
     ).toBe(true);
 
     const viewport = composition.viewport;
-    const result = viewport.strokePointerDown(400, 300);
+    const result = viewport.toolPointerDown(400, 300);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NO_ACTIVE_MATERIAL");
-    expect(viewport.strokeActive).toBe(false);
+    expect(viewport.toolActive).toBe(false);
     expect(state.bus.historySnapshot().past).toHaveLength(1); // delete only
     composition.dispose();
   });
@@ -396,17 +396,17 @@ describe("desktop stroke workflows", () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
-      strokeVoxelLimit: 2,
+      gestureVoxelLimit: 2,
     });
     openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const viewport = composition.viewport;
-    expect(viewport.strokePointerDown(400, 300)).toEqual({ ok: true });
-    const moved = viewport.strokePointerMove(560, 300);
+    expect(viewport.toolPointerDown(400, 300)).toEqual({ ok: true });
+    const moved = viewport.toolPointerMove(560, 300);
     expect(moved.ok).toBe(false);
     if (!moved.ok) expect(moved.error.code).toBe("TOO_MANY_VOXELS");
-    expect(viewport.strokeActive).toBe(false);
+    expect(viewport.toolActive).toBe(false);
     expect(composition.editor.draft).toBeUndefined();
     expect(
       composition.editor.notices.some(
@@ -433,14 +433,14 @@ describe("desktop stroke workflows", () => {
     const viewport = composition.viewport;
     const start = viewport.pick(400, 300);
     if (start === undefined) throw new Error("fixture voxels must be pickable");
-    expect(viewport.strokePointerDown(400, 300)).toEqual({ ok: true });
+    expect(viewport.toolPointerDown(400, 300)).toEqual({ ok: true });
     // Switching the active tool mid-gesture must not leak the draft: the
     // gesture stays pinned to the pencil that started it.
     composition.editor.setActiveTool("erase");
-    expect(viewport.strokePointerMove(430, 300)).toEqual({ ok: true });
+    expect(viewport.toolPointerMove(430, 300)).toEqual({ ok: true });
     composition.editor.setActiveTool("select");
-    expect(viewport.strokePointerUp()).toEqual({ ok: true });
-    expect(viewport.strokeActive).toBe(false);
+    expect(viewport.toolPointerUp()).toEqual({ ok: true });
+    expect(viewport.toolActive).toBe(false);
     expect(composition.editor.draft).toBeUndefined();
     const state = composition.session.current;
     if (state === undefined) throw new Error("no open session");
@@ -465,8 +465,8 @@ describe("desktop stroke workflows", () => {
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const viewport = composition.viewport;
-    expect(viewport.strokePointerDown(400, 300)).toEqual({ ok: true });
-    expect(viewport.strokeActive).toBe(false);
+    expect(viewport.toolPointerDown(400, 300)).toEqual({ ok: true });
+    expect(viewport.toolActive).toBe(false);
     expect(composition.editor.draft).toBeUndefined();
     expect(
       composition.editor.notices.some(
@@ -492,10 +492,10 @@ describe("desktop stroke workflows", () => {
     // pointer down with no draft and no commit.
     composition.editor.setActiveMaterial(materialId(999));
     const viewport = composition.viewport;
-    const result = viewport.strokePointerDown(400, 300);
+    const result = viewport.toolPointerDown(400, 300);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("MISSING_MATERIAL");
-    expect(viewport.strokeActive).toBe(false);
+    expect(viewport.toolActive).toBe(false);
     expect(composition.editor.draft).toBeUndefined();
     const state = composition.session.current;
     if (state === undefined) throw new Error("no open session");
@@ -512,8 +512,8 @@ describe("desktop stroke workflows", () => {
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const viewport = composition.viewport;
-    viewport.strokePointerDown(400, 300);
-    expect(viewport.strokeActive).toBe(true);
+    viewport.toolPointerDown(400, 300);
+    expect(viewport.toolActive).toBe(true);
     const state = composition.session.current;
     if (state === undefined) throw new Error("no open session");
     state.bus.execute(
@@ -532,7 +532,7 @@ describe("desktop stroke workflows", () => {
     // does. Close, then open a fresh document.
     const closed = composition.fileService.closeProject();
     expect(closed.ok).toBe(true);
-    expect(viewport.strokeActive).toBe(false);
+    expect(viewport.toolActive).toBe(false);
     openFixture(composition);
     expect(composition.editor.activeMaterial).toBe(MATERIAL);
     composition.dispose();

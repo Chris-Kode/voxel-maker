@@ -10,11 +10,12 @@ import { Viewport } from "./viewport/Viewport.js";
 import type { FileServiceResult } from "./file-service.js";
 
 /**
- * Desktop shell chrome (plan S6.1/S6.2 ticket #15, S7.3/S7.5 ticket #17):
- * a minimal header with project lifecycle actions, the edit tool buttons
- * (select/pencil/erase), and the viewport. All behavior lives behind the
- * composition root; this component only renders state and forwards
- * gestures.
+ * Desktop shell chrome (plan S6.1/S6.2 ticket #15, S7.3-S7.7/S7.19 ticket
+ * #18): a minimal header with project lifecycle actions, the edit tool
+ * buttons (select/pencil/erase/paint/eyedropper/box/sphere/cylinder), the
+ * select-tool granularity picker (node/voxel/region), and the viewport.
+ * All behavior lives behind the composition root; this component only
+ * renders state and forwards gestures.
  */
 
 /** The runtime tool choices rendered in the shell toolbar. */
@@ -22,8 +23,31 @@ const TOOLS = [
   { id: "select", label: "Select" },
   { id: "pencil", label: "Pencil" },
   { id: "erase", label: "Erase" },
+  { id: "paint", label: "Paint" },
+  { id: "eyedropper", label: "Eyedropper" },
+  { id: "box", label: "Box" },
+  { id: "sphere", label: "Sphere" },
+  { id: "cylinder", label: "Cylinder" },
 ] as const satisfies readonly {
-  id: "select" | "pencil" | "erase";
+  id:
+    | "select"
+    | "pencil"
+    | "erase"
+    | "paint"
+    | "eyedropper"
+    | "box"
+    | "sphere"
+    | "cylinder";
+  label: string;
+}[];
+
+/** Select-tool granularity choices (plan S7.2/S7.4). */
+const SELECTION_MODES = [
+  { id: "node", label: "Node" },
+  { id: "voxel", label: "Voxel" },
+  { id: "region", label: "Region" },
+] as const satisfies readonly {
+  id: "node" | "voxel" | "region";
   label: string;
 }[];
 
@@ -119,11 +143,35 @@ export function App(): React.JSX.Element {
             </button>
           ))}
         </span>
+        {editorState.activeTool === "select" ? (
+          <span
+            className="selection-modes"
+            role="group"
+            aria-label="Selection granularity"
+          >
+            {SELECTION_MODES.map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                className={
+                  editorState.selectionMode === mode.id ? "active" : undefined
+                }
+                aria-pressed={editorState.selectionMode === mode.id}
+                onClick={() => {
+                  composition.editor.setSelectionMode(mode.id);
+                }}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </span>
+        ) : null}
       </header>
       <main className="stage">
         <Viewport
           composition={composition}
           activeTool={editorState.activeTool}
+          selectionMode={editorState.selectionMode}
         />
       </main>
       <footer className="statusbar" aria-live="polite">

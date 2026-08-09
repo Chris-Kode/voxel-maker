@@ -170,7 +170,9 @@ describe("viewport controller", () => {
     composition.viewport.setViewportSize(800, 600);
     composition.viewport.focus();
     composition.viewport.selectAt(400, 300);
-    expect(composition.editor.selection).toEqual([CHILD]);
+    expect(composition.editor.selection).toEqual([
+      { kind: "node", nodeId: CHILD },
+    ]);
     composition.viewport.selectAt(5, 5);
     expect(composition.editor.selection).toEqual([]);
     composition.dispose();
