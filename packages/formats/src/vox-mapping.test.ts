@@ -1,20 +1,10 @@
 import { describe, expect, it } from "vitest";
-import {
-  materialId,
-  nodeId,
-  volumeId,
-  type MaterialId,
-} from "@voxel-maker/shared";
+import { materialId, nodeId, volumeId } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import {
   createDocumentStore,
   type DocumentStoreHandle,
 } from "@voxel-maker/document";
-import {
-  DEFAULT_VOXEL_VOLUME_LIMITS,
-  VoxelVolume,
-  type VoxelVolumeReadView,
-} from "@voxel-maker/voxel";
 import {
   mapVoxImport,
   planVoxExport,
@@ -32,7 +22,8 @@ const identity = {
 } as const;
 
 const ids: VoxImportIdFactory = {
-  nodeId: (index) => nodeId(`node:import:${String(index + 1).padStart(4, "0")}`),
+  nodeId: (index) =>
+    nodeId(`node:import:${String(index + 1).padStart(4, "0")}`),
   volumeId: (index) =>
     volumeId(`volume:import:${String(index + 1).padStart(4, "0")}`),
   materialId: (colorIndex) => materialId(colorIndex),
@@ -112,9 +103,7 @@ describe("mapVoxImport", () => {
       sizeZ: 1,
       voxels: [{ x: 0, y: 0, z: 0, colorIndex: 1 }],
     };
-    const parsed = parseVox(
-      encodeVox({ models: [model, model], palette }),
-    );
+    const parsed = parseVox(encodeVox({ models: [model, model], palette }));
     const plan = mapVoxImport(parsed, ids);
     expect(plan.nodes).toHaveLength(2);
     expect(plan.nodes.map((node) => node.name)).toEqual(["Model 1", "Model 2"]);
@@ -141,7 +130,10 @@ function storeWithVolumes(
   document: VoxelDocument,
   volumes: ReadonlyMap<
     import("@voxel-maker/shared").VolumeId,
-    readonly { readonly coordinate: [number, number, number]; readonly material: number }[]
+    readonly {
+      readonly coordinate: [number, number, number];
+      readonly material: number;
+    }[]
   >,
 ): DocumentStoreHandle {
   const seeds = new Map<
@@ -149,13 +141,16 @@ function storeWithVolumes(
     import("@voxel-maker/voxel").VoxelChunkSeed[]
   >();
   for (const [volumeIdValue, entries] of volumes) {
-    const chunks = new Map<string, import("@voxel-maker/voxel").VoxelChunkSeed>();
+    const chunks = new Map<
+      string,
+      import("@voxel-maker/voxel").VoxelChunkSeed
+    >();
     for (const entry of entries) {
       const [x, y, z] = entry.coordinate;
       const cx = Math.floor(x / 16);
       const cy = Math.floor(y / 16);
       const cz = Math.floor(z / 16);
-      const key = `${cx},${cy},${cz}`;
+      const key = `${String(cx)},${String(cy)},${String(cz)}`;
       const chunk = chunks.get(key) ?? {
         coordinate: [cx, cy, cz] as [number, number, number],
         values: new Uint16Array(4096),
@@ -173,7 +168,6 @@ function storeWithVolumes(
 
 const ROOT = nodeId("node:export:root");
 const VOLUME_A = volumeId("volume:export:a");
-const VOLUME_B = volumeId("volume:export:b");
 
 function exportDocument(): VoxelDocument {
   return createDocument({
@@ -240,9 +234,8 @@ describe("preflightVoxExport", () => {
         ],
       },
     ]);
-    const result = preflightVoxExport(
-      document,
-      (id) => handle.store.getVolume(id),
+    const result = preflightVoxExport(document, (id) =>
+      handle.store.getVolume(id),
     );
     expect(result.ok).toBe(true);
   });
@@ -267,13 +260,14 @@ describe("preflightVoxExport", () => {
     const { handle } = exportHarness(moved, [
       { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, 3], material: 1 }] },
     ]);
-    const result = preflightVoxExport(
-      moved,
-      (id) => handle.store.getVolume(id),
+    const result = preflightVoxExport(moved, (id) =>
+      handle.store.getVolume(id),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.blocked.some((loss) => loss.code === "VOX_LOSS_TRANSFORM")).toBe(true);
+      expect(
+        result.blocked.some((loss) => loss.code === "VOX_LOSS_TRANSFORM"),
+      ).toBe(true);
     }
   });
 
@@ -321,15 +315,19 @@ describe("preflightVoxExport", () => {
       volumes: [{ volumeId: VOLUME_A }],
     });
     const { handle } = exportHarness(nested, [
-      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, -3], material: 1 }] },
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
     ]);
-    const blocked = preflightVoxExport(
-      nested,
-      (id) => handle.store.getVolume(id),
+    const blocked = preflightVoxExport(nested, (id) =>
+      handle.store.getVolume(id),
     );
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) {
-      expect(blocked.blocked.some((loss) => loss.code === "VOX_LOSS_HIERARCHY")).toBe(true);
+      expect(
+        blocked.blocked.some((loss) => loss.code === "VOX_LOSS_HIERARCHY"),
+      ).toBe(true);
     }
     const flattened = preflightVoxExport(
       nested,
@@ -338,7 +336,9 @@ describe("preflightVoxExport", () => {
     );
     expect(flattened.ok).toBe(true);
     if (flattened.ok) {
-      expect(flattened.losses.some((loss) => loss.code === "VOX_LOSS_HIERARCHY")).toBe(true);
+      expect(
+        flattened.losses.some((loss) => loss.code === "VOX_LOSS_HIERARCHY"),
+      ).toBe(true);
     }
   });
 
@@ -349,13 +349,14 @@ describe("preflightVoxExport", () => {
         entries: [{ coordinate: [-2, 2, 3], material: 1 }],
       },
     ]);
-    const blocked = preflightVoxExport(
-      document,
-      (id) => handle.store.getVolume(id),
+    const blocked = preflightVoxExport(document, (id) =>
+      handle.store.getVolume(id),
     );
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) {
-      expect(blocked.blocked.some((loss) => loss.code === "VOX_LOSS_ORIGIN")).toBe(true);
+      expect(
+        blocked.blocked.some((loss) => loss.code === "VOX_LOSS_ORIGIN"),
+      ).toBe(true);
     }
     const rebased = preflightVoxExport(
       document,
@@ -375,13 +376,14 @@ describe("preflightVoxExport", () => {
         ],
       },
     ]);
-    const result = preflightVoxExport(
-      document,
-      (id) => handle.store.getVolume(id),
+    const result = preflightVoxExport(document, (id) =>
+      handle.store.getVolume(id),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.blocked.some((loss) => loss.code === "VOX_LOSS_DIMENSIONS")).toBe(true);
+      expect(
+        result.blocked.some((loss) => loss.code === "VOX_LOSS_DIMENSIONS"),
+      ).toBe(true);
     }
   });
 
@@ -403,16 +405,20 @@ describe("preflightVoxExport", () => {
       },
     };
     const { handle } = exportHarness(shiny, [
-      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, -3], material: 1 }] },
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
     ]);
-    const result = preflightVoxExport(
-      shiny,
-      (id) => handle.store.getVolume(id),
+    const result = preflightVoxExport(shiny, (id) =>
+      handle.store.getVolume(id),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(
-        result.losses.some((loss) => loss.code === "VOX_LOSS_MATERIAL_SEMANTICS"),
+        result.losses.some(
+          (loss) => loss.code === "VOX_LOSS_MATERIAL_SEMANTICS",
+        ),
       ).toBe(true);
     }
   });
@@ -448,13 +454,12 @@ describe("preflightVoxExport", () => {
       material: i + 1,
     }));
     const { handle } = exportHarness(many, [{ volumeId: VOLUME_A, entries }]);
-    const result = preflightVoxExport(
-      many,
-      (id) => handle.store.getVolume(id),
-    );
+    const result = preflightVoxExport(many, (id) => handle.store.getVolume(id));
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.blocked.some((loss) => loss.code === "VOX_LOSS_COLOR_LIMIT")).toBe(true);
+      expect(
+        result.blocked.some((loss) => loss.code === "VOX_LOSS_COLOR_LIMIT"),
+      ).toBe(true);
     }
   });
 
@@ -476,10 +481,7 @@ describe("preflightVoxExport", () => {
       volumes: [],
     });
     const { handle } = exportHarness(bare, []);
-    const result = preflightVoxExport(
-      bare,
-      (id) => handle.store.getVolume(id),
-    );
+    const result = preflightVoxExport(bare, (id) => handle.store.getVolume(id));
     expect(result.ok).toBe(false);
   });
 });
@@ -496,9 +498,8 @@ describe("planVoxExport", () => {
         ],
       },
     ]);
-    const preflight = preflightVoxExport(
-      document,
-      (id) => handle.store.getVolume(id),
+    const preflight = preflightVoxExport(document, (id) =>
+      handle.store.getVolume(id),
     );
     expect(preflight.ok).toBe(true);
     if (!preflight.ok) return;
@@ -574,11 +575,13 @@ describe("planVoxExport", () => {
       },
     };
     const { handle } = exportHarness(translucent, [
-      { volumeId: VOLUME_A, entries: [{ coordinate: [1, 2, -3], material: 1 }] },
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
     ]);
-    const preflight = preflightVoxExport(
-      translucent,
-      (id) => handle.store.getVolume(id),
+    const preflight = preflightVoxExport(translucent, (id) =>
+      handle.store.getVolume(id),
     );
     expect(preflight.ok).toBe(true);
     if (!preflight.ok) return;
@@ -590,7 +593,6 @@ describe("planVoxExport", () => {
     expect(plan.palette[1]?.a).toBe(128);
   });
 });
-
 
 /** Builds a minimal raw VOX file (no RGBA chunk) for one model. */
 function rawVoxWithoutRgba(model: VoxModel): Uint8Array {

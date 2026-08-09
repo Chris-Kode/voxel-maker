@@ -1,7 +1,6 @@
 import {
   WorkspaceError,
   commandId,
-  materialId,
   nodeId,
   transactionId,
   volumeId,
@@ -12,7 +11,7 @@ import {
   type VolumeId,
 } from "@voxel-maker/shared";
 import type { Transform } from "@voxel-maker/math";
-import { canonicalColor, type VoxelDocument } from "@voxel-maker/model";
+import { canonicalColor } from "@voxel-maker/model";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import {
   CommandBus,
@@ -27,7 +26,6 @@ import {
   parseVox,
   type VoxColor,
   type VoxParseLimits,
-  type VoxParseResult,
   type VoxWarning,
 } from "@voxel-maker/formats";
 import { hexColor } from "@voxel-maker/formats";
@@ -101,7 +99,10 @@ export function importVox(
 ): ImportVoxOutcome {
   throwIfAborted(options.signal);
   const totalVoxels = options.bytes.byteLength;
-  const parsed = parseVox(options.bytes, options.parseLimits ?? DEFAULT_VOX_PARSE_LIMITS);
+  const parsed = parseVox(
+    options.bytes,
+    options.parseLimits ?? DEFAULT_VOX_PARSE_LIMITS,
+  );
   throwIfAborted(options.signal);
   options.onProgress?.("parse", totalVoxels, totalVoxels);
 
@@ -209,9 +210,7 @@ export function importVox(
   let serial = 0;
   const nextCommandId = (): CommandId => {
     serial += 1;
-    return commandId(
-      `command:import:${String(serial).padStart(6, "0")}`,
-    );
+    return commandId(`command:import:${String(serial).padStart(6, "0")}`);
   };
   for (const material of plan.materials) {
     if (materialCreated.has(material.materialId)) continue;
@@ -249,7 +248,11 @@ export function importVox(
       );
       continue;
     }
-    for (let offset = 0; offset < entries.length; offset += MAX_IMPORT_ENTRIES_PER_COMMAND) {
+    for (
+      let offset = 0;
+      offset < entries.length;
+      offset += MAX_IMPORT_ENTRIES_PER_COMMAND
+    ) {
       const slice = entries.slice(
         offset,
         Math.min(offset + MAX_IMPORT_ENTRIES_PER_COMMAND, entries.length),
@@ -294,7 +297,9 @@ export function importVox(
   throwIfAborted(options.signal);
   const transactionIdValue =
     options.transactionId ??
-    transactionId(`transaction:import:${String(options.expectedRevision + 1).padStart(4, "0")}`);
+    transactionId(
+      `transaction:import:${String(options.expectedRevision + 1).padStart(4, "0")}`,
+    );
   const result = bus.executeTransaction(commands, {
     transactionId: transactionIdValue,
     expectedRevision: options.expectedRevision,

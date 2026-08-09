@@ -44,9 +44,6 @@ const SIZE_CHUNK_BYTES = 12;
 const XYZI_HEADER_BYTES = 4;
 const PACK_CHUNK_BYTES = 4;
 
-/** Chunk ids that carry semantic meaning in the supported subset. */
-const KNOWN_CHUNKS = new Set(["MAIN", "PACK", "SIZE", "XYZI", "RGBA"]);
-
 /** Extension chunk families reported but not interpreted (ADR-0011). */
 const SCENE_GRAPH_CHUNK_PREFIXES = new Set([
   "nTRN",
@@ -220,8 +217,11 @@ export function parseVox(
       { magic },
     );
   }
-  const version = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    .getUint32(4, true);
+  const version = new DataView(
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  ).getUint32(4, true);
   if (version !== VOX_VERSION) {
     throw voxError(
       "compatibility",
@@ -269,13 +269,18 @@ export function parseVox(
   const unknownChunks: VoxUnknownChunk[] = [];
   const warnings: VoxWarning[] = [];
   let palette: readonly VoxColor[] = VOX_DEFAULT_PALETTE;
-  let paletteExplicit = false;
+  const paletteState = { explicit: false };
   let packModels: number | undefined;
   let skippedEmptyIndexVoxels = 0;
   let totalVoxels = 0;
   let unknownBytes = 0;
   let pendingModel:
-    | { readonly sizeX: number; readonly sizeY: number; readonly sizeZ: number; voxels: VoxVoxel[] }
+    | {
+        readonly sizeX: number;
+        readonly sizeY: number;
+        readonly sizeZ: number;
+        voxels: VoxVoxel[];
+      }
     | undefined;
   const unknownSeen = new Map<
     string,
@@ -430,7 +435,14 @@ export function parseVox(
                 "validation",
                 "VOX_COORDINATE_OUT_OF_RANGE",
                 "Voxel coordinate exceeds the model size",
-                { x, y, z, sizeX: model.sizeX, sizeY: model.sizeY, sizeZ: model.sizeZ },
+                {
+                  x,
+                  y,
+                  z,
+                  sizeX: model.sizeX,
+                  sizeY: model.sizeY,
+                  sizeZ: model.sizeZ,
+                },
               );
             }
             if (colorIndex === 0) {
@@ -439,7 +451,7 @@ export function parseVox(
               skippedEmptyIndexVoxels += 1;
               continue;
             }
-            const key = `${x},${y},${z}`;
+            const key = `${String(x)},${String(y)},${String(z)}`;
             if (seen.has(key)) {
               throw voxError(
                 "validation",
@@ -482,7 +494,7 @@ export function parseVox(
               { childrenSize: header.childrenSize },
             );
           }
-          if (paletteExplicit) {
+          if (paletteState.explicit) {
             throw voxError(
               "validation",
               "VOX_DUPLICATE_RGBA",
@@ -491,7 +503,10 @@ export function parseVox(
           }
           const raw = reader.window(VOX_RGBA_CHUNK_BYTES);
           const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-          const entries: VoxColor[] = new Array(VOX_PALETTE_ENTRIES);
+          const entries: VoxColor[] = Array.from(
+            { length: VOX_PALETTE_ENTRIES },
+            () => ({ r: 0, g: 0, b: 0, a: 0 }),
+          );
           for (let index = 1; index <= 255; index += 1) {
             const offset = (index - 1) * 4;
             entries[index] = {
@@ -509,7 +524,7 @@ export function parseVox(
             a: view.getUint8(1023),
           };
           palette = Object.freeze(entries);
-          paletteExplicit = true;
+          paletteState.explicit = true;
           break;
         }
         default: {
@@ -578,7 +593,7 @@ export function parseVox(
       { models: models.length, limit: limits.maxModels },
     );
   }
-  if (!paletteExplicit) {
+  if (!paletteState.explicit) {
     warnings.push({
       code: "VOX_DEFAULT_PALETTE_USED",
       message: "No RGBA chunk present; the version-150 default palette is used",
@@ -602,7 +617,7 @@ export function parseVox(
     version: VOX_VERSION,
     models: Object.freeze(models.map((model) => Object.freeze(model))),
     palette,
-    paletteExplicit,
+    paletteExplicit: paletteState.explicit,
     warnings: Object.freeze(warnings),
     unknownChunks: Object.freeze(unknownChunks),
     skippedEmptyIndexVoxels,
@@ -705,7 +720,11 @@ export function encodeVox(input: VoxEncodeInput): Uint8Array {
   for (let index = 1; index <= 255; index += 1) {
     const entry = palette[index];
     if (entry === undefined) {
-      throw voxError("internal", "VOX_PALETTE_MISSING", "Palette entry missing");
+      throw voxError(
+        "internal",
+        "VOX_PALETTE_MISSING",
+        "Palette entry missing",
+      );
     }
     const offset = (index - 1) * 4;
     rgbaView.setUint8(offset, entry.r);
@@ -749,8 +768,14 @@ function uint32Bytes3(a: number, b: number, c: number): Uint8Array {
   return out;
 }
 
-function chunkBytes(id: string, content: Uint8Array, children: Uint8Array): Uint8Array {
-  const out = new Uint8Array(CHUNK_HEADER_BYTES + content.length + children.length);
+function chunkBytes(
+  id: string,
+  content: Uint8Array,
+  children: Uint8Array,
+): Uint8Array {
+  const out = new Uint8Array(
+    CHUNK_HEADER_BYTES + content.length + children.length,
+  );
   const view = new DataView(out.buffer);
   for (let i = 0; i < 4; i += 1) {
     view.setUint8(i, id.charCodeAt(i));

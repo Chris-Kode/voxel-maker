@@ -104,7 +104,10 @@ export interface VoxImportVolume {
   /** Half-open occupied bounds in editor space. */
   readonly bounds: { readonly min: Vec3i; readonly max: Vec3i };
   /** Editor-space voxel entries (material ids are palette-derived). */
-  readonly entries: readonly { readonly coordinate: Vec3i; readonly material: MaterialId }[];
+  readonly entries: readonly {
+    readonly coordinate: Vec3i;
+    readonly material: MaterialId;
+  }[];
 }
 
 /** One node produced by the import mapping (root-level child). */

@@ -47,18 +47,21 @@ const base64Encode = (bytes: Uint8Array): string => {
     const a = bytes[offset] as number;
     const b = bytes[offset + 1];
     const c = bytes[offset + 2];
-    out += BASE64_ALPHABET[a >> 2];
-    out += BASE64_ALPHABET[((a & 0x03) << 4) | ((b ?? 0) >> 4)];
+    out += BASE64_ALPHABET.charAt(a >> 2);
+    out += BASE64_ALPHABET.charAt(((a & 0x03) << 4) | ((b ?? 0) >> 4));
     out +=
       b === undefined
         ? "="
-        : BASE64_ALPHABET[((b & 0x0f) << 2) | ((c ?? 0) >> 6)];
-    out += c === undefined ? "=" : BASE64_ALPHABET[c & 0x3f];
+        : BASE64_ALPHABET.charAt(((b & 0x0f) << 2) | ((c ?? 0) >> 6));
+    out += c === undefined ? "=" : BASE64_ALPHABET.charAt(c & 0x3f);
   }
   return out;
 };
 
-const base64Decode = (value: string, path: readonly (string | number)[]): Uint8Array => {
+const base64Decode = (
+  value: string,
+  path: readonly (string | number)[],
+): Uint8Array => {
   if (value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/u.test(value)) {
     throw new WorkspaceError({
       family: "validation",

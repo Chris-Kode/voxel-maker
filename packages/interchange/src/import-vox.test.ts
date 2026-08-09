@@ -253,7 +253,10 @@ describe("importVox", () => {
       }
     }
     expect(voxels.length).toBeGreaterThan(MAX_IMPORT_ENTRIES_PER_COMMAND);
-    const bytes = encodeVox({ models: [{ sizeX: 16, sizeY: size, sizeZ: size, voxels }], palette });
+    const bytes = encodeVox({
+      models: [{ sizeX: 16, sizeY: size, sizeZ: size, voxels }],
+      palette,
+    });
     const outcome = importVox(bus, store, { bytes, expectedRevision: 0 });
     expect(outcome.voxelsImported).toBe(voxels.length);
     expect(outcome.volumesCreated).toBe(1);
@@ -316,7 +319,9 @@ describe("importVox", () => {
       source: "ui",
     });
     expect(redo.ok).toBe(true);
-    expect(store.getVolume(volumeId("volume:import:0001"))?.occupiedCount()).toBe(4);
+    expect(
+      store.getVolume(volumeId("volume:import:0001"))?.occupiedCount(),
+    ).toBe(4);
   });
 
   it("round-trips through the codec with identical semantics", () => {
@@ -337,10 +342,7 @@ describe("importVox", () => {
     const indexMap = new Map<number, number>();
     for (let index = 1; index <= 255; index += 1) {
       const color = palette[index];
-      const entry =
-        color === undefined
-          ? { r: 0, g: 0, b: 0, a: 255 }
-          : color;
+      const entry = color === undefined ? { r: 0, g: 0, b: 0, a: 255 } : color;
       exportedPalette.push(entry);
       if (index === 1 || index === 2) indexMap.set(index, index);
     }
@@ -363,15 +365,11 @@ describe("importVox", () => {
         for (let i = 0; i < chunk.length; i += 1) {
           const material = chunk[i] as number;
           if (material === 0) continue;
-          const local = [
-            i % 16,
-            Math.floor(i / 16) % 16,
-            Math.floor(i / 256),
-          ];
+          const local = [i % 16, Math.floor(i / 16) % 16, Math.floor(i / 256)];
           exportedModel.voxels.push({
-            x: (coordinate[0] as number) * 16 + (local[0] as number),
-            y: -((coordinate[2] as number) * 16 + (local[2] as number)),
-            z: (coordinate[1] as number) * 16 + (local[1] as number),
+            x: coordinate[0] * 16 + (local[0] ?? 0),
+            y: -(coordinate[2] * 16 + (local[2] ?? 0)),
+            z: coordinate[1] * 16 + (local[1] ?? 0),
             colorIndex: material,
           });
         }
@@ -382,9 +380,10 @@ describe("importVox", () => {
       palette: exportedPalette,
     });
     const reparsed = parseVox(reencoded);
-    expect([...reparsed.models[0]?.voxels ?? []].sort()).toEqual(
-      [...cube.voxels].sort((a, b) =>
-        a.x - b.x || a.y - b.y || a.z - b.z || a.colorIndex - b.colorIndex,
+    expect([...(reparsed.models[0]?.voxels ?? [])].sort()).toEqual(
+      [...cube.voxels].sort(
+        (a, b) =>
+          a.x - b.x || a.y - b.y || a.z - b.z || a.colorIndex - b.colorIndex,
       ),
     );
     void commandId;

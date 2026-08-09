@@ -70,7 +70,10 @@ function exportDocument(): VoxelDocument {
 
 function storeWithEntries(
   document: VoxelDocument,
-  entries: readonly { coordinate: [number, number, number]; material: number }[],
+  entries: readonly {
+    coordinate: [number, number, number];
+    material: number;
+  }[],
 ) {
   const chunks = new Map<string, VoxelChunkSeed>();
   for (const entry of entries) {
@@ -78,7 +81,7 @@ function storeWithEntries(
     const cx = Math.floor(x / 16);
     const cy = Math.floor(y / 16);
     const cz = Math.floor(z / 16);
-    const key = `${cx},${cy},${cz}`;
+    const key = `${String(cx)},${String(cy)},${String(cz)}`;
     const chunk = chunks.get(key) ?? {
       coordinate: [cx, cy, cz] as [number, number, number],
       values: new Uint16Array(4096),
@@ -111,9 +114,9 @@ describe("exportVox", () => {
     });
     expect(first.ok).toBe(true);
     if (!first.ok) return;
-    expect(
-      first.losses.some((loss) => loss.code === "VOX_LOSS_METADATA"),
-    ).toBe(true);
+    expect(first.losses.some((loss) => loss.code === "VOX_LOSS_METADATA")).toBe(
+      true,
+    );
     const second = await exportVox({
       document,
       getVolume: (id) => store.getVolume(id),
@@ -161,7 +164,9 @@ describe("exportVox", () => {
     });
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.blocked.some((loss) => loss.code === "VOX_LOSS_TRANSFORM")).toBe(true);
+    expect(
+      outcome.blocked.some((loss) => loss.code === "VOX_LOSS_TRANSFORM"),
+    ).toBe(true);
     expect(storage.files().size).toBe(0);
   });
 
@@ -195,7 +200,9 @@ describe("exportVox", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(
-      outcome.losses.some((loss) => loss.code === "VOX_LOSS_MATERIAL_SEMANTICS"),
+      outcome.losses.some(
+        (loss) => loss.code === "VOX_LOSS_MATERIAL_SEMANTICS",
+      ),
     ).toBe(true);
   });
 
@@ -225,9 +232,9 @@ describe("exportVox", () => {
     expect(parsed.models[0]?.voxels).toEqual([
       { x: 0, y: 0, z: 0, colorIndex: 1 },
     ]);
-    expect(
-      outcome.losses.some((loss) => loss.code === "VOX_LOSS_ORIGIN"),
-    ).toBe(true);
+    expect(outcome.losses.some((loss) => loss.code === "VOX_LOSS_ORIGIN")).toBe(
+      true,
+    );
   });
 
   it("reports atomic-write phases through onPhase", async () => {

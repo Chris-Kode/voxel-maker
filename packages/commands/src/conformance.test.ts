@@ -337,7 +337,9 @@ const volumeDeleteSpec: CommandConformanceSpec = {
         ],
       }),
       {
-        transactionId: transactionId("transaction:conformance:volume.delete:seed"),
+        transactionId: transactionId(
+          "transaction:conformance:volume.delete:seed",
+        ),
         expectedRevision: store.revision,
         source: "ui",
       },
@@ -362,7 +364,8 @@ const volumeDeleteSpec: CommandConformanceSpec = {
     expect(store.getVoxel(NEW_VOLUME, [3, 3, 3])).toBe(1);
     expect(store.getDocument().volumes[NEW_VOLUME]?.name).toBe("Seeded");
   },
-  buildSecondValid: (id) => deleteVolumeCommand(id, { volumeId: SECOND_VOLUME }),
+  buildSecondValid: (id) =>
+    deleteVolumeCommand(id, { volumeId: SECOND_VOLUME }),
   assertSecondApplied: (store) => {
     expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
     expect(store.getVolume(SECOND_VOLUME)).toBeUndefined();

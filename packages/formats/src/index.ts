@@ -48,9 +48,7 @@ export {
   type VxlReadOptions,
   type VxlWriteInput,
 } from "./container.js";
-export {
-  VOX_DEFAULT_PALETTE,
-} from "./vox-palette.js";
+export { VOX_DEFAULT_PALETTE } from "./vox-palette.js";
 export {
   VOX_MAGIC,
   VOX_MAX_AXIS_SIZE,

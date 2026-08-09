@@ -4,11 +4,7 @@ import {
   type CommandId,
   type VolumeId,
 } from "@voxel-maker/shared";
-import {
-  canonicalIntAabb,
-  type IntAabb,
-  type Vec3i,
-} from "@voxel-maker/math";
+import { canonicalIntAabb, type IntAabb, type Vec3i } from "@voxel-maker/math";
 import type { DocumentLimits, VoxelDocument } from "@voxel-maker/model";
 import {
   CHUNK_EDGE,
@@ -19,7 +15,6 @@ import {
 import {
   isRecord,
   missingVolume,
-  parseMaterial,
   parseName,
   parseRegion,
   parseVolumeId,
@@ -31,6 +26,7 @@ import type {
   CommandHandler,
   CommandValidationContext,
   InverseCommand,
+  MutableDocument,
 } from "./registry.js";
 import { CommandRegistry } from "./registry.js";
 import {
@@ -165,8 +161,9 @@ function isIdenticalRecreate(
   if (payload.entries !== undefined) return false;
   if ((payload.name ?? undefined) !== (descriptor.name ?? undefined))
     return false;
-  if (payload.bounds === undefined || descriptor.bounds === undefined)
+  if (payload.bounds === undefined || descriptor.bounds === undefined) {
     return payload.bounds === undefined && descriptor.bounds === undefined;
+  }
   return boundsEqual(payload.bounds, descriptor.bounds);
 }
 
@@ -186,17 +183,6 @@ function parseRawEntries(
   return decodeVolumeEntries(value, path);
 }
 
-/**
- * True when the volume already exists in the committed document (as opposed
- * to being staged earlier in the same transaction).
- */
-function committedVolumeExists(
-  context: CommandValidationContext,
-  volumeId: VolumeId,
-): boolean {
-  return context.committedDocument.volumes[volumeId] !== undefined;
-}
-
 const createVolumeHandler: CommandHandler<
   typeof VOLUME_CREATE_COMMAND,
   CreateVolumePayload
@@ -212,7 +198,10 @@ const createVolumeHandler: CommandHandler<
     }
     return parsed;
   },
-  validate(payload: CreateVolumePayload, context: CommandValidationContext): void {
+  validate(
+    payload: CreateVolumePayload,
+    context: CommandValidationContext,
+  ): void {
     const committed = context.committedDocument;
     const existing = committed.volumes[payload.volumeId];
     if (existing !== undefined) {
@@ -300,25 +289,6 @@ const createVolumeHandler: CommandHandler<
         },
       };
     }
-    if (
-      existingDescriptor !== undefined &&
-      isIdenticalRecreate(payload, existingDescriptor)
-    ) {
-      return {
-        inverse: {
-          type: VOLUME_CREATE_COMMAND,
-          schemaVersion: VOLUME_COMMAND_SCHEMA_VERSION,
-          payload,
-        },
-        changedRecords: false,
-        declaredAffectedResources: {
-          nodeIds: [],
-          materialIds: [],
-          animationIds: [],
-          volumeIds: [payload.volumeId],
-        },
-      };
-    }
     const volume = context.stageNewVolume(payload.volumeId);
     const document = context.stageDocument();
     document.volumes[payload.volumeId] = {
@@ -401,7 +371,10 @@ const deleteVolumeHandler: CommandHandler<
       volumeId: parseVolumeId(payload.volumeId, ["payload", "volumeId"]),
     };
   },
-  validate(payload: DeleteVolumePayload, context: CommandValidationContext): void {
+  validate(
+    payload: DeleteVolumePayload,
+    context: CommandValidationContext,
+  ): void {
     if (context.committedDocument.volumes[payload.volumeId] === undefined) {
       // Deleting a volume that is already absent is a no-op commit (the
       // desired end state already holds), matching the node/voxel no-op
@@ -449,8 +422,7 @@ const deleteVolumeHandler: CommandHandler<
       throw new WorkspaceError({
         family: "limit",
         code: "TOO_MANY_VOXELS",
-        message:
-          "Volume exceeds the per-operation voxel limit for deletion",
+        message: "Volume exceeds the per-operation voxel limit for deletion",
         context: { limit: MAX_VOXELS_PER_OPERATION },
       });
     }
@@ -470,7 +442,11 @@ const deleteVolumeHandler: CommandHandler<
     };
     context.stageRemoveVolume(payload.volumeId);
     const document = context.stageDocument();
-    delete document.volumes[payload.volumeId];
+    document.volumes = Object.fromEntries(
+      Object.entries(document.volumes).filter(
+        ([id]) => id !== payload.volumeId,
+      ),
+    ) as MutableDocument["volumes"];
     return {
       changedRecords: true,
       inverse,

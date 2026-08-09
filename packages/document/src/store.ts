@@ -312,8 +312,7 @@ class DocumentStoreImpl implements DocumentStore {
         throw new WorkspaceError({
           family: "validation",
           code: "REMOVED_VOLUME_KEPT",
-          message:
-            "Removed volume must be absent from the staged document",
+          message: "Removed volume must be absent from the staged document",
           context: { volumeId },
         });
       }

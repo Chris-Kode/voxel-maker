@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VOX_MAX_AXIS_SIZE, VOX_VERSION, encodeVox, parseVox } from "./vox.js";
+import { VOX_VERSION, encodeVox, parseVox } from "./vox.js";
 import { VOX_DEFAULT_PALETTE } from "./vox-palette.js";
 import type { VoxModel, VoxParseLimits } from "./vox-types.js";
 
@@ -74,7 +74,15 @@ describe("encodeVox", () => {
 
   it("writes PACK when more than one model exists", () => {
     const bytes = encodeVox({
-      models: [cubeModel, { sizeX: 1, sizeY: 1, sizeZ: 1, voxels: [{ x: 0, y: 0, z: 0, colorIndex: 1 }] }],
+      models: [
+        cubeModel,
+        {
+          sizeX: 1,
+          sizeY: 1,
+          sizeZ: 1,
+          voxels: [{ x: 0, y: 0, z: 0, colorIndex: 1 }],
+        },
+      ],
       palette: cubePalette,
     });
     const parsed = parseVox(bytes);
@@ -92,21 +100,47 @@ describe("encodeVox", () => {
   });
 
   it("rejects invalid models atomically", () => {
-    expectCode(() => encodeVox({
-        models: [{ sizeX: 0, sizeY: 1, sizeZ: 1, voxels: [] }],
-      }), "VOX_MODEL_DIMENSIONS");
-    expectCode(() => encodeVox({
-        models: [
-          { sizeX: 1, sizeY: 1, sizeZ: 1, voxels: [{ x: 5, y: 0, z: 0, colorIndex: 1 }] },
-        ],
-      }), "VOX_COORDINATE_OUT_OF_RANGE");
-    expectCode(() => encodeVox({
-        models: [
-          { sizeX: 1, sizeY: 1, sizeZ: 1, voxels: [{ x: 0, y: 0, z: 0, colorIndex: 0 }] },
-        ],
-      }), "VOX_EMPTY_INDEX");
+    expectCode(
+      () =>
+        encodeVox({
+          models: [{ sizeX: 0, sizeY: 1, sizeZ: 1, voxels: [] }],
+        }),
+      "VOX_MODEL_DIMENSIONS",
+    );
+    expectCode(
+      () =>
+        encodeVox({
+          models: [
+            {
+              sizeX: 1,
+              sizeY: 1,
+              sizeZ: 1,
+              voxels: [{ x: 5, y: 0, z: 0, colorIndex: 1 }],
+            },
+          ],
+        }),
+      "VOX_COORDINATE_OUT_OF_RANGE",
+    );
+    expectCode(
+      () =>
+        encodeVox({
+          models: [
+            {
+              sizeX: 1,
+              sizeY: 1,
+              sizeZ: 1,
+              voxels: [{ x: 0, y: 0, z: 0, colorIndex: 0 }],
+            },
+          ],
+        }),
+      "VOX_EMPTY_INDEX",
+    );
     expectCode(() => encodeVox({ models: [] }), "VOX_NO_MODELS");
-    expectCode(() => encodeVox({ models: [cubeModel], palette: cubePalette.slice(0, 4) }), "VOX_RGBA_LENGTH");
+    expectCode(
+      () =>
+        encodeVox({ models: [cubeModel], palette: cubePalette.slice(0, 4) }),
+      "VOX_RGBA_LENGTH",
+    );
   });
 });
 
@@ -136,7 +170,9 @@ describe("parseVox", () => {
       { x: 0, y: 0, z: 0, colorIndex: 1 },
     ]);
     expect(parsed.skippedEmptyIndexVoxels).toBe(1);
-    expect(parsed.warnings.some((w) => w.code === "VOX_EMPTY_INDEX_VOXELS_SKIPPED")).toBe(true);
+    expect(
+      parsed.warnings.some((w) => w.code === "VOX_EMPTY_INDEX_VOXELS_SKIPPED"),
+    ).toBe(true);
   });
 
   it("rejects a file without the VOX magic", () => {
@@ -155,9 +191,7 @@ describe("parseVox", () => {
   it("rejects truncated files", () => {
     const bytes = encodeVox({ models: [cubeModel] });
     for (const length of [0, 4, 7, 12]) {
-      for (const length of [0, 4, 7, 12]) {
       expectCode(() => parseVox(bytes.subarray(0, length)), "VOX_TRUNCATED");
-    }
     }
   });
 
@@ -229,7 +263,10 @@ describe("parseVox", () => {
     for (let i = 0; i < 4; i += 1) headerView.setUint8(i, "VOX ".charCodeAt(i));
     headerView.setUint32(4, 150, true);
     const children = concat([rawChunk("XYZI", xyzContent)]);
-    const bytes = concat([header, rawChunk("MAIN", new Uint8Array(0), children)]);
+    const bytes = concat([
+      header,
+      rawChunk("MAIN", new Uint8Array(0), children),
+    ]);
     expectCode(() => parseVox(bytes), "VOX_XYZI_WITHOUT_SIZE");
   });
 
@@ -237,7 +274,12 @@ describe("parseVox", () => {
     // Two models but PACK declares 3.
     const twoModels = [
       cubeModel,
-      { sizeX: 1, sizeY: 1, sizeZ: 1, voxels: [{ x: 0, y: 0, z: 0, colorIndex: 1 }] },
+      {
+        sizeX: 1,
+        sizeY: 1,
+        sizeZ: 1,
+        voxels: [{ x: 0, y: 0, z: 0, colorIndex: 1 }],
+      },
     ];
     const bytes = encodeVox({ models: twoModels, palette: cubePalette });
     // Rewrite PACK content (first child after MAIN header) to 3.
@@ -271,7 +313,9 @@ describe("parseVox", () => {
     expect(parsed.unknownChunks).toEqual([
       { id: "NOTE", count: 1, totalBytes: 4 },
     ]);
-    expect(parsed.warnings.some((w) => w.code === "VOX_UNKNOWN_CHUNKS_SKIPPED")).toBe(true);
+    expect(
+      parsed.warnings.some((w) => w.code === "VOX_UNKNOWN_CHUNKS_SKIPPED"),
+    ).toBe(true);
   });
 
   it("reports scene-graph chunks without interpreting them", () => {
@@ -318,7 +362,10 @@ function buildRawVox(
     chunks.push(rawChunk("SIZE", u32x3(model.sizeX, model.sizeY, model.sizeZ)));
     if (corruptSizeContent) {
       // Already wrote 12 bytes; append 4 junk bytes to make content 16.
-      chunks[chunks.length - 1] = rawChunk("SIZE", concat([u32x3(model.sizeX, model.sizeY, model.sizeZ), u32(0)]));
+      chunks[chunks.length - 1] = rawChunk(
+        "SIZE",
+        concat([u32x3(model.sizeX, model.sizeY, model.sizeZ), u32(0)]),
+      );
     }
     const voxelCount = model.voxels.length;
     const content = new Uint8Array(4 + voxelCount * 4);
@@ -348,7 +395,11 @@ function buildRawVox(
   return concat([header, rawChunk("MAIN", new Uint8Array(0), children)]);
 }
 
-function rawChunk(id: string, content: Uint8Array, children?: Uint8Array): Uint8Array {
+function rawChunk(
+  id: string,
+  content: Uint8Array,
+  children?: Uint8Array,
+): Uint8Array {
   const childBytes = children ?? new Uint8Array(0);
   const out = new Uint8Array(12 + content.length + childBytes.length);
   const view = new DataView(out.buffer);
@@ -387,7 +438,11 @@ function concat(parts: readonly Uint8Array[]): Uint8Array {
 }
 
 /** Inserts a new chunk right before the RGBA chunk of an encoded file. */
-function insertChunk(bytes: Uint8Array, id: string, content: Uint8Array): Uint8Array {
+function insertChunk(
+  bytes: Uint8Array,
+  id: string,
+  content: Uint8Array,
+): Uint8Array {
   const rgbaIndex = bytes.findIndex(
     (_, i) =>
       bytes[i] === 0x52 &&

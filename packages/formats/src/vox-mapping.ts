@@ -43,13 +43,6 @@ import {
  * transforms, hierarchy, and origin rebasing before any bytes are written.
  */
 
-const identityTransform = Object.freeze({
-  translation: Object.freeze([0, 0, 0]),
-  pivot: Object.freeze([0, 0, 0]),
-  rotation: Object.freeze([0, 0, 0, 1]),
-  scale: Object.freeze([1, 1, 1]),
-});
-
 /** Deterministic id factory for one import (caller supplies the prefix). */
 export interface VoxImportIdFactory {
   nodeId(modelIndex: number): NodeId;
@@ -171,7 +164,9 @@ export function hexColor(color: VoxColor): string {
 }
 
 /** Volume read access used by the export preflight. */
-export type VoxVolumeAccess = (volumeId: VolumeId) => VoxelVolumeReadView | undefined;
+export type VoxVolumeAccess = (
+  volumeId: VolumeId,
+) => VoxelVolumeReadView | undefined;
 
 interface VoxelNode {
   readonly nodeId: NodeId;
@@ -197,8 +192,10 @@ export function preflightVoxExport(
   const losses: VoxExportLoss[] = [];
   const voxelNodes: VoxelNode[] = [];
   for (const node of Object.values(document.nodes)) {
-    const component = node.components.find((candidate) => candidate.kind === "voxel");
-    if (component === undefined || component.kind !== "voxel") continue;
+    const component = node.components.find(
+      (candidate) => candidate.kind === "voxel",
+    );
+    if (component === undefined) continue;
     voxelNodes.push({
       nodeId: node.nodeId,
       volumeId: component.volumeId,
@@ -305,11 +302,13 @@ export function preflightVoxExport(
     }
     // The unsigned-cube origin is evaluated in VOX space: after the axis
     // mapping (x, y, z) = (X, -Z, Y), vox y is non-negative only when the
-    // editor Z extent is non-positive. VOX-space minima:
-    //   voxMinX = bounds.min[0], voxMinY = -bounds.max[2], voxMinZ = bounds.min[1]
+    // editor Z extent is non-positive. Bounds are half-open [min, max), so
+    // the occupied Z range is [minZ, maxZ - 1] and VOX-space minima are:
+    //   voxMinX = bounds.min[0], voxMinY = -(bounds.max[2] - 1),
+    //   voxMinZ = bounds.min[1]
     const voxMin = [
       bounds.min[0],
-      -bounds.max[2],
+      -(bounds.max[2] - 1),
       bounds.min[1],
     ] as const;
     for (const axis of [0, 1, 2] as const) {
@@ -384,7 +383,11 @@ export function preflightVoxExport(
       });
       continue;
     }
-    if (material.roughness !== 0 || material.metallic !== 0 || material.emissive !== 0) {
+    if (
+      material.roughness !== 0 ||
+      material.metallic !== 0 ||
+      material.emissive !== 0
+    ) {
       losses.push({
         code: VOX_EXPORT_LOSSES.materialSemantics,
         message:
@@ -443,9 +446,7 @@ export function preflightVoxExport(
     materialToIndex.set(materialIdValue, index);
   }
 
-  return blocked.length > 0
-    ? { ok: false, blocked }
-    : { ok: true, losses };
+  return blocked.length > 0 ? { ok: false, blocked } : { ok: true, losses };
 }
 
 function transformEqualsIdentity(
@@ -481,8 +482,10 @@ export function planVoxExport(
 ): VoxExportPlan {
   const voxelNodes: VoxelNode[] = [];
   for (const node of Object.values(document.nodes)) {
-    const component = node.components.find((candidate) => candidate.kind === "voxel");
-    if (component === undefined || component.kind !== "voxel") continue;
+    const component = node.components.find(
+      (candidate) => candidate.kind === "voxel",
+    );
+    if (component === undefined) continue;
     voxelNodes.push({
       nodeId: node.nodeId,
       volumeId: component.volumeId,
@@ -600,9 +603,7 @@ export function planVoxExport(
     // Preflight guarantees non-negative VOX-space bounds unless rebasing;
     // with no rebase the model keeps its absolute (non-negative) origin.
     const rebase: Vec3i =
-      choices.rebaseOrigins === true
-        ? [minX, minY, minZ]
-        : [0, 0, 0];
+      choices.rebaseOrigins === true ? [minX, minY, minZ] : [0, 0, 0];
     const voxels: VoxVoxel[] = mapped.map((item) => ({
       x: item.voxel.x - rebase[0],
       y: item.voxel.y - rebase[1],

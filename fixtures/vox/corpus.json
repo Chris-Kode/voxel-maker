@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "generator": "scripts/generate-vox-fixtures.mjs",
+  "format": "VOX version 150",
+  "known": [
+    {
+      "file": "known/cube-two-colors.vox",
+      "vector": "golden 2x2x2 cube with two explicit palette colors",
+      "byteLength": 1128,
+      "models": 1,
+      "voxels": 8,
+      "paletteExplicit": true
+    },
+    {
+      "file": "known/two-models.vox",
+      "vector": "PACK file with two SIZE/XYZI models",
+      "byteLength": 1188,
+      "models": 2,
+      "voxels": 9,
+      "paletteExplicit": true
+    },
+    {
+      "file": "known/default-palette.vox",
+      "vector": "no RGBA chunk; the version-150 default palette applies",
+      "byteLength": 64,
+      "models": 1,
+      "voxels": 1,
+      "paletteExplicit": false
+    },
+    {
+      "file": "known/empty-model.vox",
+      "vector": "SIZE with an empty XYZI (zero voxels)",
+      "byteLength": 1096,
+      "models": 1,
+      "voxels": 0,
+      "paletteExplicit": true
+    },
+    {
+      "file": "known/unknown-chunk.vox",
+      "vector": "unknown NOTE chunk skipped with a warning",
+      "byteLength": 1144,
+      "models": 1,
+      "voxels": 8,
+      "paletteExplicit": true
+    }
+  ],
+  "rejected": [
+    {
+      "file": "malformed/bad-magic.vox",
+      "vector": "header magic is not VOX ",
+      "family": "compatibility",
+      "code": "VOX_INVALID_MAGIC",
+      "byteLength": 1128
+    },
+    {
+      "file": "malformed/bad-version.vox",
+      "vector": "unsupported version 200",
+      "family": "compatibility",
+      "code": "VOX_UNSUPPORTED_VERSION",
+      "byteLength": 1128
+    },
+    {
+      "file": "malformed/truncated-header.vox",
+      "vector": "file ends inside the 8-byte header",
+      "family": "validation",
+      "code": "VOX_TRUNCATED",
+      "byteLength": 3
+    },
+    {
+      "file": "malformed/chunk-overflow.vox",
+      "vector": "MAIN declares more children than the file holds",
+      "family": "validation",
+      "code": "VOX_CHUNK_OVERFLOW",
+      "byteLength": 24
+    },
+    {
+      "file": "malformed/xyz-without-size.vox",
+      "vector": "XYZI chunk appears without a preceding SIZE",
+      "family": "validation",
+      "code": "VOX_XYZI_WITHOUT_SIZE",
+      "byteLength": 40
+    },
+    {
+      "file": "malformed/duplicate-voxels.vox",
+      "vector": "two XYZI entries share one coordinate",
+      "family": "validation",
+      "code": "VOX_DUPLICATE_VOXEL",
+      "byteLength": 68
+    },
+    {
+      "file": "malformed/coordinate-out-of-range.vox",
+      "vector": "voxel coordinate exceeds the declared model size",
+      "family": "validation",
+      "code": "VOX_COORDINATE_OUT_OF_RANGE",
+      "byteLength": 64
+    },
+    {
+      "file": "malformed/pack-mismatch.vox",
+      "vector": "PACK declares 3 models but only 2 SIZE/XYZI pairs exist",
+      "family": "validation",
+      "code": "VOX_PACK_MISMATCH",
+      "byteLength": 124
+    },
+    {
+      "file": "malformed/bad-rgba-length.vox",
+      "vector": "RGBA chunk carries 1020 content bytes instead of 1024",
+      "family": "validation",
+      "code": "VOX_RGBA_LENGTH",
+      "byteLength": 1096
+    },
+    {
+      "file": "malformed/trailing-bytes.vox",
+      "vector": "garbage after the MAIN chunk",
+      "family": "validation",
+      "code": "VOX_MAIN_SIZE_MISMATCH",
+      "byteLength": 1132
+    },
+    {
+      "file": "malformed/empty-file.vox",
+      "vector": "zero-length file",
+      "family": "validation",
+      "code": "VOX_TRUNCATED",
+      "byteLength": 0
+    },
+    {
+      "file": "malformed/huge-dimensions.vox",
+      "vector": "model size 300 exceeds the 256 subset limit",
+      "family": "validation",
+      "code": "VOX_MODEL_DIMENSIONS",
+      "byteLength": 64
+    }
+  ]
+}
