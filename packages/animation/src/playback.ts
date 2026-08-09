@@ -70,6 +70,13 @@ export interface PlaybackController {
    * clip rewinds the transport to zero and keeps the stopped/paused state.
    */
   load(document: VoxelDocument, clip: AnimationDescriptor | null): void;
+  /**
+   * Refreshes the document snapshot without rewinding or changing
+   * transport state. The timeline controller calls it after every commit
+   * so evaluation keeps projecting the latest committed state while the
+   * playhead stays where the user left it (ticket #29).
+   */
+  refresh(document: VoxelDocument): void;
   play(): void;
   pause(): void;
   /** Stops playback and restores base state exactly (ADR-0006). */
@@ -150,6 +157,11 @@ export function createPlaybackController(
       currentClip = clipValue;
       time = 0;
       lastTick = undefined;
+      emit();
+    },
+
+    refresh(documentValue) {
+      currentDocument = documentValue;
       emit();
     },
 
