@@ -36,6 +36,19 @@ export {
   type ShapeToolOptions,
 } from "./shape-tool.js";
 export {
+  buildCreateChildCommand,
+  buildDeleteCommand,
+  buildRenameCommand,
+  buildReparentCommand,
+  defaultChildName,
+  deleteFeedback,
+  isAncestor,
+  reparentFeedback,
+  type DeleteFeedback,
+  type ReparentFeedback,
+  type ReparentRejectReason,
+} from "./hierarchy.js";
+export {
   DEFAULT_ROTATE_SNAP,
   DEFAULT_SCALE_SNAP,
   DEFAULT_TRANSLATE_SNAP,
