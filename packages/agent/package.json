@@ -22,5 +22,11 @@
   },
   "devDependencies": {
     "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/math": "workspace:*",
+    "@voxel-maker/model": "workspace:*",
+    "@voxel-maker/document": "workspace:*"
   }
 }
