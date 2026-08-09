@@ -87,16 +87,19 @@ describe("preview session creation (AC: mandatory base revision)", () => {
     session.discard();
   });
 
-  it("honors an explicit base revision", () => {
+  it("honors an explicit base revision equal to the live revision", () => {
     const { store } = liveFixture();
-    const session = createPreviewSession({ live: store, baseRevision: 0 });
-    expect(session.baseRevision).toBe(0);
-    expect(session.revision).toBe(0);
+    const session = createPreviewSession({ live: store, baseRevision: 1 });
+    expect(session.baseRevision).toBe(1);
+    expect(session.revision).toBe(1);
     session.discard();
   });
 
-  it("rejects a base revision above the live revision", () => {
+  it("rejects a base revision that differs from the live revision", () => {
     const { store } = liveFixture();
+    expect(() =>
+      createPreviewSession({ live: store, baseRevision: 0 }),
+    ).toThrow();
     expect(() =>
       createPreviewSession({ live: store, baseRevision: 2 }),
     ).toThrow();

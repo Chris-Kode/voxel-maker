@@ -477,16 +477,16 @@ export function createPreviewSession(
 ): PreviewSession {
   const live = options.live;
   const baseRevision = options.baseRevision ?? live.revision;
-  if (
-    !Number.isInteger(baseRevision) ||
-    baseRevision < 0 ||
-    baseRevision > live.revision
-  ) {
+  // The staged snapshot must equal the live state at creation: staged reads
+  // fall through to live data for untouched volumes, so an older base would
+  // mix the base record snapshot with newer live voxel data. When the live
+  // document advances later, Apply reports REVISION_CONFLICT and the caller
+  // discards and reinspects (plan S12.9) instead of silently rebasing.
+  if (!Number.isInteger(baseRevision) || baseRevision !== live.revision) {
     throw new WorkspaceError({
       family: "validation",
       code: "INVALID_BASE_REVISION",
-      message:
-        "baseRevision must be an integer between 0 and the live revision",
+      message: "baseRevision must equal the live revision at session creation",
       context: { baseRevision, liveRevision: live.revision },
     });
   }
