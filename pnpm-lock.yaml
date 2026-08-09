@@ -561,9 +561,6 @@ importers:
       '@voxel-maker/formats':
         specifier: workspace:*
         version: link:../formats
-      '@voxel-maker/voxel':
-        specifier: workspace:*
-        version: link:../voxel
       typescript:
         specifier: 'catalog:'
         version: 5.9.2

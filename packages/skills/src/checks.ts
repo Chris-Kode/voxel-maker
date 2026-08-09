@@ -8,6 +8,7 @@ import {
 import { schemaErrors, type JsonSchema } from "@voxel-maker/agent";
 import type { IntAabb, Vec3i } from "./geometry.js";
 import { isVec3i } from "./geometry.js";
+import { MAX_REGION_EXTENT } from "./schemas.js";
 
 /**
  * Generic structural-check registry (plan S14.10, ticket #38): named,
@@ -26,8 +27,8 @@ import { isVec3i } from "./geometry.js";
 export const UNKNOWN_STRUCTURAL_CHECK_CODE = "UNKNOWN_STRUCTURAL_CHECK";
 export const INVALID_CHECK_OPTIONS_CODE = "INVALID_CHECK_OPTIONS";
 
-/** Hard cap of one scan region axis extent (mirrors MAX_REGION_EXTENT). */
-const MAX_SCAN_EXTENT = 2_048;
+/** Hard cap of one scan region axis extent (engine region bound). */
+const MAX_SCAN_EXTENT = MAX_REGION_EXTENT;
 /** Hard cap of one scan region volume (mirrors proposal voxel bounds). */
 const MAX_SCAN_VOLUME = 1_000_000;
 

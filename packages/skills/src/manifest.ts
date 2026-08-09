@@ -1,5 +1,4 @@
 import { WorkspaceError, type JsonValue } from "@voxel-maker/shared";
-import { schemaErrors, type JsonSchema } from "@voxel-maker/agent";
 import { validateStructuralCheck } from "./checks.js";
 
 /**
@@ -154,6 +153,8 @@ export interface SkillEnvironment {
 export const INVALID_SKILL_MANIFEST_CODE = "INVALID_SKILL_MANIFEST";
 export const SKILL_MANIFEST_VERSION_CODE = "SKILL_MANIFEST_VERSION_INVALID";
 export const SKILL_NAME_CODE = "SKILL_NAME_INVALID";
+export const SKILL_DESCRIPTION_CODE = "SKILL_DESCRIPTION_INVALID";
+export const SKILL_CATEGORY_CODE = "SKILL_CATEGORY_INVALID";
 export const SKILL_VERSION_CODE = "SKILL_VERSION_INVALID";
 export const SKILL_INSTRUCTIONS_CODE = "SKILL_INSTRUCTIONS_INVALID";
 export const SKILL_TOOLS_CODE = "SKILL_TOOLS_INVALID";
@@ -274,7 +275,7 @@ export function validateSkillManifest(
     MAX_DESCRIPTION_LENGTH,
   );
   if (description === undefined) {
-    invalid(SKILL_NAME_CODE, "Invalid skill description", {
+    invalid(SKILL_DESCRIPTION_CODE, "Invalid skill description", {
       description: value.description,
     });
   }
@@ -284,7 +285,7 @@ export function validateSkillManifest(
     typeof category !== "string" ||
     !(SKILL_CATEGORIES as readonly string[]).includes(category)
   ) {
-    invalid(SKILL_NAME_CODE, "Invalid skill category", {
+    invalid(SKILL_CATEGORY_CODE, "Invalid skill category", {
       category: value.category,
     });
   }
@@ -638,18 +639,4 @@ function validateEfficiency(
     }
   }
   return Object.freeze(result) as unknown as SkillEfficiencyLimits;
-}
-
-/** JSON-Schema contract helper for check options (re-exported). */
-export const OPTIONS_SCHEMA: JsonSchema = {
-  type: "object",
-  additionalProperties: false,
-};
-
-/** Validates raw options against a check option schema (helper). */
-export function optionsErrors(
-  schema: JsonSchema,
-  options: unknown,
-): readonly string[] {
-  return schemaErrors(schema, options);
 }

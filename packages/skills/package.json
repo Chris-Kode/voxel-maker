@@ -23,8 +23,7 @@
   "devDependencies": {
     "typescript": "catalog:",
     "@voxel-maker/animation": "workspace:*",
-    "@voxel-maker/formats": "workspace:*",
-    "@voxel-maker/voxel": "workspace:*"
+    "@voxel-maker/formats": "workspace:*"
   },
   "dependencies": {
     "@voxel-maker/shared": "workspace:*",

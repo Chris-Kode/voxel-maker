@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import { SKILL_CATEGORIES } from "./manifest.js";
 import {
   CREATION_SKILLS,
-  KNOWN_GENERATOR_NAMES,
-  KNOWN_TOOL_NAMES,
   registerSkill,
   skillByName,
   skillForCategory,
 } from "./skill-registry.js";
+import { KNOWN_GENERATOR_NAMES, KNOWN_TOOL_NAMES } from "./environment.js";
 import { GENERATOR_DEFINITIONS } from "./registry.js";
 import { STRUCTURAL_CHECKS } from "./checks.js";
 

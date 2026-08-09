@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { WorkspaceError } from "@voxel-maker/shared";
 import {
   INVALID_SKILL_MANIFEST_CODE,
+  SKILL_CATEGORY_CODE,
   SKILL_CONSTRAINTS_CODE,
+  SKILL_DESCRIPTION_CODE,
   SKILL_EVALUATION_CODE,
   SKILL_GENERATOR_CODE,
   SKILL_INSTRUCTIONS_CODE,
@@ -18,7 +20,7 @@ import {
   KNOWN_GENERATOR_NAMES,
   KNOWN_TOOL_NAMES,
   SKILL_ENVIRONMENT,
-} from "./skill-registry.js";
+} from "./environment.js";
 
 /**
  * Manifest validation tests (ticket #38 AC1): the registry validates
@@ -204,7 +206,10 @@ describe("manifest version and shape (AC1)", () => {
     expectCode(badVersion, SKILL_VERSION_CODE);
     const badCategory = validManifest();
     badCategory.category = "robot";
-    expectCode(badCategory, SKILL_NAME_CODE);
+    expectCode(badCategory, SKILL_CATEGORY_CODE);
+    const badDescription = validManifest();
+    badDescription.description = "";
+    expectCode(badDescription, SKILL_DESCRIPTION_CODE);
   });
 });
 

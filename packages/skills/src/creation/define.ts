@@ -1,12 +1,15 @@
-import type { SkillManifest, SkillEnvironment } from "../manifest.js";
+import type { SkillManifest } from "../manifest.js";
 import { validateSkillManifest } from "../manifest.js";
+import { SKILL_ENVIRONMENT } from "../environment.js";
 
 /**
  * Creation-skill authoring helper (plan S14.6, ticket #38): every
  * creation skill is authored as one plain JSON-safe manifest and frozen
  * through the shared validator at module load, so a broken skill fails
- * fast at import time instead of at use time. The helper also carries
- * the shared allowed-tool set of the v1 creation surface.
+ * fast at import time instead of at use time. The helper binds the live
+ * tool/generator environment, so catalog entries stay one argument.
+ * It also carries the shared allowed-tool set of the v1 creation
+ * surface.
  */
 
 /** The shared allowed-tool set of the v1 creation skills. */
@@ -50,9 +53,6 @@ export const CREATION_TOOLS: readonly string[] = Object.freeze([
 ]);
 
 /** Validates and deep-freezes one creation-skill manifest. */
-export function defineCreationSkill(
-  manifest: SkillManifest,
-  environment: SkillEnvironment,
-): SkillManifest {
-  return validateSkillManifest(manifest, environment);
+export function defineCreationSkill(manifest: SkillManifest): SkillManifest {
+  return validateSkillManifest(manifest, SKILL_ENVIRONMENT);
 }

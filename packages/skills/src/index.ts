@@ -114,13 +114,15 @@ export {
 } from "./provenance.js";
 export {
   CREATION_SKILLS,
-  KNOWN_GENERATOR_NAMES,
-  KNOWN_TOOL_NAMES,
-  SKILL_ENVIRONMENT,
   registerSkill,
   skillByName,
   skillForCategory,
 } from "./skill-registry.js";
+export {
+  KNOWN_GENERATOR_NAMES,
+  KNOWN_TOOL_NAMES,
+  SKILL_ENVIRONMENT,
+} from "./environment.js";
 export { CREATION_TOOLS } from "./creation/define.js";
 export { FURNITURE_SKILL_MANIFEST } from "./creation/furniture.js";
 export { ARCHITECTURE_SKILL_MANIFEST } from "./creation/architecture.js";
