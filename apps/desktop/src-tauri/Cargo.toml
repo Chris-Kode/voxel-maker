@@ -1,6 +1,6 @@
 [package]
 name = "voxel-maker"
-version = "0.0.0"
+version = "0.1.0"
 description = "AI-native generic voxel editor - desktop shell"
 authors = ["Voxel Maker contributors"]
 edition = "2021"

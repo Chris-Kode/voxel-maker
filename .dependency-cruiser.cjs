@@ -10,7 +10,7 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: "node_modules" },
-    exclude: "(^|/)(dist|node_modules)/|\\.test\\.ts$",
+    exclude: "(^|/)(dist|node_modules|target)/|\\.test\\.ts$",
     tsConfig: { fileName: "tsconfig.base.json" },
     enhancedResolveOptions: {
       conditionNames: ["types", "import", "node", "default"],

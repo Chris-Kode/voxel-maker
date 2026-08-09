@@ -1,12 +1,13 @@
 {
   "name": "@voxel-maker/headless",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
     "voxel-maker-headless": "./dist/cli.js",
     "voxel-maker-persistence": "./dist/persistence-cli.js",
-    "voxel-maker-recovery": "./dist/recovery-cli.js"
+    "voxel-maker-recovery": "./dist/recovery-cli.js",
+    "voxel-maker-smoke": "./dist/release-smoke-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -25,7 +26,9 @@
     "@voxel-maker/formats": "workspace:*",
     "@voxel-maker/math": "workspace:*",
     "@voxel-maker/storage": "workspace:*",
-    "@voxel-maker/animation": "workspace:*"
+    "@voxel-maker/animation": "workspace:*",
+    "@voxel-maker/agent": "workspace:*",
+    "@voxel-maker/interchange": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:"

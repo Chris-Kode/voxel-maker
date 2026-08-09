@@ -82,3 +82,6 @@ diagnostics/
 # Local benchmark reports and trend history (CI retains its own copy).
 benchmarks/out/
 benchmarks/trends.json
+
+# Release build output (installers, checksums, manifests)
+release/artifacts/
