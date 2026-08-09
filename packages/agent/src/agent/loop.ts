@@ -26,6 +26,7 @@ import {
   type ToolCallResult,
 } from "../provider/types.js";
 import { toToolError } from "../contract.js";
+import { composeAgentContextBlock, type RecipeOptions } from "../recipes.js";
 import type { PreviewDiff, PreviewSession } from "../preview.js";
 import {
   budgetLimitError,
@@ -67,6 +68,9 @@ export const AGENT_SYSTEM_PROMPT = [
   "- A tool result with ok:false means the call was rejected; fix the call, do not repeat it unchanged.",
   "- Session budgets (rounds, tokens, tool calls, commands, voxel changes, output bytes, duration, cost) are hard limits and cannot be raised.",
   "- Your proposal is never applied automatically; a human approves or discards it.",
+  "When rigging: separate movable geometry minimally (prefer existing nodes), parent it correctly, place pivots from the part's voxel bounds (rotation origin), and constrain generically with rotation-limits.",
+  "When animating: reuse existing nodes, keep keyframe times within the clip duration, express rotations as quaternions [x, y, z, w], and match the loop policy at the loop point (identical values at time 0 and duration for looping clips).",
+  "When adjusting an existing rig or clip, change only the requested nodes, tracks, keyframes, or constraints; leave unrelated state untouched.",
 ].join("\n");
 
 export interface AgentLoopOptions {
@@ -82,6 +86,17 @@ export interface AgentLoopOptions {
   readonly consent: ProviderConsent;
   /** The user's edit request; the only user content in the run. */
   readonly userPrompt: string;
+  /**
+   * Bounded context recipes appended to the system prompt (plan
+   * S13.1/S13.2): compact rig and/or animation summaries of the base
+   * document (hierarchy, pivots, bounds, transforms, constraints, clips,
+   * tracks, targeted keyframe detail). Absent by default.
+   */
+  readonly contextRecipes?: {
+    readonly rigging?: boolean;
+    readonly animation?: boolean;
+    readonly options?: RecipeOptions;
+  };
   /** Virtual clock for duration budgets; defaults to `Date.now`. */
   readonly clock?: { now(): number };
   /** Simulated sleep for retry backoff; defaults to a real timer. */
@@ -279,6 +294,7 @@ class AgentSessionImpl implements AgentSession {
   readonly #maxOutputTokens: number;
   readonly #onEvent: ((event: AgentEvent) => void) | undefined;
   readonly #isLiveCurrent: () => boolean;
+  readonly #contextBlock: string;
   readonly #ledger: BudgetLedger;
   readonly #abort = new AbortController();
   readonly #messages: ChatMessage[] = [];
@@ -314,6 +330,22 @@ class AgentSessionImpl implements AgentSession {
     this.#maxOutputTokens = options.maxOutputTokens ?? 2048;
     this.#onEvent = options.onEvent;
     this.#isLiveCurrent = options.isLiveCurrent ?? (() => true);
+    const recipes =
+      options.contextRecipes === undefined ? {} : options.contextRecipes;
+    this.#contextBlock =
+      recipes.rigging === true || recipes.animation === true
+        ? composeAgentContextBlock(this.preview, {
+            ...(recipes.rigging === undefined
+              ? {}
+              : { rigging: recipes.rigging }),
+            ...(recipes.animation === undefined
+              ? {}
+              : { animation: recipes.animation }),
+            ...(recipes.options === undefined
+              ? {}
+              : { recipe: recipes.options }),
+          }).text
+        : "";
     this.#ledger = new BudgetLedger(this.#budgets, this.#clock);
     if (options.transcript !== undefined) {
       this.transcript = new AgentTranscript(options.transcript);
@@ -334,6 +366,9 @@ class AgentSessionImpl implements AgentSession {
         return this.#canceledResult();
       }
       this.#messages.push({ role: "system", content: AGENT_SYSTEM_PROMPT });
+      if (this.#contextBlock.length > 0) {
+        this.#messages.push({ role: "system", content: this.#contextBlock });
+      }
       this.#messages.push({ role: "user", content: this.#userPrompt });
       for (const message of this.#messages) {
         this.transcript?.recordMessage(message);

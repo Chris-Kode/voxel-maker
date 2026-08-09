@@ -156,6 +156,66 @@ const VALID_ARGS: Readonly<Record<string, JsonValue>> = {
     region: { min: [0, 0, 0], max: [1, 1, 1] },
     axis: "x",
   },
+  setNodePivot: { nodeId: FIXTURE_IDS.arm, pivot: [0, 0, 0] },
+  removeNodePivot: { nodeId: FIXTURE_IDS.arm },
+  addNodeJoint: { nodeId: FIXTURE_IDS.arm },
+  removeNodeJoint: { nodeId: FIXTURE_IDS.arm },
+  addConstraint: {
+    nodeId: FIXTURE_IDS.arm,
+    componentId: "component:test:hinge",
+    limits: { min: [-1, -1, -1], max: [1, 1, 1] },
+  },
+  setConstraint: {
+    nodeId: FIXTURE_IDS.arm,
+    componentId: "component:test:hinge",
+    limits: { min: [0, 0, 0], max: [0, 0, 0] },
+  },
+  removeConstraint: {
+    nodeId: FIXTURE_IDS.arm,
+    componentId: "component:test:hinge",
+  },
+  createAnimation: {
+    animationId: "anim:test:new",
+    name: "Test",
+    duration: 1,
+    loop: "loop",
+  },
+  updateAnimation: { animationId: FIXTURE_IDS.animationWave, duration: 2 },
+  deleteAnimation: { animationId: FIXTURE_IDS.animationWave },
+  addTrack: {
+    animationId: FIXTURE_IDS.animationWave,
+    trackId: "track:test:new",
+    targetNodeId: FIXTURE_IDS.body,
+    interpolation: "linear",
+  },
+  removeTrack: {
+    animationId: FIXTURE_IDS.animationWave,
+    trackId: FIXTURE_IDS.trackWave,
+  },
+  setTrackInterpolation: {
+    animationId: FIXTURE_IDS.animationWave,
+    trackId: FIXTURE_IDS.trackWave,
+    interpolation: "smoothstep",
+  },
+  setKeyframe: {
+    animationId: FIXTURE_IDS.animationWave,
+    trackId: FIXTURE_IDS.trackWave,
+    keyframeId: "keyframe:test:new",
+    time: 0.5,
+    channel: "rotation",
+    value: [0, 0, 0, 1],
+  },
+  moveKeyframe: {
+    animationId: FIXTURE_IDS.animationWave,
+    trackId: FIXTURE_IDS.trackWave,
+    keyframeId: FIXTURE_IDS.keyframeEnd,
+    time: 1.5,
+  },
+  deleteKeyframe: {
+    animationId: FIXTURE_IDS.animationWave,
+    trackId: FIXTURE_IDS.trackWave,
+    keyframeId: FIXTURE_IDS.keyframeEnd,
+  },
 };
 
 describe("mutation tool surface (AC: registered commands, explicit ids, base revision)", () => {

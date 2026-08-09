@@ -143,6 +143,17 @@ export function mutationOutputSchema(toolName: string): JsonSchema {
         },
         required: ["id", "type", "schemaVersion", "payload"],
       },
+      animation: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          tracks: { type: "integer", minimum: 1 },
+          keyframes: { type: "integer", minimum: 1 },
+          clipDurationSeconds: { type: "number", minimum: 0 },
+        },
+        description:
+          "Optional animation deltas (rigging/animation tools, plan S13.5) reserved against the session animation budgets",
+      },
     },
     ["baseRevision", "voxelEstimate", "command"],
   );
