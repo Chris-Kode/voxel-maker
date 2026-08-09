@@ -5,7 +5,7 @@ import {
   type SceneNode,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import { applyMatrix } from "@voxel-maker/math";
+import { applyMatrix, quaternionToEulerXYZ, type Transform } from "@voxel-maker/math";
 import {
   evaluateLocalTransform,
   evaluateNodeWorldTransforms,
@@ -17,9 +17,14 @@ import {
   createAbstractSculptureFixture,
   createChestLidFixture,
   createLinkedArmFixture,
+  createSimpleCharacterFixture,
   createWheelFixture,
   createWingsFixture,
 } from "./fixtures.js";
+import {
+  evaluateConstrainedLocalTransform,
+  rotationConstraintsOf,
+} from "./constraints.js";
 import { validateRigAnnotations } from "./validate.js";
 
 /**
@@ -45,6 +50,7 @@ describe("generic rig fixtures", () => {
       "linked-arm",
       "wings",
       "abstract-sculpture",
+      "simple-character",
     ]);
   });
 
@@ -220,5 +226,53 @@ describe("abstract sculpture articulation", () => {
     expect(top[0]).toBeCloseTo(-5, 12);
     expect(top[1]).toBeCloseTo(1, 12);
     expect(top[2]).toBeCloseTo(0, 12);
+  });
+});
+
+describe("simple character articulation", () => {
+  const document = createSimpleCharacterFixture();
+  const head = findNode(document, "Head");
+  const rightArm = findNode(document, "Right Arm");
+
+  it("turns the head about the neck pivot without drifting", () => {
+    const turned = evaluateLocalTransform({
+      ...head.transform,
+      rotation: [0, Math.SQRT1_2, 0, Math.SQRT1_2],
+    });
+    // The neck content point (the pivot, 0,0,0) lands at translation +
+    // pivot = (0,3,0); the front-top corner (1,1,0) sweeps around the neck.
+    expect(applyMatrix(turned, [0, 0, 0])).toEqual([0, 3, 0]);
+    const corner = applyMatrix(turned, [1, 1, 0]);
+    expect(corner[0]).toBeCloseTo(0, 12);
+    expect(corner[1]).toBeCloseTo(4, 12);
+    expect(corner[2]).toBeCloseTo(-1, 12);
+  });
+
+  it("raises the right arm about the shoulder pivot without drifting", () => {
+    const raised = evaluateLocalTransform({
+      ...rightArm.transform,
+      rotation: [Math.SQRT1_2, 0, 0, Math.SQRT1_2],
+    });
+    // The shoulder content point (the pivot) lands at translation + pivot.
+    expect(applyMatrix(raised, [0, 0, 0])).toEqual([2, 2, 0]);
+    // A 90-degree X rotation swings the hanging hand tip (0,-2,0) to -Z.
+    const hand = applyMatrix(raised, [0, -2, 0]);
+    expect(hand[0]).toBeCloseTo(2, 12);
+    expect(hand[1]).toBeCloseTo(2, 12);
+    expect(hand[2]).toBeCloseTo(-2, 12);
+  });
+
+  it("clamps an over-driven limb at its constraint limit", () => {
+    const overDriven: Transform = {
+      ...rightArm.transform,
+      // 120 degrees about X, past the shoulder max of 60 degrees.
+      rotation: [Math.sin(Math.PI / 3), 0, 0, Math.cos(Math.PI / 3)],
+    };
+    const clamped = evaluateConstrainedLocalTransform(
+      overDriven,
+      rotationConstraintsOf(rightArm),
+    );
+    const xAngle = quaternionToEulerXYZ(clamped.rotation)[0];
+    expect(xAngle).toBeCloseTo(Math.PI / 3, 9);
   });
 });
