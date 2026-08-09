@@ -98,7 +98,12 @@ export function InspectorPanel({
 
   if (document.document === undefined) {
     return (
-      <section className="panel" aria-label="Inspector">
+      <section
+        className="panel"
+        aria-label="Inspector"
+        id="panel-inspector"
+        tabIndex={-1}
+      >
         <h2>Inspector</h2>
         <p className="panel-empty">Open a document to inspect nodes.</p>
       </section>
@@ -111,7 +116,12 @@ export function InspectorPanel({
 
   if (nodes.length === 0) {
     return (
-      <section className="panel" aria-label="Inspector">
+      <section
+        className="panel"
+        aria-label="Inspector"
+        id="panel-inspector"
+        tabIndex={-1}
+      >
         <h2>Inspector</h2>
         <p className="panel-empty">
           Select a node to edit its transform, components, and metadata.
@@ -313,7 +323,12 @@ export function InspectorPanel({
   };
 
   return (
-    <section className="panel" aria-label="Inspector">
+    <section
+      className="panel"
+      aria-label="Inspector"
+      id="panel-inspector"
+      tabIndex={-1}
+    >
       <h2>Inspector</h2>
       <p className="inspector-selection">
         {nodes.length === 1

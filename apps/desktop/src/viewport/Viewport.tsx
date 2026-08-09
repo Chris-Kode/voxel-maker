@@ -386,6 +386,7 @@ export function Viewport({
       className="viewport"
       role="img"
       aria-label="3D viewport showing the open voxel document"
+      tabIndex={0}
     >
       {import.meta.env.DEV ? (
         <div

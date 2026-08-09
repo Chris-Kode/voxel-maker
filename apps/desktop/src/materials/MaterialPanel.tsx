@@ -40,7 +40,12 @@ export function MaterialPanel({
 }): React.JSX.Element {
   const state = usePanelState(controller);
   return (
-    <section className="material-panel" aria-label="Materials panel">
+    <section
+      className="material-panel"
+      aria-label="Materials panel"
+      id="panel-materials"
+      tabIndex={-1}
+    >
       <header className="material-panel-header">
         <h2>Materials</h2>
         <button

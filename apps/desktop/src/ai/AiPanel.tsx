@@ -83,7 +83,12 @@ export function AiPanel({
   };
 
   return (
-    <section className="panel ai-panel" aria-label="AI assistant">
+    <section
+      className="panel ai-panel"
+      aria-label="AI assistant"
+      id="panel-ai"
+      tabIndex={-1}
+    >
       <h2>AI Assistant</h2>
       {!state.documentOpen ? (
         <p className="panel-empty">Open a document to use the AI assistant.</p>

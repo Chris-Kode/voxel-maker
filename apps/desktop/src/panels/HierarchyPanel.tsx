@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { NodeId } from "@voxel-maker/shared";
 import type { DocumentSession } from "@voxel-maker/session";
 import {
@@ -24,11 +24,21 @@ import {
 } from "./panel-utils.js";
 
 /**
- * Hierarchy panel (plan S7.11, ticket #20): create, rename, delete, and
- * drag-reparent the scene graph with cycle and reference feedback. Every
- * action commits a registered command through the session bus; the panel
- * shows the deterministic reason for rejected drops/deletes (cycle, root,
- * children, references) instead of duplicating the validation.
+ * Hierarchy panel (plan S7.11, ticket #20; keyboard tree S7.17, ticket
+ * #43): create, rename, delete, and drag-reparent the scene graph with
+ * cycle and reference feedback. Every action commits a registered command
+ * through the session bus; the panel shows the deterministic reason for
+ * rejected drops/deletes (cycle, root, children, references) instead of
+ * duplicating the validation.
+ *
+ * Keyboard model: the tree is a real `role="tree"` widget with roving
+ * focus. ArrowUp/ArrowDown move over the visible tree, ArrowRight
+ * expands a collapsed node (or enters its first child), ArrowLeft
+ * collapses (or moves to the parent), Home/End jump, Enter/Space select
+ * exactly like a click, F2 renames, and Delete removes with the same
+ * validation as the delete button. Action buttons inside each row are
+ * ordinary Tab stops (they are shown on `:focus-within`, not only hover)
+ * with node-specific accessible names.
  */
 
 export interface HierarchyPanelProps {
@@ -56,17 +66,33 @@ export function HierarchyPanel({
   const [expanded, setExpanded] = useState<ReadonlySet<NodeId>>(
     () => new Set(),
   );
+  const [focusedNodeId, setFocusedNodeId] = useState<NodeId | undefined>();
   const [renaming, setRenaming] = useState<NodeId | undefined>();
   const [renameText, setRenameText] = useState("");
   const [dragging, setDragging] = useState<NodeId | undefined>();
   const [dropFeedback, setDropFeedback] = useState<
     { readonly target: NodeId; readonly feedback: ReparentFeedback } | undefined
   >();
+  const rowRefs = useRef<Map<NodeId, HTMLDivElement>>(new Map());
   const panelIds = ids ?? createPanelIds("hierarchy");
+
+  // Roving focus: when the focused id changes (or an expand renders new
+  // rows), the effect moves focus to the freshly visible row. Declared
+  // before the early returns so the hook order never varies (React rules
+  // of hooks).
+  useEffect(() => {
+    if (focusedNodeId === undefined) return;
+    rowRefs.current.get(focusedNodeId)?.focus();
+  }, [focusedNodeId, expanded, document.revision]);
 
   if (document.document === undefined) {
     return (
-      <section className="panel" aria-label="Hierarchy">
+      <section
+        className="panel"
+        aria-label="Hierarchy"
+        id="panel-hierarchy"
+        tabIndex={-1}
+      >
         <h2>Hierarchy</h2>
         <p className="panel-empty">Open a document to edit the hierarchy.</p>
       </section>
@@ -76,7 +102,12 @@ export function HierarchyPanel({
   const root = document.document.nodes[document.document.rootNodeId];
   if (root === undefined) {
     return (
-      <section className="panel" aria-label="Hierarchy">
+      <section
+        className="panel"
+        aria-label="Hierarchy"
+        id="panel-hierarchy"
+        tabIndex={-1}
+      >
         <h2>Hierarchy</h2>
         <p className="panel-empty">The document has no root node.</p>
       </section>
@@ -171,6 +202,92 @@ export function HierarchyPanel({
     }
   };
 
+  /** Visible rows in DOM order (depth-first, skipping collapsed subtrees). */
+  const visibleNodeIds = (): readonly NodeId[] => {
+    if (document.document === undefined) return [];
+    const result: NodeId[] = [];
+    const visit = (nodeId: NodeId): void => {
+      result.push(nodeId);
+      const node = document.document?.nodes[nodeId];
+      if (node === undefined || !expanded.has(nodeId)) return;
+      for (const child of node.children) visit(child);
+    };
+    visit(document.document.rootNodeId);
+    return result;
+  };
+
+  const onRowKeyDown = (
+    nodeId: NodeId,
+    event: React.KeyboardEvent<HTMLDivElement>,
+  ): void => {
+    const nodes = visibleNodeIds();
+    const index = nodes.indexOf(nodeId);
+    const node = document.document?.nodes[nodeId];
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        if (index >= 0 && index < nodes.length - 1) {
+          setFocusedNodeId(nodes[index + 1]);
+        }
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        if (index > 0) {
+          setFocusedNodeId(nodes[index - 1]);
+        }
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        if (node !== undefined && node.children.length > 0) {
+          if (!expanded.has(nodeId)) {
+            setExpanded((previous) => new Set(previous).add(nodeId));
+          }
+          setFocusedNodeId(node.children[0]);
+        }
+        break;
+      case "ArrowLeft":
+        event.preventDefault();
+        if (
+          node !== undefined &&
+          node.children.length > 0 &&
+          expanded.has(nodeId)
+        ) {
+          setExpanded((previous) => {
+            const next = new Set(previous);
+            next.delete(nodeId);
+            return next;
+          });
+        } else if (node?.parentId !== undefined && node.parentId !== null) {
+          setFocusedNodeId(node.parentId);
+        }
+        break;
+      case "Home":
+        event.preventDefault();
+        if (nodes.length > 0) setFocusedNodeId(nodes[0]);
+        break;
+      case "End":
+        event.preventDefault();
+        if (nodes.length > 0) setFocusedNodeId(nodes[nodes.length - 1]);
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        select(nodeId, { additive: false, toggle: false });
+        break;
+      case "F2":
+        event.preventDefault();
+        startRename(nodeId);
+        break;
+      case "Delete":
+      case "Backspace":
+        event.preventDefault();
+        remove(nodeId);
+        break;
+      default:
+        break;
+    }
+  };
+
   const onDragOver = (target: NodeId, event: React.DragEvent): void => {
     if (dragging === undefined || target === dragging) return;
     event.preventDefault();
@@ -225,9 +342,29 @@ export function HierarchyPanel({
       dropFeedback !== undefined && dropFeedback.target === nodeId
         ? dropFeedback.feedback
         : undefined;
+    const name = node.name ?? "(unnamed)";
     return (
       <div key={nodeId}>
         <div
+          ref={(element) => {
+            if (element === null) {
+              rowRefs.current.delete(nodeId);
+            } else {
+              rowRefs.current.set(nodeId, element);
+            }
+          }}
+          role="treeitem"
+          data-node-id={nodeId}
+          aria-label={name}
+          aria-selected={selected}
+          aria-expanded={hasChildren ? isOpen : undefined}
+          tabIndex={
+            focusedNodeId === nodeId ||
+            (focusedNodeId === undefined &&
+              nodeId === document.document?.rootNodeId)
+              ? 0
+              : -1
+          }
           className={[
             "hierarchy-row",
             selected ? "selected" : undefined,
@@ -241,7 +378,15 @@ export function HierarchyPanel({
           style={{ paddingLeft: `${String(depth * 14 + 6)}px` }}
           draggable={nodeId !== document.document?.rootNodeId}
           onClick={(event) => {
+            // A click inside an action button or the rename field keeps
+            // its own focus; a click on the row itself selects it and
+            // moves focus onto the row (predictable tree behavior).
+            if ((event.target as HTMLElement).closest("button, input")) return;
             select(nodeId, modifiersFrom(event));
+            setFocusedNodeId(nodeId);
+          }}
+          onKeyDown={(event) => {
+            onRowKeyDown(nodeId, event);
           }}
           onDragStart={(event) => {
             if (nodeId === document.document?.rootNodeId) {
@@ -270,7 +415,8 @@ export function HierarchyPanel({
             <button
               type="button"
               className="hierarchy-toggle"
-              aria-label={isOpen ? "Collapse" : "Expand"}
+              aria-label={isOpen ? `Collapse ${name}` : `Expand ${name}`}
+              aria-expanded={isOpen}
               onClick={(event) => {
                 event.stopPropagation();
                 setExpanded((previous) => {
@@ -309,14 +455,14 @@ export function HierarchyPanel({
               }}
             />
           ) : (
-            <span className="hierarchy-name" title={node.name ?? nodeId}>
-              {node.name ?? "(unnamed)"}
+            <span className="hierarchy-name" title={name}>
+              {name}
             </span>
           )}
           <span className="hierarchy-actions">
             <button
               type="button"
-              title="Add child node"
+              aria-label={`Add child to ${name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 createChild(nodeId);
@@ -326,7 +472,7 @@ export function HierarchyPanel({
             </button>
             <button
               type="button"
-              title="Rename"
+              aria-label={`Rename ${name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 startRename(nodeId);
@@ -337,7 +483,7 @@ export function HierarchyPanel({
             {nodeId !== document.document?.rootNodeId ? (
               <button
                 type="button"
-                title="Delete node"
+                aria-label={`Delete ${name}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   remove(nodeId);
@@ -363,7 +509,12 @@ export function HierarchyPanel({
   };
 
   return (
-    <section className="panel" aria-label="Hierarchy">
+    <section
+      className="panel"
+      aria-label="Hierarchy"
+      id="panel-hierarchy"
+      tabIndex={-1}
+    >
       <h2>
         Hierarchy
         <button
@@ -380,6 +531,8 @@ export function HierarchyPanel({
       </h2>
       <div
         className="hierarchy-tree"
+        role="tree"
+        aria-label="Scene hierarchy"
         onDragOver={(event) => {
           // Allow the panel background to receive the drop so it can
           // report a missing target instead of silently swallowing it.

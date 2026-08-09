@@ -9,12 +9,18 @@ import type {
 } from "./timeline-controller.js";
 
 /**
- * Timeline panel (plan S10.9-S10.11, ticket #29): clip selection,
- * transport (play/pause/stop/loop/scrub), zoom/scroll/snap, track rows
- * linked to the hierarchy, and keyframe lanes with create (double-click
- * or Key), move (drag), multi-select (click/shift-click), delete (Delete
- * or button), and per-track interpolation choice. Every edit compiles to
- * a registered command through the timeline controller; the panel never
+ * Timeline panel (plan S10.9-S10.11, ticket #29; keyboard workflows
+ * S7.17, ticket #43): clip selection, transport (play/pause/stop/loop/
+ * scrub), zoom/scroll/snap, track rows linked to the hierarchy, and
+ * keyframe lanes with create (double-click or Key), move (drag),
+ * multi-select (click/shift-click), delete (Delete or button), and
+ * per-track interpolation choice. Keyboard model: the lanes are a tab
+ * stop where Delete removes selected keyframes, Key inserts a keyframe
+ * for the selected tracks at the playhead, ArrowLeft/ArrowRight scrub
+ * the playhead by one snap increment, and Home/End jump to the start/end
+ * of the clip; track rows are a roving-focus list (role=option) where
+ * Enter/Space select and ArrowUp/ArrowDown move. Every edit compiles to a
+ * registered command through the timeline controller; the panel never
  * encodes domain invariants itself and never mutates the document
  * directly. All view state (zoom, scroll, playhead, selection, snapping,
  * key mode) is runtime-only.
@@ -74,6 +80,8 @@ export function TimelinePanel({
     }[]
   >([]);
   const lanesRef = useRef<HTMLDivElement>(null);
+  const trackRowRefs = useRef<Map<TrackId, HTMLDivElement>>(new Map());
+  const [focusedTrackId, setFocusedTrackId] = useState<TrackId | undefined>();
   const [lanesWidth, setLanesWidth] = useState(800);
 
   useEffect(
@@ -97,6 +105,14 @@ export function TimelinePanel({
       observer.disconnect();
     };
   }, [state.selectedClipId]);
+
+  // Roving focus over the track rows (plan S7.17): arrow keys move focus
+  // between rows; Enter/Space select. The rows are ordinary tab stops so
+  // their interpolation select and remove button stay reachable.
+  useEffect(() => {
+    if (focusedTrackId === undefined) return;
+    trackRowRefs.current.get(focusedTrackId)?.focus();
+  }, [focusedTrackId, state.tracks]);
 
   const report = (error: Error | undefined): void => {
     if (error !== undefined) editor.pushNotice("error", error.message);
@@ -232,12 +248,43 @@ export function TimelinePanel({
     report(controller.setKeyframe(trackIdValue, time));
   };
 
+  /** Scrubs the playhead by one snap increment (0.1s when unsnapped). */
+  const scrubStep = (direction: -1 | 1): void => {
+    const step = state.snapEnabled ? state.snapIncrement : 0.1;
+    controller.scrub(state.playhead + direction * step);
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === "Delete" || event.key === "Backspace") {
       if (state.selectedKeyframeIds.length > 0) {
         event.preventDefault();
         report(controller.deleteSelectedKeyframes());
       }
+      return;
+    }
+    if (event.key === "Key") {
+      event.preventDefault();
+      report(controller.keySelection());
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      scrubStep(-1);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      scrubStep(1);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      controller.scrub(0);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      controller.scrub(clip?.duration ?? 0);
     }
   };
 
@@ -270,6 +317,11 @@ export function TimelinePanel({
     trackIdValue: TrackId,
   ): void => {
     const multi = event.shiftKey || event.metaKey || event.ctrlKey;
+    selectTrack(trackIdValue, multi);
+  };
+
+  /** Replaces or toggles the track selection (keyboard and pointer). */
+  const selectTrack = (trackIdValue: TrackId, multi: boolean): void => {
     const selected = controller.state.selectedTrackIds;
     controller.selectTracks(
       multi
@@ -316,14 +368,24 @@ export function TimelinePanel({
 
   if (!state.open) {
     return (
-      <section className="timeline-panel" aria-label="Timeline">
+      <section
+        className="timeline-panel"
+        aria-label="Timeline"
+        id="panel-timeline"
+        tabIndex={-1}
+      >
         <p className="timeline-empty">Open a document to edit animations.</p>
       </section>
     );
   }
 
   return (
-    <section className="timeline-panel" aria-label="Timeline">
+    <section
+      className="timeline-panel"
+      aria-label="Timeline"
+      id="panel-timeline"
+      tabIndex={-1}
+    >
       <div className="timeline-toolbar">
         <label className="timeline-clip-picker">
           <span className="sr-only">Clip</span>
@@ -461,7 +523,7 @@ export function TimelinePanel({
         </div>
       ) : (
         <div className="timeline-body">
-          <div className="timeline-tracks" aria-label="Tracks">
+          <div className="timeline-tracks" role="listbox" aria-label="Tracks">
             {state.tracks.length === 0 ? (
               <p className="timeline-empty">
                 Select a node, then + Track.{" "}
@@ -471,12 +533,43 @@ export function TimelinePanel({
               state.tracks.map((entry) => (
                 <div
                   key={entry.track.trackId}
+                  ref={(element) => {
+                    if (element === null) {
+                      trackRowRefs.current.delete(entry.track.trackId);
+                    } else {
+                      trackRowRefs.current.set(entry.track.trackId, element);
+                    }
+                  }}
+                  role="option"
+                  aria-selected={trackSelected(entry.track.trackId)}
+                  tabIndex={focusedTrackId === entry.track.trackId ? 0 : -1}
                   className={
                     "timeline-track" +
                     (trackSelected(entry.track.trackId) ? " selected" : "")
                   }
                   onClick={(event) => {
                     onTrackClick(event, entry.track.trackId);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      selectTrack(entry.track.trackId, false);
+                      return;
+                    }
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      const rows = state.tracks;
+                      const index = rows.findIndex(
+                        (candidate) =>
+                          candidate.track.trackId === entry.track.trackId,
+                      );
+                      const next =
+                        event.key === "ArrowDown" ? index + 1 : index - 1;
+                      const target = rows[next];
+                      if (target !== undefined) {
+                        setFocusedTrackId(target.track.trackId);
+                      }
+                    }
                   }}
                 >
                   <span className="timeline-track-name" title={entry.nodeName}>
