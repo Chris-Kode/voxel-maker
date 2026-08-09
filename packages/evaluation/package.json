@@ -1,0 +1,37 @@
+{
+  "name": "@voxel-maker/evaluation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node ../../scripts/clean.mjs dist",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@voxel-maker/agent": "workspace:*",
+    "@voxel-maker/commands": "workspace:*",
+    "@voxel-maker/document": "workspace:*",
+    "@voxel-maker/math": "workspace:*",
+    "@voxel-maker/model": "workspace:*",
+    "@voxel-maker/renderer": "workspace:*",
+    "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/voxel": "workspace:*"
+  }
+}
