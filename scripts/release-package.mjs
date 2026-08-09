@@ -32,7 +32,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { writeChecksums } from "./release-checksums.mjs";
 
 const workspaceRoot = process.cwd();
@@ -285,25 +285,47 @@ for (const artifact of await collectArtifacts()) {
   console.log(`[release-package] artifact ${name} (${info.size} bytes)`);
 }
 
-// Headless CLI binaries are released alongside installers so headless
-// qualification (smoke, recovery, persistence) runs from the artifact set.
-for (const actualName of [
-  "cli.js",
-  "persistence-cli.js",
-  "recovery-cli.js",
-  "release-smoke-cli.js",
-]) {
-  const sourcePath = join(headlessDist, actualName);
-  if (existsSync(sourcePath)) {
-    const destination = join(outDirectory, `headless-${actualName}`);
-    await copyFile(sourcePath, destination);
-    const info = await stat(destination);
-    artifacts.push({ name: basename(destination), bytes: info.size });
-    console.log(
-      `[release-package] artifact ${basename(destination)} (${info.size} bytes)`,
-    );
+// Headless CLI probes are released alongside installers so headless
+// qualification (smoke, recovery, persistence) runs from the artifact set
+// on a clean machine. Each probe is bundled by vite (SSR target) into ONE
+// self-contained file with the whole engine inlined, so a downloaded
+// artifact runs with nothing but Node installed.
+const HEADLESS_PROBES = [
+  { entry: "cli.js", artifact: "headless-cli.js" },
+  { entry: "persistence-cli.js", artifact: "headless-persistence-cli.js" },
+  { entry: "recovery-cli.js", artifact: "headless-recovery-cli.js" },
+  { entry: "release-smoke-cli.js", artifact: "headless-release-smoke-cli.js" },
+];
+const bundleDirectory = join(outDirectory, "..", ".probe-bundle");
+for (const probe of HEADLESS_PROBES) {
+  const entry = join(headlessDist, probe.entry);
+  if (!existsSync(entry)) {
+    console.error(`[release-package] headless probe missing: ${probe.entry}`);
+    continue;
   }
+  const { build } = await import("vite");
+  await build({
+    configFile: false,
+    logLevel: "silent",
+    build: {
+      ssr: entry,
+      outDir: bundleDirectory,
+      emptyOutDir: true,
+      rollupOptions: {
+        output: { format: "es", entryFileNames: probe.artifact },
+      },
+    },
+    ssr: { noExternal: [/@voxel-maker\//] },
+  });
+  const destination = join(outDirectory, probe.artifact);
+  await copyFile(join(bundleDirectory, probe.artifact), destination);
+  const info = await stat(destination);
+  artifacts.push({ name: probe.artifact, bytes: info.size });
+  console.log(
+    `[release-package] artifact ${probe.artifact} (${info.size} bytes)`,
+  );
 }
+await rm(bundleDirectory, { recursive: true, force: true });
 
 const manifest = {
   release: version,
