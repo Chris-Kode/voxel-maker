@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { animationId } from "@voxel-maker/shared";
 import { CommandBus } from "@voxel-maker/commands";
+import { transactionId } from "@voxel-maker/shared";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import { FIXTURE_IDS, createInspectionStore } from "./fixtures.js";
 import { createMutator, type Mutator } from "./mutator.js";
@@ -357,6 +358,65 @@ describe("rigging/animation staging through the preview session (plan S13.5)", (
       ),
     ).toBe(true);
     expect(handle.store.revision).toBe(liveBefore.revision + 1);
+  });
+
+  it("apply is one undoable history entry: undo restores, redo reapplies", () => {
+    const { handle } = createInspectionStore();
+    const registry = createPreviewRegistry();
+    const bus = new CommandBus(handle.store, registry, handle.writeCapability);
+    const preview = createPreviewSession({
+      live: handle.store,
+      applyBus: bus,
+      sessionId: previewSessionId("preview:rig:undo"),
+    });
+    const mutator = createMutator({
+      store: preview,
+      registry,
+      session: preview,
+    });
+    const revisionBefore = handle.store.revision;
+    const historyBefore = bus.historySnapshot().past.length;
+
+    const value = constructOk(mutator, "createAnimation", {
+      animationId: "anim:test:undo",
+      duration: 1,
+      loop: "once",
+    });
+    const stageResult = preview.stage(value.command as never);
+    expect(stageResult.ok).toBe(true);
+    const applied = preview.apply({ label: "AI rig proposal" });
+    expect(applied.ok).toBe(true);
+    expect(handle.store.revision).toBe(revisionBefore + 1);
+    expect(bus.historySnapshot().past.length).toBe(historyBefore + 1);
+    expect(
+      handle.store.getDocument().animations["anim:test:undo" as never],
+    ).toBeDefined();
+
+    // Undo restores the exact pre-apply semantic state as one new
+    // transaction (ADR-0003: revision is monotonic; content restores).
+    const revisionAfterApply = handle.store.revision;
+    const undone = bus.undo({
+      transactionId: transactionId("transaction:test:undo"),
+      expectedRevision: revisionAfterApply,
+      source: "ui",
+    });
+    expect(undone.ok).toBe(true);
+    expect(handle.store.revision).toBe(revisionAfterApply + 1);
+    expect(
+      handle.store.getDocument().animations["anim:test:undo" as never],
+    ).toBeUndefined();
+
+    // Redo reapplies the same registered command atomically.
+    const redone = bus.redo({
+      transactionId: transactionId("transaction:test:redo"),
+      expectedRevision: handle.store.revision,
+      source: "ui",
+    });
+    expect(redone.ok).toBe(true);
+    expect(handle.store.revision).toBe(revisionAfterApply + 2);
+    expect(
+      handle.store.getDocument().animations["anim:test:undo" as never],
+    ).toBeDefined();
   });
 
   it("discard releases the staged rig/animation with no live effect", () => {
