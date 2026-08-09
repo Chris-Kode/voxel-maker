@@ -454,6 +454,32 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
+  it("explains the no-op when the document has no voxels", () => {
+    const composition = createDesktopComposition({
+      storage: new MemoryProjectStorage(),
+      picker: createFakePicker(),
+    });
+    // Empty volume: picking misses, so a pencil click cannot start a
+    // stroke; the controller says why instead of staying silent.
+    openFixture(composition, false);
+    frameFront(composition);
+    composition.editor.setActiveTool("pencil");
+    const viewport = composition.viewport;
+    expect(viewport.strokePointerDown(400, 300)).toEqual({ ok: true });
+    expect(viewport.strokeActive).toBe(false);
+    expect(composition.editor.draft).toBeUndefined();
+    expect(
+      composition.editor.notices.some(
+        (notice) =>
+          notice.level === "info" && notice.message.includes("no voxels"),
+      ),
+    ).toBe(true);
+    const state = composition.session.current;
+    if (state === undefined) throw new Error("no open session");
+    expect(state.bus.historySnapshot().past).toHaveLength(0);
+    composition.dispose();
+  });
+
   it("rejects a stroke whose active material id does not exist", () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),

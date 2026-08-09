@@ -259,6 +259,14 @@ class ViewportControllerImpl implements ViewportController {
     // stroke must not leak the draft or let a later up commit a stale
     // stroke through a different tool.
     if (result.ok && tool.active) this.#strokeTool = tool;
+    if (result.ok && !tool.active && this.#documentHasNoVoxels()) {
+      // A stroke can only start on a picked voxel; on a voxel-less
+      // document the gesture is a silent no-op, so say so once per click.
+      this.#editor.pushNotice(
+        "info",
+        "The document has no voxels yet: open a sample or add a shape before drawing",
+      );
+    }
     return this.#report(result);
   }
 
@@ -297,6 +305,18 @@ class ViewportControllerImpl implements ViewportController {
     this.#strokeTool = undefined;
     this.#overlays.dispose();
     this.#rig.dispose();
+  }
+
+  /** True when every volume of the open document is empty. */
+  #documentHasNoVoxels(): boolean {
+    const store = this.#session.current?.store;
+    if (store === undefined) return true;
+    const document = store.getDocument();
+    for (const descriptor of Object.values(document.volumes)) {
+      const view = store.getVolume(descriptor.volumeId);
+      if (view !== undefined && view.occupiedCount() > 0) return false;
+    }
+    return true;
   }
 
   /** Surfaces a failed tool action as a runtime notice. */
