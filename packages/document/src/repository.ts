@@ -17,6 +17,8 @@ import {
  */
 export class VoxelRepository {
   readonly #volumes = new Map<VolumeId, VoxelVolume>();
+  /** Volume resource limits applied to every volume (ADR-0009). */
+  readonly volumeLimits: VoxelVolumeLimits;
 
   constructor(
     volumeIds: readonly VolumeId[],
@@ -24,6 +26,7 @@ export class VoxelRepository {
     writeCapability: VoxelWriteCapability,
     seeds?: ReadonlyMap<VolumeId, readonly VoxelChunkSeed[]>,
   ) {
+    this.volumeLimits = limits;
     for (const volumeId of volumeIds) {
       const seeded = seeds?.get(volumeId);
       this.#volumes.set(
@@ -55,6 +58,13 @@ export class VoxelRepository {
   installVolumes(staged: ReadonlyMap<VolumeId, VoxelVolume>): void {
     for (const [volumeId, volume] of staged) {
       this.#volumes.set(volumeId, volume);
+    }
+  }
+
+  /** Removes committed volumes after a successful commit (ticket #24). */
+  removeVolumes(volumeIds: readonly VolumeId[]): void {
+    for (const volumeId of volumeIds) {
+      this.#volumes.delete(volumeId);
     }
   }
 }

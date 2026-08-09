@@ -67,18 +67,18 @@ export interface CommandConformanceSpec {
    */
   buildExecuteInvalid?(id: CommandId): Command;
   /** Asserts the semantic state after one valid execution. */
-  assertApplied(store: DocumentStoreRead): void;
+  assertApplied(store: DocumentStoreRead, command?: Command): void;
   /**
    * Asserts the exact semantic state before the valid command (and therefore
    * after its undo): the state right after `seed`.
    */
-  assertUndone(store: DocumentStoreRead): void;
+  assertUndone(store: DocumentStoreRead, command?: Command): void;
   /** Asserts the state after redo; defaults to `assertApplied`. */
-  assertRedone?(store: DocumentStoreRead): void;
+  assertRedone?(store: DocumentStoreRead, command?: Command): void;
   /** Optional second valid command touching different state. */
   buildSecondValid?(id: CommandId): Command;
   /** Asserts the state after both valid commands; defaults to `assertApplied`. */
-  assertSecondApplied?(store: DocumentStoreRead): void;
+  assertSecondApplied?(store: DocumentStoreRead, command?: Command): void;
 }
 
 interface HarnessOptions {

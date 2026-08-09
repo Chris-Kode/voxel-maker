@@ -592,6 +592,7 @@ function createOccupiedLimitHarness(occupiedCount: number): {
   const fakeStore: DocumentStoreRead = {
     revision: 0,
     limits: DEFAULT_DOCUMENT_LIMITS,
+    volumeLimits: DEFAULT_VOXEL_VOLUME_LIMITS,
     getDocument: () => harness.store.getDocument(),
     getVolume: (volumeId) => (volumeId === VOLUME ? fakeView : undefined),
     getVoxel: () => 0 as never,

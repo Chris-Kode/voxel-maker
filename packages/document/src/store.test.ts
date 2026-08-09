@@ -95,7 +95,7 @@ function stagedState(
   document: VoxelDocument,
   volumes: StagedState["volumes"],
 ): StagedState {
-  return { document, volumes };
+  return { document, volumes, removedVolumes: [] };
 }
 
 describe("createDocumentStore", () => {
