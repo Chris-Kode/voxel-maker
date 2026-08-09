@@ -590,3 +590,144 @@ export function resolveLocalTransform(
     pivot,
   );
 }
+
+/**
+ * Multiplies two unit quaternions (Hamilton product, `a` applied first then
+ * `b` when composing rotations: `q = b * a`). Used by the rotate gizmo and
+ * Euler conversions (plan S7.8).
+ */
+export function quaternionMultiply(
+  a: readonly [number, number, number, number],
+  b: readonly [number, number, number, number],
+): Quat {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return canonicalQuat([
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ]);
+}
+
+/**
+ * Conjugate of a unit quaternion (the inverse rotation). The result is
+ * canonical for a canonical input.
+ */
+export function quaternionConjugate(
+  value: readonly [number, number, number, number],
+): Quat {
+  const [x, y, z, w] = value;
+  return signCanonicalize(-x, -y, -z, w);
+}
+
+/**
+ * Unit quaternion rotating `angle` radians around `axis` (right-hand rule).
+ * The axis must have non-zero length; it is normalized before use.
+ */
+export function quaternionFromAxisAngle(axis: Vec3, angle: number): Quat {
+  const length = Math.hypot(axis[0], axis[1], axis[2]);
+  if (!(length > 0) || !Number.isFinite(length)) {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_AXIS",
+      message: "Rotation axes must have non-zero finite length",
+      context: { axis: String(axis) },
+    });
+  }
+  const half = angle / 2;
+  const s = Math.sin(half);
+  return canonicalQuat([
+    (axis[0] / length) * s,
+    (axis[1] / length) * s,
+    (axis[2] / length) * s,
+    Math.cos(half),
+  ]);
+}
+
+/**
+ * Applies a unit quaternion rotation to a vector. The result is exact for
+ * unit input quaternions; no renormalization is performed.
+ */
+export function rotateVector(
+  quaternion: readonly [number, number, number, number],
+  vector: Vec3,
+): Vec3 {
+  const [x, y, z, w] = quaternion;
+  const [vx, vy, vz] = vector;
+  const ux = x * 2;
+  const uy = y * 2;
+  const uz = z * 2;
+  const uux = x * ux;
+  const uuy = y * uy;
+  const uuz = z * uz;
+  const uuv = x * vx + y * vy + z * vz;
+  const uwx = w * ux;
+  const uwy = w * uy;
+  const uwz = w * uz;
+  return [
+    vx * (1 - uuy - uuz) + vy * (ux * y - uwz) + vz * (ux * z + uwy),
+    vx * (ux * y + uwz) + vy * (1 - uux - uuz) + vz * (uy * z - uwx),
+    vx * (ux * z - uwy) + vy * (uy * z + uwx) + vz * (1 - uux - uuy),
+  ];
+}
+
+/**
+ * Converts an intrinsic XYZ Euler rotation (radians, applied as
+ * `R = Rx * Ry * Rz`) to a canonical unit quaternion. This is the Euler
+ * convention the inspector and rotate gizmo expose; angles are arbitrary
+ * finite radians and the composed rotation is normalized.
+ */
+export function eulerXYZToQuaternion(euler: Vec3): Quat {
+  const cx = Math.cos(euler[0] / 2);
+  const sx = Math.sin(euler[0] / 2);
+  const cy = Math.cos(euler[1] / 2);
+  const sy = Math.sin(euler[1] / 2);
+  const cz = Math.cos(euler[2] / 2);
+  const sz = Math.sin(euler[2] / 2);
+  return canonicalQuat([
+    sx * cy * cz + cx * sy * sz,
+    cx * sy * cz - sx * cy * sz,
+    cx * cy * sz + sx * sy * cz,
+    cx * cy * cz - sx * sy * sz,
+  ]);
+}
+
+/**
+ * Extracts intrinsic XYZ Euler angles (radians) from a canonical unit
+ * quaternion, matching `eulerXYZToQuaternion`. The extraction returns the
+ * principal branch: `x` in `[-pi, pi]`, `z` in `[-pi, pi]`, and `y` in
+ * `[-pi/2, pi/2]`; a gimbal-locked configuration (cos(y) ~ 0) resolves z
+ * to zero and folds the remaining rotation into x. Values are finite and
+ * never serialized negative zero.
+ */
+export function quaternionToEulerXYZ(
+  quaternion: readonly [number, number, number, number],
+): Vec3 {
+  const [x, y, z, w] = quaternion;
+  // Intrinsic XYZ composition R = Rx*Ry*Rz gives sinY at row 0 col 2 of
+  // the rotation matrix, i.e. 2*(x*z + y*w).
+  const sinY = 2 * (x * z + y * w);
+  const clamped = Math.max(-1, Math.min(1, sinY));
+  const yAngle = Math.asin(clamped);
+  if (Math.abs(Math.cos(yAngle)) <= 1e-9) {
+    // Gimbal lock: fold the remaining rotation into x with z = 0. With
+    // z = 0 the matrix entries R[1][0] = sinX*sinY and R[2][0] =
+    // -cosX*sinY recover x; dividing by sinY (magnitude ~1) removes the
+    // sign of the locked pole.
+    const xAngle = Math.atan2(
+      (2 * (x * y + z * w)) / sinY,
+      (-2 * (x * z - y * w)) / sinY,
+    );
+    return canonicalVec3([xAngle, yAngle, 0]);
+  }
+  const xAngle = Math.atan2(
+    2 * (x * w - y * z),
+    1 - 2 * (x * x + y * y),
+  );
+  const zAngle = Math.atan2(
+    2 * (z * w - x * y),
+    1 - 2 * (y * y + z * z),
+  );
+  return canonicalVec3([xAngle, yAngle, zAngle]);
+}

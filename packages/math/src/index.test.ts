@@ -10,11 +10,17 @@ import {
   canonicalVec3,
   canonicalVec3i,
   decomposeMatrix,
+  eulerXYZToQuaternion,
   invertMatrix,
   isCanonicalQuat,
   isNormalizedQuat,
   multiplyMatrices,
+  quaternionConjugate,
+  quaternionFromAxisAngle,
+  quaternionMultiply,
+  quaternionToEulerXYZ,
   resolveLocalTransform,
+  rotateVector,
   transformToMatrix,
   type Mat4,
   type Quat,
@@ -295,5 +301,80 @@ describe("affine transform matrices", () => {
         Math.abs((recomposed[index] as number) - (world[index] as number)),
       ).toBeLessThan(1e-9);
     }
+  });
+});
+
+describe("quaternion composition utilities", () => {
+  it("multiplies quaternions and composes rotations in order", () => {
+    // 90 deg around Z then 90 deg around X equals 120 deg around
+    // (1,-1,1)/sqrt3 (Rx(90)*Rz(90) fixes that axis).
+    const qz = [0, 0, HALF, HALF] as const;
+    const qx = [HALF, 0, 0, HALF] as const;
+    const composed = quaternionMultiply(qx, qz);
+    const axis = [1 / Math.sqrt(3), -1 / Math.sqrt(3), 1 / Math.sqrt(3)] as const;
+    const expected = quaternionFromAxisAngle(axis, (2 * Math.PI) / 3);
+    expect(composed[0]).toBeCloseTo(expected[0], 9);
+    expect(composed[1]).toBeCloseTo(expected[1], 9);
+    expect(composed[2]).toBeCloseTo(expected[2], 9);
+    expect(composed[3]).toBeCloseTo(expected[3], 9);
+  });
+
+  it("conjugates a unit quaternion to its inverse rotation", () => {
+    const q = quaternionFromAxisAngle([0, 1, 0], Math.PI / 3);
+    const identity = quaternionMultiply(q, quaternionConjugate(q));
+    expect(identity[0]).toBeCloseTo(0, 9);
+    expect(identity[1]).toBeCloseTo(0, 9);
+    expect(identity[2]).toBeCloseTo(0, 9);
+    expect(identity[3]).toBeCloseTo(1, 9);
+  });
+
+  it("builds axis-angle quaternions and normalizes the axis", () => {
+    const q = quaternionFromAxisAngle([0, 2, 0], Math.PI);
+    expect(q[1]).toBeCloseTo(1, 9);
+    expect(q[3]).toBeCloseTo(0, 9);
+    expect(isNormalizedQuat(q)).toBe(true);
+    expect(() => quaternionFromAxisAngle([0, 0, 0], 1)).toThrow(/axes/u);
+  });
+
+  it("rotates vectors like the rotation matrix", () => {
+    const q = quaternionFromAxisAngle([0, 0, 1], Math.PI / 2);
+    const rotated = rotateVector(q, [1, 0, 0]);
+    expect(rotated[0]).toBeCloseTo(0, 9);
+    expect(rotated[1]).toBeCloseTo(1, 9);
+    expect(rotated[2]).toBeCloseTo(0, 9);
+  });
+
+  it("round-trips Euler angles through the quaternion", () => {
+    const euler: [number, number, number] = [0.4, -0.7, 1.2];
+    const quaternion = eulerXYZToQuaternion(euler);
+    const back = quaternionToEulerXYZ(quaternion);
+    expect(back[0]).toBeCloseTo(euler[0], 9);
+    expect(back[1]).toBeCloseTo(euler[1], 9);
+    expect(back[2]).toBeCloseTo(euler[2], 9);
+    expect(isNormalizedQuat(quaternion)).toBe(true);
+  });
+
+  it("extracts the principal Euler branch and handles gimbal lock", () => {
+    // Gimbal lock: y = 90 deg folds z into x with z reported as zero.
+    const locked = quaternionToEulerXYZ(
+      eulerXYZToQuaternion([0.3, Math.PI / 2, 0.7]),
+    );
+    expect(locked[1]).toBeCloseTo(Math.PI / 2, 9);
+    expect(locked[2]).toBeCloseTo(0, 9);
+    // The folded x reproduces the same rotation.
+    const recomposed = eulerXYZToQuaternion(locked);
+    for (let index = 0; index < 4; index += 1) {
+      expect(
+        Math.abs(
+          (recomposed[index] as number) -
+            eulerXYZToQuaternion([0.3, Math.PI / 2, 0.7])[index]!,
+        ),
+      ).toBeLessThan(1e-9);
+    }
+    // Principal branch: x/z in [-pi, pi], y in [-pi/2, pi/2].
+    const q = quaternionFromAxisAngle([0, 1, 0], Math.PI);
+    const euler = quaternionToEulerXYZ(q);
+    expect(euler[1]).toBeGreaterThanOrEqual(-Math.PI / 2);
+    expect(euler[1]).toBeLessThanOrEqual(Math.PI / 2);
   });
 });
