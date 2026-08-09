@@ -49,8 +49,10 @@ export type MeshingWorkerResponseMessage =
 /** Max absolute signed coordinate value accepted by the protocol. */
 const MAX_PROTOCOL_COORDINATE = 1_048_576;
 
-/** Accepted namespace shapes: the live document or `preview:<session>`. */
-const NAMESPACE_PATTERN = /^live$|^preview:[A-Za-z0-9_-]+$/;
+/** Accepted namespace shapes: the live document or `preview:<session>`.
+ * Preview session ids are `preview:<documentId>:<baseRevision>:<seq>`
+ * (document ids contain colons), so the tail is bounded but broad. */
+const NAMESPACE_PATTERN = /^live$|^preview:[A-Za-z0-9_:.-]{1,96}$/;
 
 /** True when `value` is a finite integer within the protocol bounds. */
 function isBoundedInt(
