@@ -358,6 +358,32 @@ describe("agent loop: repeated provider errors", () => {
     expect(session.preview.closed).toBe(true);
   });
 
+  it("tells the model about exhausted retries so the next round can recover", async () => {
+    const h = harness();
+    const script: readonly DeterministicStep[] = [
+      {
+        error: {
+          family: "server",
+          code: "SERVER_500",
+          message: "boom",
+          retryable: true,
+        },
+      },
+      { text: "I see the provider failed; nothing to stage." },
+    ];
+    const session = h.makeSession(script, {
+      retry: { ...DEFAULT_RETRY_POLICY, maxAttempts: 1 },
+    });
+    const result = runOk(await session.run());
+    expect(result.state).toBe("approve");
+    expect(
+      session.messages.some(
+        (message) =>
+          message.role === "system" && message.content.includes("SERVER_500"),
+      ),
+    ).toBe(true);
+  });
+
   it("succeeds when a retry succeeds", async () => {
     const h = harness();
     const script: readonly DeterministicStep[] = [
@@ -551,6 +577,21 @@ describe("agent loop: budget exhaustion", () => {
     expect(session.preview.stagedCount).toBe(0);
   });
 
+  it("stops when a single tool result exceeds the per-result byte budget", async () => {
+    const h = harness();
+    const session = h.makeSession(SUCCESS_SCRIPT, {
+      budgets: { maxToolResultBytes: 1 },
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({
+        resource: "toolResultBytes",
+      });
+    }
+    expect(session.preview.closed).toBe(true);
+  });
+
   it("stops when the output-byte budget is exhausted", async () => {
     const h = harness();
     const session = h.makeSession(SUCCESS_SCRIPT, {
@@ -560,6 +601,75 @@ describe("agent loop: budget exhaustion", () => {
     expect(result.reason).toBe("limit");
     if (result.error instanceof WorkspaceError) {
       expect(result.error.context).toMatchObject({ resource: "outputBytes" });
+    }
+  });
+
+  it("fails the run when the preview staging budget rejects a command", async () => {
+    const h = harness();
+    const preview = createPreviewSession({
+      live: h.store,
+      applyBus: h.bus,
+      sessionId: previewSessionId("preview:loop:stage-limit"),
+      limits: { maxStagedCommands: 0 },
+    });
+    const inspector = createInspector({
+      store: preview,
+      capabilities: ["inspect"],
+    });
+    const mutator = createMutator({
+      store: preview,
+      registry: h.registry,
+      session: preview,
+      capabilities: ["mutate"],
+    });
+    const session = h.makeSession(SUCCESS_SCRIPT, {
+      preview,
+      inspector,
+      mutator,
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.family).toBe("limit");
+      expect(result.error.code).toBe("STAGING_COMMAND_LIMIT");
+    }
+    expect(session.preview.closed).toBe(true);
+    expect(session.preview.stagedCount).toBe(0);
+  });
+
+  it("feeds a rejected stage back to the model and keeps the run alive", async () => {
+    const h = harness();
+    // Two fillBox calls carrying the same explicit command id: the first
+    // stages, the second is rejected by the preview session as a
+    // duplicate, which must release the session reservations and be fed
+    // back as a tool error instead of failing the run.
+    const sameCommand = (id: string): ToolCall => ({
+      id,
+      name: "fillBox",
+      arguments: {
+        volumeId: "volume:main",
+        region: { min: [0, 0, 0], max: [1, 1, 1] },
+        material: 1,
+        commandId: "cmd:duplicate",
+      },
+    });
+    const session = h.makeSession([
+      {
+        text: "stage the same command twice",
+        toolCalls: [sameCommand("call_fill_a"), sameCommand("call_fill_b")],
+      },
+      { text: "The duplicate was rejected; nothing more to do." },
+    ]);
+    const result = runOk(await session.run());
+    expect(result.stagedCommands).toBe(1);
+    const toolMessages = session.messages.filter(
+      (message) => message.role === "tool",
+    );
+    expect(toolMessages).toHaveLength(2);
+    const second = toolMessages[1];
+    expect(second?.role).toBe("tool");
+    if (second?.role === "tool" && !second.result.ok) {
+      expect(second.result.error.code).toBe("DUPLICATE_COMMAND_ID");
     }
   });
 

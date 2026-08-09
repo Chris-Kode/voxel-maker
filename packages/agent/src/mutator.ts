@@ -5,6 +5,7 @@ import { ResponseBudget, jsonUnits } from "./budget.js";
 import {
   COORDINATE_CONVENTIONS,
   MUTATION_CONTRACT_VERSION,
+  toToolError as toToolErrorShared,
   type ToolCapability,
   type ToolContract,
   type ToolError,
@@ -60,16 +61,7 @@ export interface Mutator {
 }
 
 function toToolError(error: unknown): ToolError {
-  if (error instanceof WorkspaceError) {
-    const data = error.toJSON();
-    return {
-      family: data.family,
-      code: data.code,
-      message: data.message,
-      ...(data.path === undefined ? {} : { path: [...data.path] }),
-      ...(data.context === undefined ? {} : { context: data.context }),
-    };
-  }
+  if (error instanceof WorkspaceError) return toToolErrorShared(error);
   return {
     family: "internal",
     code: "INTERNAL_MUTATION_ERROR",

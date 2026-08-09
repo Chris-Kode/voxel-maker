@@ -25,7 +25,7 @@ import {
   type ToolCall,
   type ToolCallResult,
 } from "../provider/types.js";
-import type { ToolError } from "../contract.js";
+import { toToolError } from "../contract.js";
 import type { PreviewDiff, PreviewSession } from "../preview.js";
 import {
   budgetLimitError,
@@ -198,7 +198,9 @@ function advanceWalk(
           "approve",
         ];
       }
-      if (roundClass === "inspect") return ["inspect"];
+      if (roundClass === "inspect" || roundClass === "stage") {
+        return ["inspect"];
+      }
       return [];
     case "inspect":
       if (roundClass === "stage") return ["plan", "stage"];
@@ -230,18 +232,6 @@ function advanceWalk(
     default:
       return [];
   }
-}
-
-/** Maps a staging WorkspaceError onto the neutral tool-error shape. */
-function toToolError(error: WorkspaceError): ToolError {
-  const data = error.toJSON();
-  return {
-    family: data.family,
-    code: data.code,
-    message: data.message,
-    ...(data.path === undefined ? {} : { path: [...data.path] }),
-    ...(data.context === undefined ? {} : { context: data.context }),
-  };
 }
 
 /** Stable error for running the same session twice. */
@@ -374,6 +364,12 @@ class AgentSessionImpl implements AgentSession {
           return this.#failedResult("provider", outcome.error);
         }
         if (outcome.kind === "round-error") {
+          const note: ChatMessage = {
+            role: "system",
+            content: `A provider request failed (${outcome.error.family} ${outcome.error.code}). This is not a tool result; recover by changing the approach.`,
+          };
+          this.#messages.push(note);
+          this.transcript?.recordMessage(note);
           const recorded = this.#ledger.recordError();
           if (!recorded.ok) {
             return this.#failedResult("cutoff", recorded.error);
@@ -601,6 +597,7 @@ class AgentSessionImpl implements AgentSession {
       };
     }
     this.#emit({ kind: "usage", usage: response.usage });
+    this.transcript?.recordEvent({ kind: "usage", usage: response.usage });
     const textBytes = this.#ledger.recordOutputBytes(response.text.length);
     if (!textBytes.ok) {
       return {
@@ -629,32 +626,98 @@ class AgentSessionImpl implements AgentSession {
           result: this.#failedResult("limit", reserve.error),
         };
       }
-      const executed = this.#executeToolCall(call);
-      if ("limit" in executed) {
+      const prepared = this.#prepareToolCall(call);
+      if (prepared.kind === "limit") {
         return {
           roundClass: "text",
-          result: this.#failedResult("limit", executed.limit),
+          result: this.#failedResult("limit", prepared.error),
         };
       }
-      const result = executed.result;
-      if (result.ok) {
-        if (this.#isInspection(call.name)) inspected += 1;
-        else staged += 1;
-      } else {
-        failed += 1;
+      if (prepared.kind === "stage") {
+        // ADR-0009 ordering: reserve the proposal's output bytes and the
+        // command/voxel/animation budgets BEFORE the preview mutation, so
+        // a hard-limit violation fails before allocation.
+        const perResult = this.#recordResultBytes(prepared.envelopeUnits);
+        if (perResult !== undefined) {
+          return {
+            roundClass: "text",
+            result: this.#failedResult("limit", perResult),
+          };
+        }
+        const commandReserve = this.#ledger.reserveCommand(
+          prepared.voxelEstimate,
+        );
+        if (!commandReserve.ok) {
+          return {
+            roundClass: "text",
+            result: this.#failedResult("limit", commandReserve.error),
+          };
+        }
+        const animation = prepared.animation;
+        if (animation !== undefined) {
+          const animationReserve = this.#ledger.reserveAnimation(animation);
+          if (!animationReserve.ok) {
+            return {
+              roundClass: "text",
+              result: this.#failedResult("limit", animationReserve.error),
+            };
+          }
+        }
+        const stageResult = this.preview.stage(prepared.command);
+        if (!stageResult.ok) {
+          this.#ledger.releaseCommand(prepared.voxelEstimate);
+          if (animation !== undefined) {
+            this.#ledger.releaseAnimation(animation);
+          }
+          if (stageResult.error.family === "limit") {
+            // The preview enforces its own hard budgets; a limit there is
+            // a session-level failure, not a fixable tool error.
+            return {
+              roundClass: "text",
+              result: this.#failedResult("limit", stageResult.error),
+            };
+          }
+          const result: ToolCallResult = {
+            ok: false,
+            error: toToolError(stageResult.error),
+          };
+          failed += 1;
+          this.#messages.push({ role: "tool", toolCallId: call.id, result });
+          this.transcript?.recordToolCall(call, result);
+          this.#emit({ kind: "tool", tool: call.name, call, result });
+          continue;
+        }
+        staged += 1;
+        const result: ToolCallResult = {
+          ok: true,
+          value: {
+            staged: true,
+            revision: stageResult.value.revision,
+            commandId: prepared.command.id,
+            commandType: prepared.command.type,
+            voxelEstimate: prepared.voxelEstimate,
+          },
+        };
+        this.#messages.push({ role: "tool", toolCallId: call.id, result });
+        this.transcript?.recordToolCall(call, result);
+        this.#emit({ kind: "tool", tool: call.name, call, result });
+        continue;
+      }
+      const result = prepared.result;
+      if (result.ok) inspected += 1;
+      else failed += 1;
+      const perResult = this.#recordResultBytes(
+        jsonUnits(result.ok ? result.value : result.error),
+      );
+      if (perResult !== undefined) {
+        return {
+          roundClass: "text",
+          result: this.#failedResult("limit", perResult),
+        };
       }
       this.#messages.push({ role: "tool", toolCallId: call.id, result });
       this.transcript?.recordToolCall(call, result);
       this.#emit({ kind: "tool", tool: call.name, call, result });
-      const resultBytes = this.#ledger.recordOutputBytes(
-        jsonUnits(result.ok ? result.value : result.error),
-      );
-      if (!resultBytes.ok) {
-        return {
-          roundClass: "text",
-          result: this.#failedResult("limit", resultBytes.error),
-        };
-      }
     }
     let roundClass: RoundClass;
     if (staged > 0) roundClass = "stage";
@@ -665,61 +728,89 @@ class AgentSessionImpl implements AgentSession {
   }
 
   /**
-   * Validates and executes ONE tool call against the neutral contracts.
-   * Inspection tools read the staged overlay; mutation tools construct a
-   * registered command and stage it on the preview session. Validation
-   * and execution failures are stable tool errors fed back to the
-   * provider; a session-budget violation is a run failure (`limit`), so
-   * the run fails closed before staging anything it cannot afford.
+   * Validates ONE tool call against the neutral contracts and prepares it
+   * without side effects. Inspection calls and rejected calls become
+   * `feedback` results; a successfully constructed mutation becomes a
+   * `stage` proposal (command, voxel estimate, animation reservation, and
+   * the serialized size of the construct response, which upper-bounds the
+   * staged result fed back). Staging itself happens in the caller so
+   * every budget is reserved before the preview mutation.
    */
-  #executeToolCall(
-    call: ToolCall,
-  ): { readonly result: ToolCallResult } | { readonly limit: WorkspaceError } {
+  #prepareToolCall(call: ToolCall):
+    | { readonly kind: "feedback"; readonly result: ToolCallResult }
+    | {
+        readonly kind: "stage";
+        readonly envelopeUnits: number;
+        readonly command: Command;
+        readonly voxelEstimate: number;
+        readonly animation: AnimationReservation | undefined;
+      }
+    | { readonly kind: "limit"; readonly error: WorkspaceError } {
     const contracts = [
       ...this.#inspector.contracts,
       ...this.#mutator.contracts,
     ];
     const validation = validateToolCall(call, contracts);
     if (validation !== undefined) {
-      return { result: { ok: false, error: validation } };
+      return { kind: "feedback", result: { ok: false, error: validation } };
     }
     if (this.#isInspection(call.name)) {
       const result = this.#inspector.inspect(call.name, call.arguments);
       return result.ok
-        ? { result: { ok: true, value: result.value } }
-        : { result: { ok: false, error: result.error } };
+        ? { kind: "feedback", result: { ok: true, value: result.value } }
+        : { kind: "feedback", result: { ok: false, error: result.error } };
     }
     const constructed = this.#mutator.construct(call.name, call.arguments);
     if (!constructed.ok) {
-      return { result: { ok: false, error: constructed.error } };
+      return {
+        kind: "feedback",
+        result: { ok: false, error: constructed.error },
+      };
     }
     const value = constructed.value as Readonly<Record<string, JsonValue>>;
     const voxelEstimate =
-      typeof value.voxelEstimate === "number" ? value.voxelEstimate : 0;
-    const command = value.command as unknown as Command;
-    const commandReserve = this.#ledger.reserveCommand(voxelEstimate);
-    if (!commandReserve.ok) return { limit: commandReserve.error };
-    const animation = animationReservationOf(value);
-    if (animation !== undefined) {
-      const animationReserve = this.#ledger.reserveAnimation(animation);
-      if (!animationReserve.ok) return { limit: animationReserve.error };
-    }
-    const staged = this.preview.stage(command);
-    if (!staged.ok) {
-      return { result: { ok: false, error: toToolError(staged.error) } };
+      typeof value.voxelEstimate === "number" &&
+      Number.isFinite(value.voxelEstimate)
+        ? Math.max(0, Math.floor(value.voxelEstimate))
+        : 0;
+    const command = commandFromEnvelope(value);
+    if (command === undefined) {
+      return {
+        kind: "feedback",
+        result: {
+          ok: false,
+          error: {
+            family: "validation",
+            code: "INVALID_COMMAND_PROPOSAL",
+            message: "The constructed command proposal is malformed",
+          },
+        },
+      };
     }
     return {
-      result: {
-        ok: true,
-        value: {
-          staged: true,
-          revision: staged.value.revision,
-          commandId: command.id,
-          commandType: command.type,
-          voxelEstimate,
-        },
-      },
+      kind: "stage",
+      envelopeUnits: jsonUnits(constructed.value),
+      command,
+      voxelEstimate,
+      animation: animationReservationOf(value),
     };
+  }
+
+  /**
+   * Enforces the per-result output bound and records the cumulative
+   * output bytes (ADR-0009: reserve before allocation).
+   */
+  #recordResultBytes(units: number): WorkspaceError | undefined {
+    if (units > this.#budgets.maxToolResultBytes) {
+      return budgetLimitError(
+        "toolResultBytes",
+        this.#budgets.maxToolResultBytes,
+        units,
+      );
+    }
+    const recorded = this.#ledger.recordOutputBytes(units);
+    if (!recorded.ok) return recorded.error;
+    return undefined;
   }
 
   #isInspection(name: string): boolean {
@@ -765,6 +856,52 @@ class AgentSessionImpl implements AgentSession {
     if (!this.machine.terminated) this.machine.fail();
     this.preview.cancel();
   }
+}
+
+/**
+ * Bounded shape guard for the mutator's command proposal envelope
+ * (AGENTS.md: parse and bound every untrusted value before allocation).
+ * The mutator validated the command already, but the seam returns plain
+ * JSON, so the loop re-checks the exact fields it casts into a Command.
+ */
+function commandFromEnvelope(
+  value: Readonly<Record<string, JsonValue>>,
+): Command | undefined {
+  const command = value.command;
+  if (
+    typeof command !== "object" ||
+    command === null ||
+    Array.isArray(command)
+  ) {
+    return undefined;
+  }
+  const record = command as Readonly<Record<string, JsonValue>>;
+  const id = record.id;
+  const type = record.type;
+  const schemaVersion = record.schemaVersion;
+  const payload = record.payload;
+  if (
+    typeof id !== "string" ||
+    id.length === 0 ||
+    id.length > 128 ||
+    typeof type !== "string" ||
+    type.length === 0 ||
+    type.length > 128 ||
+    typeof schemaVersion !== "number" ||
+    !Number.isInteger(schemaVersion) ||
+    schemaVersion < 1 ||
+    typeof payload !== "object" ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
+    return undefined;
+  }
+  return {
+    id,
+    type,
+    schemaVersion,
+    payload,
+  } as Command;
 }
 
 /**

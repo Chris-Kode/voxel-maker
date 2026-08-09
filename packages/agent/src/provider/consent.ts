@@ -92,10 +92,13 @@ export function createConsent(input: ConsentInput): ProviderConsent {
       "INVALID_CONSENT_EXPIRY",
     );
   }
+  const categories = Object.freeze([
+    ...new Set(input.categories),
+  ] as readonly DisclosureCategory[]);
   return Object.freeze({
     providerId: input.providerId,
     model: input.model,
-    categories: Object.freeze([...input.categories]),
+    categories,
     consentedAt,
     expiresAt,
     consentVersion: CONSENT_VERSION,
@@ -113,20 +116,26 @@ export function consentExpired(
 }
 
 /**
- * True when the consent covers this exact provider and model and has not
- * expired; the loop refuses any request it does not cover.
+ * True when the consent covers this exact provider and model, has not
+ * expired, and includes EVERY disclosure category the run transmits.
+ * Membership is checked per category (a duplicated entry cannot stand in
+ * for a missing one), so a record that is missing any category the run
+ * would use is refused even when the array length matches.
  */
 export function consentCovers(
   consent: ProviderConsent,
   request: { readonly providerId: string; readonly model: string },
   now: number = Date.now(),
 ): boolean {
-  return (
-    consent.providerId === request.providerId &&
-    consent.model === request.model &&
-    !consentExpired(consent, now) &&
-    consent.categories.length === DISCLOSURE_CATEGORIES.length
-  );
+  if (
+    consent.providerId !== request.providerId ||
+    consent.model !== request.model ||
+    consentExpired(consent, now)
+  ) {
+    return false;
+  }
+  const consented = new Set(consent.categories);
+  return DISCLOSURE_CATEGORIES.every((category) => consented.has(category));
 }
 
 /** Stable error when a run tries to use a provider without consent. */

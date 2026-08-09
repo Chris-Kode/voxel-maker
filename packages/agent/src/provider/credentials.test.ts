@@ -153,6 +153,46 @@ describe("explicit consent (AC: provider use is consented)", () => {
     expect(error.code).toBe("CONSENT_REQUIRED");
   });
 
+  it("requires membership of every disclosure category, not a matching count", () => {
+    const now = 1_000_000;
+    // A record with a duplicated category and one missing has the same
+    // array length as the full set; membership must catch the gap.
+    // A duplicated entry can never stand in for a missing category:
+    // createConsent dedupes, and consentCovers checks membership.
+    const duplicated = createConsent({
+      providerId: "openai",
+      model: "gpt-4o-mini",
+      categories: [
+        ...DISCLOSURE_CATEGORIES.slice(2),
+        DISCLOSURE_CATEGORIES[0] as (typeof DISCLOSURE_CATEGORIES)[number],
+        DISCLOSURE_CATEGORIES[0] as (typeof DISCLOSURE_CATEGORIES)[number],
+      ],
+      consentedAt: now,
+    });
+    expect(duplicated.categories.length).toBe(DISCLOSURE_CATEGORIES.length - 1);
+    expect(
+      consentCovers(
+        duplicated,
+        { providerId: "openai", model: "gpt-4o-mini" },
+        now,
+      ),
+    ).toBe(false);
+    // A partial record never covers a run that transmits every category.
+    const subset = createConsent({
+      providerId: "openai",
+      model: "gpt-4o-mini",
+      categories: DISCLOSURE_CATEGORIES.slice(0, 1),
+      consentedAt: now,
+    });
+    expect(
+      consentCovers(
+        subset,
+        { providerId: "openai", model: "gpt-4o-mini" },
+        now,
+      ),
+    ).toBe(false);
+  });
+
   it("stores and revokes consent records", async () => {
     const store = new MemoryConsentStore();
     const consent = createConsent({

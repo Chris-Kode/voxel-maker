@@ -2,6 +2,7 @@ import type { JsonValue } from "@voxel-maker/shared";
 import type { ToolContract } from "../contract.js";
 import { OPENAI_ALLOWED_MODELS, estimateCostUsd } from "./cost.js";
 import type { Secret } from "./credentials.js";
+import { redactDiagnostics } from "./redact.js";
 import {
   ProviderError,
   streamToResponse,
@@ -67,8 +68,9 @@ function normalizedError(
 
 /** Maps an HTTP status to a normalized provider error. */
 function statusError(status: number, body: string): ProviderError {
-  const excerpt =
-    body.length > MAX_ERROR_BODY ? body.slice(0, MAX_ERROR_BODY) : body;
+  const excerpt = redactDiagnostics(
+    body.length > MAX_ERROR_BODY ? body.slice(0, MAX_ERROR_BODY) : body,
+  );
   if (status === 401 || status === 403) {
     return normalizedError(
       "authentication",

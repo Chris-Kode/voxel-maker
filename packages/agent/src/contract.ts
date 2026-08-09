@@ -37,6 +37,23 @@ export type ToolError = {
   readonly context?: Readonly<Record<string, JsonValue>>;
 };
 
+/**
+ * Maps a WorkspaceError onto the stable tool-error shape shared by every
+ * facade (inspector, mutator, agent loop): family/code/message plus the
+ * optional path and context. The single mapping keeps error serialization
+ * identical everywhere a tool result is produced.
+ */
+export function toToolError(error: WorkspaceError): ToolError {
+  const data = error.toJSON();
+  return {
+    family: data.family,
+    code: data.code,
+    message: data.message,
+    ...(data.path === undefined ? {} : { path: [...data.path] }),
+    ...(data.context === undefined ? {} : { context: data.context }),
+  };
+}
+
 /** One versioned tool contract. */
 export interface ToolContract {
   /** Stable tool name used in tool calls (kebab-case). */

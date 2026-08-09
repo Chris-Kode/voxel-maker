@@ -262,6 +262,29 @@ export class BudgetLedger {
     return { ok: true };
   }
 
+  /**
+   * Releases a command/voxel reservation when staging the command failed
+   * (the reserve-before-allocate rule keeps every counter untouched by
+   * rejected allocations). Counters never go below zero.
+   */
+  releaseCommand(voxelEstimate: number): void {
+    this.#commands = Math.max(0, this.#commands - 1);
+    this.#voxelChanges = Math.max(0, this.#voxelChanges - voxelEstimate);
+  }
+
+  /** Releases an animation reservation after a failed stage. */
+  releaseAnimation(reservation: AnimationReservation): void {
+    this.#tracks = Math.max(0, this.#tracks - (reservation.tracks ?? 0));
+    this.#keyframes = Math.max(
+      0,
+      this.#keyframes - (reservation.keyframes ?? 0),
+    );
+    this.#clipDurationSeconds = Math.max(
+      0,
+      this.#clipDurationSeconds - (reservation.clipDurationSeconds ?? 0),
+    );
+  }
+
   recordOutputBytes(units: number): BudgetResult {
     const next = this.#outputBytes + units;
     if (next > this.budgets.maxOutputBytes) {
@@ -292,15 +315,6 @@ export class BudgetLedger {
     this.#inputTokens += usage.inputTokens;
     this.#outputTokens += usage.outputTokens;
     this.#costUsd = nextCost;
-    return { ok: true };
-  }
-
-  recordCost(usd: number): BudgetResult {
-    const next = this.#costUsd + usd;
-    if (next > this.budgets.maxEstimatedCostUsd) {
-      return limit("estimatedCostUsd", this.budgets.maxEstimatedCostUsd, next);
-    }
-    this.#costUsd = next;
     return { ok: true };
   }
 

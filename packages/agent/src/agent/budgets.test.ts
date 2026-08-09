@@ -205,12 +205,28 @@ describe("BudgetLedger: per-resource enforcement", () => {
     );
   });
 
-  it("enforces the estimated-cost budget", () => {
+  it("enforces the estimated-cost budget via usage records", () => {
     const { ledger } = makeLedger({ maxEstimatedCostUsd: 1 });
-    expect(ledger.recordCost(0.6).ok).toBe(true);
-    expect(ledger.recordCost(0.4).ok).toBe(true);
+    expect(
+      ledger.recordUsage({
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0.6,
+      }).ok,
+    ).toBe(true);
+    expect(
+      ledger.recordUsage({
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0.4,
+      }).ok,
+    ).toBe(true);
     expectLimit(
-      ledger.recordCost(0.01) as { ok: false; error: WorkspaceError },
+      ledger.recordUsage({
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0.01,
+      }) as { ok: false; error: WorkspaceError },
       "estimatedCostUsd",
       1,
       1.01,
