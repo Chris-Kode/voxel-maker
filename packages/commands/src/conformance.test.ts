@@ -36,6 +36,17 @@ import {
   registerRegionCommands,
 } from "./region-commands.js";
 import {
+  NODE_ADD_CONSTRAINT_COMMAND,
+  NODE_ADD_JOINT_COMMAND,
+  NODE_REMOVE_CONSTRAINT_COMMAND,
+  NODE_REMOVE_JOINT_COMMAND,
+  NODE_REMOVE_PIVOT_COMMAND,
+  NODE_REORDER_CONSTRAINT_COMMAND,
+  NODE_SET_CONSTRAINT_COMMAND,
+  NODE_SET_PIVOT_COMMAND,
+  registerArticulationCommands,
+} from "./articulation-commands.js";
+import {
   NODE_CREATE_COMMAND,
   NODE_DELETE_COMMAND,
   NODE_RENAME_COMMAND,
@@ -378,12 +389,20 @@ const CONFORMANCE_TESTED_COMMANDS = [
   commandKey(MATERIAL_CREATE_COMMAND, 1),
   commandKey(MATERIAL_DELETE_COMMAND, 1),
   commandKey(MATERIAL_UPDATE_COMMAND, 1),
+  commandKey(NODE_ADD_CONSTRAINT_COMMAND, 1),
+  commandKey(NODE_ADD_JOINT_COMMAND, 1),
   commandKey(NODE_CREATE_COMMAND, 1),
   commandKey(NODE_DELETE_COMMAND, 1),
+  commandKey(NODE_REMOVE_CONSTRAINT_COMMAND, 1),
+  commandKey(NODE_REMOVE_JOINT_COMMAND, 1),
+  commandKey(NODE_REMOVE_PIVOT_COMMAND, 1),
   commandKey(NODE_RENAME_COMMAND, 1),
+  commandKey(NODE_REORDER_CONSTRAINT_COMMAND, 1),
   commandKey(NODE_REPARENT_COMMAND, 1),
   commandKey(NODE_SET_COMPONENTS_COMMAND, 1),
+  commandKey(NODE_SET_CONSTRAINT_COMMAND, 1),
   commandKey(NODE_SET_METADATA_COMMAND, 1),
+  commandKey(NODE_SET_PIVOT_COMMAND, 1),
   commandKey(NODE_SET_TRANSFORM_COMMAND, 1),
   commandKey(VOLUME_CREATE_COMMAND, 1),
   commandKey(VOLUME_DELETE_COMMAND, 1),
@@ -410,6 +429,7 @@ describe("command conformance coverage", () => {
     registerBatchCommands(registry);
     registerRegionCommands(registry);
     registerNodeCommands(registry);
+    registerArticulationCommands(registry);
     registerMaterialCommands(registry);
     registerVolumeCommands(registry);
     const registered = registry

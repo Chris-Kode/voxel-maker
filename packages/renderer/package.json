@@ -22,13 +22,13 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@voxel-maker/shared": "workspace:*",
+    "@voxel-maker/document": "workspace:*",
     "@voxel-maker/math": "workspace:*",
     "@voxel-maker/model": "workspace:*",
-    "@voxel-maker/document": "workspace:*",
+    "@voxel-maker/rigging": "workspace:*",
+    "@voxel-maker/shared": "workspace:*",
     "@voxel-maker/voxel": "workspace:*",
-    "three": "catalog:",
-    "@voxel-maker/rigging": "workspace:*"
+    "three": "catalog:"
   },
   "devDependencies": {
     "@types/three": "catalog:",

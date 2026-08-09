@@ -1,7 +1,7 @@
 # Viewport overlay visibility policy (v1)
 
-**Plan:** S6.13 — Grid, axes, bounds, and pivot overlays; S9.8 — pivot/joint overlays.
-**Tickets:** #16 — Navigate and pick in the viewport; #26 — Author generic pivots and joints.
+**Plan:** S6.13 — Grid, axes, bounds, and pivot overlays; S9.8 — pivot/joint overlays; S9.7 — constraint arcs.
+**Tickets:** #16 — Navigate and pick in the viewport; #26 — Author generic pivots and joints; #27 — Constrain articulated nodes.
 **Status:** accepted (implementation baseline).
 
 ## Purpose
@@ -21,6 +21,7 @@ of persistent state.
 | Bounds | Content bounds wire box (cyan), selection bounds wire box (yellow), region-select draft box (orange), and transform-preview destination boxes (magenta, one per exact affected region, ticket #19) around the world AABBs of occupied voxels / affected bounds | visible when a document is open and content/selection/preview exists | depth-tested, `depthWrite = false`, `renderOrder = 2` |
 | Pivots | Orange cross marker at every selected node's world-space transform pivot (`transform.pivot` transformed by the node world matrix). The pivot annotation mirrors `transform.pivot` (plan S9.3, ticket #26), so editing the annotation through the inspector moves the marker | visible when a selection exists | `depthTest = false`, `depthWrite = false`, `renderOrder = 3` (always on top) |
 | Joints | Violet ring marker at the world-space pivot of every selected node carrying a `joint` annotation (plan S9.8, ticket #26). A joint annotates a node in the single transform hierarchy; the ring marks the articulation point | visible when a selection contains a joint-annotated node | `depthTest = false`, `depthWrite = false`, `renderOrder = 3` (always on top) |
+| Constraints | Per-axis rotation-limit arcs at the world-space pivot of every selected node carrying a `constraint` component (plan S9.7, ticket #27). One arc per descriptor per axis sweeps the allowed local Euler range (X red / Y green / Z blue, matching the world axes); an axis whose limit spans a full revolution draws a full ring. Arcs are projected through the constrained world matrices, so they follow the runtime result the scene renders | visible when a selection contains a constrained node | `depthTest = false`, `depthWrite = false`, `renderOrder = 3` (always on top) |
 
 ## Visibility policy
 
@@ -31,21 +32,24 @@ of persistent state.
    the document-dependent overlays (bounds, pivots) immediately; the grid
    and axes are world helpers and remain.
 2. **Default visibility is all-on.** The overlay manager starts with
-   `{ grid: true, axes: true, bounds: true, pivots: true, joints: true }` and applies
-   each key independently; document-dependent overlays additionally hide
-   themselves when there is nothing to show (no document, no content, no
-   selection).
-3. **Toggles are runtime-only.** `G`, `X`, `B`, `K`, `J` toggle grid,
-   axes, bounds, pivots, and joints in the desktop shell. Toggle state
-   lives in the overlay manager and is never persisted or synchronized.
+   `{ grid: true, axes: true, bounds: true, pivots: true, joints: true, constraints: true }`
+   and applies each key independently; document-dependent overlays
+   additionally hide themselves when there is nothing to show (no
+   document, no content, no selection).
+3. **Toggles are runtime-only.** `G`, `X`, `B`, `K`, `J`, `C` toggle
+   grid, axes, bounds, pivots, joints, and constraints in the desktop
+   shell. Toggle state lives in the overlay manager and is never
+   persisted or synchronized.
 4. **Rebuild, never mutate.** Every store commit, selection change, or
-   lifecycle event rebuilds the bounds/pivot/joint projections from the
-   current immutable read surface. Superseded geometries and materials
-   are disposed exactly once; overlays never hold references to
+   lifecycle event rebuilds the bounds/pivot/joint/constraint projections
+   from the current immutable read surface. Superseded geometries and
+   materials are disposed exactly once; overlays never hold references to
    authoritative backing memory.
 5. **Determinism.** Content and selection bounds use the same world
    matrices as picking (`nodeWorldMatrices`, ADR-0001), so the wire boxes
-   always match what picking returns.
+   always match what picking returns. Constraint arcs use the constrained
+   world pass (plan S9.5, ticket #27), so the arcs and the rendered
+   objects both show the clamped runtime result.
 
 ## Pointer and keyboard reference
 
@@ -58,7 +62,7 @@ of persistent state.
 | `1`–`6` | Front / back / left / right / top / bottom views (`+X` right, `+Y` up, `+Z` forward) |
 | `F` | Focus the selection, or the whole content when nothing is selected (keeps the viewing direction) |
 | `P` | Toggle perspective / orthographic projection (keeps target and framing) |
-| `G` / `X` / `B` / `K` / `J` | Toggle grid / axes / bounds / pivots / joints |
+| `G` / `X` / `B` / `K` / `J` / `C` | Toggle grid / axes / bounds / pivots / joints / constraints |
 
 ## Non-goals
 

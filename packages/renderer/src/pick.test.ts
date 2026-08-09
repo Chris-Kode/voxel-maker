@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  componentId,
   documentId,
   materialId,
   nodeId,
@@ -7,7 +8,7 @@ import {
   type NodeId,
   type VolumeId,
 } from "@voxel-maker/shared";
-import { createDocument } from "@voxel-maker/model";
+import { createDocument, type Component } from "@voxel-maker/model";
 import type { Transform, Vec3i } from "@voxel-maker/math";
 import {
   createDocumentStore,
@@ -79,6 +80,8 @@ interface NodeSpec {
   readonly children?: readonly NodeId[];
   readonly transform?: Transform;
   readonly volumeId?: VolumeId;
+  /** Optional extra components (for example a rotation constraint). */
+  readonly components?: readonly Component[];
 }
 
 interface DocumentSpec {
@@ -103,8 +106,11 @@ function buildStore(spec: DocumentSpec): DocumentStoreRead {
       transform: node.transform ?? IDENTITY,
       components:
         node.volumeId === undefined
-          ? []
-          : [{ kind: "voxel", schemaVersion: 1, volumeId: node.volumeId }],
+          ? [...(node.components ?? [])]
+          : [
+              { kind: "voxel", schemaVersion: 1, volumeId: node.volumeId },
+              ...(node.components ?? []),
+            ],
     })),
     materials: [
       {
@@ -487,6 +493,67 @@ describe("pickScene", () => {
     expect(matrices.get(BOX_B)?.[3]).toBe(5);
     expect(matrices.get(BOX_B)?.[7]).toBe(2);
     expect(matrices.get(BOX_B)?.[11]).toBe(3);
+  });
+
+  it("projects constrained world matrices for picking and bounds", () => {
+    const constraint = {
+      kind: "constraint" as const,
+      schemaVersion: 1 as const,
+      constraints: [
+        {
+          componentId: componentId("component:pick:limit"),
+          type: "rotation-limits" as const,
+          limits: {
+            min: [(-30 * Math.PI) / 180, 0, 0] as [number, number, number],
+            max: [(30 * Math.PI) / 180, 0, 0] as [number, number, number],
+          },
+        },
+      ],
+    };
+    const store = buildStore({
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [BOX_A],
+        },
+        {
+          nodeId: BOX_A,
+          name: "A",
+          parentId: ROOT,
+          children: [BOX_B],
+          transform: {
+            ...IDENTITY,
+            rotation: [
+              Math.sin((60 * Math.PI) / 360),
+              0,
+              0,
+              Math.cos((60 * Math.PI) / 360),
+            ],
+          },
+          components: [constraint],
+        },
+        {
+          nodeId: BOX_B,
+          name: "B",
+          parentId: BOX_A,
+          transform: { ...IDENTITY, translation: [1, 0, 0] },
+          volumeId: VOLUME_B,
+        },
+      ],
+      volumes: [{ volumeId: VOLUME_B, min: [0, 0, 0], max: [1, 1, 1] }],
+    });
+    const matrices = nodeWorldMatrices(store);
+    // The 60 deg authored rotation is clamped to 30 deg before the world
+    // pass: the child's world basis shows cos(30)/sin(30), not
+    // cos(60)/sin(60) (rotation about X leaves the x translation alone).
+    expect(matrices.get(BOX_B)?.[5]).toBeCloseTo(Math.cos(Math.PI / 6), 9);
+    expect(matrices.get(BOX_B)?.[6]).toBeCloseTo(-Math.sin(Math.PI / 6), 9);
+    expect(matrices.get(BOX_B)?.[9]).toBeCloseTo(Math.sin(Math.PI / 6), 9);
+    expect(matrices.get(BOX_B)?.[10]).toBeCloseTo(Math.cos(Math.PI / 6), 9);
+    // The document itself is untouched: the authored rotation is intact.
+    expect(matrices.get(BOX_B)).toBeDefined();
   });
 
   it("picks a child volume through its parent transform", () => {

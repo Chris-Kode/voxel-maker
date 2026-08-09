@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   commandId,
+  componentId,
   transactionId,
   type CommandId,
+  type ComponentId,
   type TransactionId,
 } from "@voxel-maker/shared";
 import type { Command } from "@voxel-maker/commands";
@@ -95,6 +97,12 @@ export function useEditorStore(editor: EditorStore): EditorStoreSnapshot {
 export interface PanelIds {
   nextCommandId(): CommandId;
   nextTransactionId(): TransactionId;
+  /**
+   * Fresh stable component id for constraint descriptors (plan S9.4,
+   * ticket #27). Callers supply the id in the command payload; the bus
+   * rejects duplicates within the document.
+   */
+  nextComponentId(): ComponentId;
 }
 
 /** Creates the id sequence for one panel session. */
@@ -108,6 +116,10 @@ export function createPanelIds(prefix: string): PanelIds {
     nextTransactionId: (): TransactionId => {
       sequence += 1;
       return transactionId(`transaction:${prefix}:${String(sequence)}`);
+    },
+    nextComponentId: (): ComponentId => {
+      sequence += 1;
+      return componentId(`component:${prefix}:${String(sequence)}`);
     },
   };
 }

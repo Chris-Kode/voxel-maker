@@ -41,18 +41,21 @@ export function evaluateWorldTransform(
 /**
  * World 4x4 matrices of every node reachable from the document root in
  * one deterministic pre-order pass (parents always before children, using
- * the authoritative children order). This is the rig-runtime table the
- * renderer and later animation layers evaluate against; it is a pure
- * projection and never touches the document. Nodes not reachable from the
- * root are absent from the map (valid documents have none).
+ * the authoritative children order). `localMatrix` maps each node's
+ * canonical local transform to its local matrix; the base evaluation uses
+ * the authored transform, and the constrained evaluation (ticket #27)
+ * substitutes the clamped rotation before composition. The walk is a
+ * pure projection and never touches the document. Nodes not reachable
+ * from the root are absent from the map (valid documents have none).
  */
-export function evaluateNodeWorldTransforms(
+export function walkNodeWorldTransforms(
   document: VoxelDocument,
+  localMatrix: (node: SceneNode) => Mat4,
 ): ReadonlyMap<NodeId, Mat4> {
   const world = new Map<NodeId, Mat4>();
   const root = document.nodes[document.rootNodeId];
   if (root === undefined) return world;
-  const rootWorld = transformToMatrix(root.transform);
+  const rootWorld = localMatrix(root);
   world.set(root.nodeId, rootWorld);
   const stack: Array<{ readonly node: SceneNode; readonly parentWorld: Mat4 }> =
     [{ node: root, parentWorld: rootWorld }];
@@ -64,13 +67,24 @@ export function evaluateNodeWorldTransforms(
       const childId = node.children[index];
       const child = childId === undefined ? undefined : document.nodes[childId];
       if (child === undefined || world.has(child.nodeId)) continue;
-      const childWorld = multiplyMatrices(
-        parentWorld,
-        transformToMatrix(child.transform),
-      );
+      const childWorld = multiplyMatrices(parentWorld, localMatrix(child));
       world.set(child.nodeId, childWorld);
       stack.push({ node: child, parentWorld: childWorld });
     }
   }
   return world;
+}
+
+/**
+ * World 4x4 matrices of every node reachable from the document root in
+ * one deterministic pre-order pass over the authored transforms. This is
+ * the rig-runtime table the renderer and later animation layers evaluate
+ * against; it is a pure projection and never touches the document.
+ */
+export function evaluateNodeWorldTransforms(
+  document: VoxelDocument,
+): ReadonlyMap<NodeId, Mat4> {
+  return walkNodeWorldTransforms(document, (node) =>
+    transformToMatrix(node.transform),
+  );
 }
