@@ -96,7 +96,9 @@ describe("imageSimilarity", () => {
 
 describe("resolveRefinementPolicy", () => {
   it("clamps overrides into the hard defaults", () => {
-    expect(resolveRefinementPolicy(undefined)).toEqual(DEFAULT_REFINEMENT_POLICY);
+    expect(resolveRefinementPolicy(undefined)).toEqual(
+      DEFAULT_REFINEMENT_POLICY,
+    );
     const policy = resolveRefinementPolicy({
       minOccupiedRetention: 2,
       maxOccupiedGrowthFactor: 0,
@@ -127,10 +129,7 @@ describe("evaluateRefinement", () => {
 
   it("flags occupied-voxel loss beyond the retention floor", () => {
     const { baseline, refined, baselineEvidence, refinedEvidence } =
-      stagedWithFill(
-        { min: [0, 0, 0], max: [2, 2, 2] },
-        "voxel.deleteRegion",
-      );
+      stagedWithFill({ min: [0, 0, 0], max: [2, 2, 2] }, "voxel.deleteRegion");
     // Deleting the whole occupied region drops 4 -> 0 voxels (100% loss).
     const evaluation = evaluateRefinement({
       baseline: { structure: baseline, evidence: baselineEvidence },

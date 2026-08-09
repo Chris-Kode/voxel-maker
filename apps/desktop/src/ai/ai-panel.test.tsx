@@ -506,17 +506,13 @@ describe("ai panel: visual refinement (ticket #40)", () => {
     });
     // Enabling discloses the recorded provider privacy policy.
     expect(mounted.panel.textContent).toContain("privacy policy");
-    expect(
-      mounted.panel.querySelector('a[href*="openai.com"]'),
-    ).not.toBeNull();
+    expect(mounted.panel.querySelector('a[href*="openai.com"]')).not.toBeNull();
     await act(async () => {
       button(mounted.panel, "Approve image transmission").click();
       await flushAsync();
     });
     expect(mounted.panel.textContent).toContain("Image transmission approved");
-    expect(
-      mounted.composition.ai.state.imageConsent?.maxResolution,
-    ).toBe(512);
+    expect(mounted.composition.ai.state.imageConsent?.maxResolution).toBe(512);
     mounted.unmount();
   });
 

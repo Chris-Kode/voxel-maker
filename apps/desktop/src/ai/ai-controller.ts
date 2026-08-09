@@ -19,11 +19,9 @@ import {
   createPreviewSession,
   createVisualRefinementPlan,
   DISCLOSURE_CATEGORIES,
-  imageConsentCovers,
   KEYCHAIN_SERVICE,
   planCoveredByConsent,
   previewSessionId,
-  PROVIDER_PRIVACY_POLICY,
   Secret,
   type AgentBudgets,
   type AgentEvent,
@@ -285,9 +283,7 @@ class AiControllerImpl implements AiController {
   #visualEnabled = false;
   #imageConsent: ImageTransmissionConsent | undefined;
   #refinementPlan: VisualRefinementPlan | undefined;
-  #refinement:
-    | AiControllerState["refinement"]
-    | undefined;
+  #refinement: AiControllerState["refinement"] | undefined;
   readonly #listeners = new Set<() => void>();
   /** Bounded activity entries of the current run. */
   readonly #activity: AiActivityEntry[] = [];
@@ -321,7 +317,8 @@ class AiControllerImpl implements AiController {
     this.#provider = options.provider;
     this.#credentials = options.credentials;
     this.#consentStore = options.consent;
-    this.#imageConsentStore = options.imageConsentStore ?? new MemoryImageConsentStore();
+    this.#imageConsentStore =
+      options.imageConsentStore ?? new MemoryImageConsentStore();
     this.#capture = options.capture;
     this.#evidenceResolution = options.evidenceResolution ?? 512;
     this.#model = options.model ?? options.provider.defaultModel;
@@ -475,9 +472,7 @@ class AiControllerImpl implements AiController {
     }
     this.#editor.pushNotice(
       "info",
-      `Image transmission approved for ${String(
-        planForNotice(this.#refinementPlan),
-      )}`,
+      `Image transmission approved for ${planForNotice(this.#refinementPlan)}`,
     );
     return true;
   }
@@ -746,8 +741,8 @@ class AiControllerImpl implements AiController {
             promotable: result.refinement.evaluation.promotable,
             regressions: result.refinement.evaluation.regressions,
             overallSimilarity: result.refinement.evaluation.overallSimilarity,
-            occupancyDelta: result.refinement.evaluation.structural
-              .occupiedVoxels,
+            occupancyDelta:
+              result.refinement.evaluation.structural.occupiedVoxels,
           },
         };
         if (!result.refinement.evaluation.promotable) {

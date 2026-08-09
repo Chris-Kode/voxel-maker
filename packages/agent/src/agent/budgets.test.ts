@@ -44,7 +44,6 @@ describe("agent budget defaults (ADR-0009)", () => {
     });
   });
 
-
   it("clamps overrides into [0, default] so callers can only lower", () => {
     const budgets = resolveAgentBudgets({
       maxRounds: 4,

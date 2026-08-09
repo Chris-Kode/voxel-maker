@@ -690,7 +690,10 @@ class AgentSessionImpl implements AgentSession {
     // the promotion evaluation, never transmitted.
     const baseline = this.#captureStagedEvidence(config, false);
     if (baseline.kind === "limit") {
-      return { kind: "failed", result: this.#failedResult("limit", baseline.error) };
+      return {
+        kind: "failed",
+        result: this.#failedResult("limit", baseline.error),
+      };
     }
     const seenHashes = new Set<string>([baseline.set.semanticHash]);
     let before = baseline.set;
@@ -731,19 +734,28 @@ class AgentSessionImpl implements AgentSession {
       }
       const reserve = this.#ledger.reserveVisualIteration();
       if (!reserve.ok) {
-        return { kind: "failed", result: this.#failedResult("limit", reserve.error) };
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", reserve.error),
+        };
       }
       iterations += 1;
       // The next transmitted pass: reserve + render the current staged
       // state fresh (deterministic, so the bytes match the eval evidence).
       const current = this.#captureStagedEvidence(config, true);
       if (current.kind === "limit") {
-        return { kind: "failed", result: this.#failedResult("limit", current.error) };
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", current.error),
+        };
       }
       const request = this.#critiqueRequest(config, current.set);
       const costError = this.#reserveCost(request);
       if (costError !== undefined) {
-        return { kind: "failed", result: this.#failedResult("limit", costError) };
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", costError),
+        };
       }
       const outcome = await this.#request(request);
       if (outcome.kind === "canceled") {
@@ -751,7 +763,10 @@ class AgentSessionImpl implements AgentSession {
         break;
       }
       if (outcome.kind === "fatal") {
-        return { kind: "failed", result: this.#failedResult("provider", outcome.error) };
+        return {
+          kind: "failed",
+          result: this.#failedResult("provider", outcome.error),
+        };
       }
       if (outcome.kind === "round-error") {
         const note: ChatMessage = {
@@ -762,9 +777,14 @@ class AgentSessionImpl implements AgentSession {
         this.transcript?.recordMessage(note);
         const recorded = this.#ledger.recordError();
         if (!recorded.ok) {
-          return { kind: "failed", result: this.#failedResult("cutoff", recorded.error) };
+          return {
+            kind: "failed",
+            result: this.#failedResult("cutoff", recorded.error),
+          };
         }
-        if (this.#ledger.consecutiveErrors >= this.#budgets.maxConsecutiveErrors) {
+        if (
+          this.#ledger.consecutiveErrors >= this.#budgets.maxConsecutiveErrors
+        ) {
           return {
             kind: "failed",
             result: this.#failedResult(
@@ -792,7 +812,10 @@ class AgentSessionImpl implements AgentSession {
       // for the regression gate and the promotion evaluation.
       const after = this.#captureStagedEvidence(config, false);
       if (after.kind === "limit") {
-        return { kind: "failed", result: this.#failedResult("limit", after.error) };
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", after.error),
+        };
       }
       const refinedStructure = measureStructure(this.preview);
       evaluation = evaluateRefinement({
@@ -804,8 +827,7 @@ class AgentSessionImpl implements AgentSession {
       // A round that leaves the staged state byte-identical to its
       // predecessor made no progress (no corrections, or no-op
       // corrections): stop with no-corrections.
-      const noChange =
-        after.set.semanticHash === before.semanticHash;
+      const noChange = after.set.semanticHash === before.semanticHash;
       // Oscillation is a RETURN to a state seen before the immediate
       // predecessor (a no-op round is not oscillation).
       const earlierHashes = new Set(seenHashes);
@@ -847,7 +869,10 @@ class AgentSessionImpl implements AgentSession {
     // Final promotion evaluation vs. the ORIGINAL pre-refinement baseline.
     const finalAfter = this.#captureStagedEvidence(config, false);
     if (finalAfter.kind === "limit") {
-      return { kind: "failed", result: this.#failedResult("limit", finalAfter.error) };
+      return {
+        kind: "failed",
+        result: this.#failedResult("limit", finalAfter.error),
+      };
     }
     const finalStructure = measureStructure(this.preview);
     const finalEvaluation = evaluateRefinement({
@@ -888,10 +913,12 @@ class AgentSessionImpl implements AgentSession {
   #captureStagedEvidence(
     config: VisualRefinementConfig,
     transmit: boolean,
-  ): { readonly kind: "ok"; readonly set: VisualEvidenceSet } | {
-    readonly kind: "limit";
-    readonly error: WorkspaceError;
-  } {
+  ):
+    | { readonly kind: "ok"; readonly set: VisualEvidenceSet }
+    | {
+        readonly kind: "limit";
+        readonly error: WorkspaceError;
+      } {
     if (transmit) {
       for (let i = 0; i < config.plan.imageCount; i += 1) {
         const reserve = this.#ledger.reserveImage();
@@ -958,10 +985,7 @@ class AgentSessionImpl implements AgentSession {
           images,
         },
       ],
-      tools: [
-        ...this.#inspector.contracts,
-        ...this.#mutator.contracts,
-      ],
+      tools: [...this.#inspector.contracts, ...this.#mutator.contracts],
       maxTokens: this.#maxOutputTokens,
     };
   }

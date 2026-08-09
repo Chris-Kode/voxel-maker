@@ -194,13 +194,14 @@ export function AiPanel({
               <p>
                 Images are off by default and are a separate disclosure from
                 text AI. Approving enables the visual-refinement phase to
-                transmit the four standard views (perspective, front, side,
-                top) of your staged proposal at a bounded resolution, count,
-                and estimated cost.
+                transmit the four standard views (perspective, front, side, top)
+                of your staged proposal at a bounded resolution, count, and
+                estimated cost.
               </p>
               <p className="ai-hint">
-                {state.providerId} privacy policy: {PROVIDER_PRIVACY_POLICY.summary}{" "}
-                (policy as of {PROVIDER_PRIVACY_POLICY.recordedAt},{" "}
+                {state.providerId} privacy policy:{" "}
+                {PROVIDER_PRIVACY_POLICY.summary} (policy as of{" "}
+                {PROVIDER_PRIVACY_POLICY.recordedAt},{" "}
                 <a
                   href={PROVIDER_PRIVACY_POLICY.url}
                   target="_blank"
@@ -237,14 +238,10 @@ export function AiPanel({
           {state.imageConsent !== undefined ? (
             <p className="ai-hint">
               Image transmission approved for{" "}
-              {String(state.imageConsent.views.length)} standard views at up
-              to {String(state.imageConsent.maxResolution)}px, {String(
-                state.imageConsent.maxImages,
-              )}{" "}
-              images per session, est. ${String(
-                state.imageConsent.estimatedCostUsd,
-              )}
-              .{" "}
+              {String(state.imageConsent.views.length)} standard views at up to{" "}
+              {String(state.imageConsent.maxResolution)}px,{" "}
+              {String(state.imageConsent.maxImages)} images per session, est. $
+              {String(state.imageConsent.estimatedCostUsd)}.{" "}
               <button
                 type="button"
                 className="link"
@@ -257,8 +254,8 @@ export function AiPanel({
           ) : null}
           {state.refinement !== undefined ? (
             <p className="ai-hint">
-              Last run: {String(state.refinement.iterations)} visual
-              iteration{state.refinement.iterations === 1 ? "" : "s"},{" "}
+              Last run: {String(state.refinement.iterations)} visual iteration
+              {state.refinement.iterations === 1 ? "" : "s"},{" "}
               {String(state.refinement.imagesSent)} image
               {state.refinement.imagesSent === 1 ? "" : "s"} transmitted.
             </p>
@@ -376,9 +373,9 @@ export function AiPanel({
                   {state.refinement.evaluation.regressions.length > 0 ? (
                     <p className="ai-review-warning" role="alert">
                       Regression gate:{" "}
-                      {state.refinement.evaluation.regressions.join(", ")}.
-                      This proposal is not promoted automatically — review it
-                      before applying.
+                      {state.refinement.evaluation.regressions.join(", ")}. This
+                      proposal is not promoted automatically — review it before
+                      applying.
                     </p>
                   ) : null}
                 </div>

@@ -204,9 +204,7 @@ export function validateEvidenceRequest(
  * the capture output before transmission). Rejects missing, oversized,
  * mislabeled, or cross-revision images.
  */
-export function validateEvidenceSet(
-  set: VisualEvidenceSet,
-): VisualEvidenceSet {
+export function validateEvidenceSet(set: VisualEvidenceSet): VisualEvidenceSet {
   if (set.images.length === 0 || set.images.length > MAX_EVIDENCE_IMAGES) {
     throw evidenceError(
       "INVALID_EVIDENCE_SET",
@@ -249,9 +247,7 @@ export function validateEvidenceSet(
         "Evidence image bytes exceed the bounded PNG size",
       );
     }
-    if (
-      image.rgbaBytes.byteLength !== image.width * image.height * 4
-    ) {
+    if (image.rgbaBytes.byteLength !== image.width * image.height * 4) {
       throw evidenceError(
         "INVALID_EVIDENCE_SET",
         "Evidence image RGBA buffer must match the image dimensions",
@@ -311,9 +307,7 @@ export function buildEvidenceSet(input: {
     revision: input.revision,
     semanticHash: input.semanticHash,
     source: input.source,
-    ...(input.sessionId === undefined
-      ? {}
-      : { sessionId: input.sessionId }),
+    ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
     images: input.images,
     totalPngBytes: 0,
   });

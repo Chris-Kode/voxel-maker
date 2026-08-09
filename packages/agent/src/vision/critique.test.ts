@@ -68,7 +68,10 @@ describe("parseVisualCritique", () => {
     const result = parseVisualCritique({
       view: "top",
       issueCategory: "other",
-      affectedNodeIds: Array.from({ length: 100 }, (_, i) => `node:${String(i)}`),
+      affectedNodeIds: Array.from(
+        { length: 100 },
+        (_, i) => `node:${String(i)}`,
+      ),
       evidence: "e".repeat(5000),
       suggestedCorrection: "s".repeat(5000),
       region: {
@@ -84,7 +87,10 @@ describe("parseVisualCritique", () => {
     const result = parseVisualCritique({
       view: "side",
       issueCategory: "floating-voxels",
-      affectedNodeIds: Array.from({ length: 200 }, (_, i) => `node:${String(i)}`),
+      affectedNodeIds: Array.from(
+        { length: 200 },
+        (_, i) => `node:${String(i)}`,
+      ),
       evidence: "e".repeat(5000),
       confidence: 0.25,
     });

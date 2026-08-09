@@ -82,7 +82,9 @@ function consentError(code: string, message: string): WorkspaceError {
 }
 
 /** Validates and freezes one image-consent record. */
-export function createImageConsent(input: ImageConsentInput): ImageTransmissionConsent {
+export function createImageConsent(
+  input: ImageConsentInput,
+): ImageTransmissionConsent {
   const now = input.clock?.now() ?? Date.now();
   const consentedAt = input.consentedAt ?? now;
   const expiresAt =
@@ -101,11 +103,17 @@ export function createImageConsent(input: ImageConsentInput): ImageTransmissionC
   }
   for (const view of input.views) {
     if (!STANDARD_VIEWS.includes(view)) {
-      throw consentError("INVALID_IMAGE_CONSENT", `Unknown standard view: ${view}`);
+      throw consentError(
+        "INVALID_IMAGE_CONSENT",
+        `Unknown standard view: ${view}`,
+      );
     }
   }
   if (new Set(input.views).size !== input.views.length) {
-    throw consentError("INVALID_IMAGE_CONSENT", "Image consent views must not repeat");
+    throw consentError(
+      "INVALID_IMAGE_CONSENT",
+      "Image consent views must not repeat",
+    );
   }
   if (
     !Number.isInteger(input.maxImages) ||
@@ -127,10 +135,7 @@ export function createImageConsent(input: ImageConsentInput): ImageTransmissionC
       `Image consent maxResolution must be an integer in [1, ${String(MAX_EVIDENCE_DIMENSION)}]`,
     );
   }
-  if (
-    !Number.isFinite(input.estimatedCostUsd) ||
-    input.estimatedCostUsd < 0
-  ) {
+  if (!Number.isFinite(input.estimatedCostUsd) || input.estimatedCostUsd < 0) {
     throw consentError(
       "INVALID_IMAGE_CONSENT",
       "Image consent estimated cost must be a non-negative number",
@@ -216,7 +221,10 @@ export function imageConsentRequiredError(): WorkspaceError {
 /** Image consent record store seam (memory implementation for tests). */
 export interface ImageConsentStore {
   save(consent: ImageTransmissionConsent): Promise<void>;
-  get(providerId: string, model: string): Promise<ImageTransmissionConsent | undefined>;
+  get(
+    providerId: string,
+    model: string,
+  ): Promise<ImageTransmissionConsent | undefined>;
   delete(providerId: string, model: string): Promise<boolean>;
   list(): Promise<readonly ImageTransmissionConsent[]>;
 }
@@ -230,7 +238,10 @@ export class MemoryImageConsentStore implements ImageConsentStore {
     return Promise.resolve();
   }
 
-  get(providerId: string, model: string): Promise<ImageTransmissionConsent | undefined> {
+  get(
+    providerId: string,
+    model: string,
+  ): Promise<ImageTransmissionConsent | undefined> {
     return Promise.resolve(this.#entries.get(`${providerId}\u0000${model}`));
   }
 
@@ -281,7 +292,8 @@ export function estimateImagePassCostUsd(
   const price = priceForModel(model);
   if (price === undefined) return 0;
   const tokens = views.reduce(
-    (sum) => sum + estimateImageTokens({ width: resolution, height: resolution }),
+    (sum) =>
+      sum + estimateImageTokens({ width: resolution, height: resolution }),
     0,
   );
   const usd = (tokens / 1_000_000) * price.inputPerMillionUsd;
@@ -303,7 +315,10 @@ export function createVisualRefinementPlan(
   }
   for (const view of views) {
     if (!STANDARD_VIEWS.includes(view)) {
-      throw consentError("INVALID_REFINEMENT_PLAN", `Unknown standard view: ${view}`);
+      throw consentError(
+        "INVALID_REFINEMENT_PLAN",
+        `Unknown standard view: ${view}`,
+      );
     }
   }
   const resolution = input.resolution ?? 512;
@@ -375,11 +390,15 @@ export function planCoveredByConsent(
   consent: ImageTransmissionConsent,
   now: number = Date.now(),
 ): boolean {
-  return imageConsentCovers(consent, {
-    providerId: plan.providerId,
-    model: plan.model,
-    views: plan.views,
-    imageCount: plan.imageCount,
-    resolution: plan.resolution,
-  }, now);
+  return imageConsentCovers(
+    consent,
+    {
+      providerId: plan.providerId,
+      model: plan.model,
+      views: plan.views,
+      imageCount: plan.imageCount,
+      resolution: plan.resolution,
+    },
+    now,
+  );
 }

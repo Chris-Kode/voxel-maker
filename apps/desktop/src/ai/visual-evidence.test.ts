@@ -9,10 +9,7 @@ import {
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import { validateEvidenceSet } from "@voxel-maker/agent";
-import {
-  createDocumentStore,
-  type DocumentStore,
-} from "@voxel-maker/document";
+import { createDocumentStore, type DocumentStore } from "@voxel-maker/document";
 import { createRendererEvidenceCapture } from "./visual-evidence.js";
 
 /**

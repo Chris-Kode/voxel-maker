@@ -167,10 +167,7 @@ function compareEvidence(
   for (const before of baseline.images) {
     const after = refined.images.find((image) => image.view === before.view);
     if (after === undefined) continue;
-    if (
-      after.width !== before.width ||
-      after.height !== before.height
-    ) {
+    if (after.width !== before.width || after.height !== before.height) {
       continue;
     }
     const result = imageSimilarity(
@@ -200,7 +197,10 @@ export function evaluateRefinement(
   input: EvaluationInput,
 ): RefinementEvaluation {
   const policy = resolveRefinementPolicy(input.policy);
-  const delta = structuralDelta(input.baseline.structure, input.refined.structure);
+  const delta = structuralDelta(
+    input.baseline.structure,
+    input.refined.structure,
+  );
   const regressions: string[] = [];
   const baselineOccupied = input.baseline.structure.occupiedVoxels;
   const refinedOccupied = input.refined.structure.occupiedVoxels;
@@ -217,13 +217,19 @@ export function evaluateRefinement(
     regressions.push("occupied-voxel-growth");
   }
   const boundsFactor = delta.boundsDiagonalFactor;
-  if (Number.isFinite(boundsFactor) && boundsFactor > policy.maxBoundsGrowthFactor) {
+  if (
+    Number.isFinite(boundsFactor) &&
+    boundsFactor > policy.maxBoundsGrowthFactor
+  ) {
     regressions.push("bounds-growth");
   }
   if (delta.materialCount < -policy.maxMaterialLoss) {
     regressions.push("material-loss");
   }
-  const visual = compareEvidence(input.baseline.evidence, input.refined.evidence);
+  const visual = compareEvidence(
+    input.baseline.evidence,
+    input.refined.evidence,
+  );
   const overallSimilarity =
     visual.length === 0
       ? 1

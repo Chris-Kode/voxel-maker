@@ -105,9 +105,9 @@ describe("imageConsentCovers", () => {
     expect(
       imageConsentCovers(consent, { ...base, providerId: "other" }, NOW),
     ).toBe(false);
-    expect(
-      imageConsentCovers(consent, { ...base, model: "gpt-4o" }, NOW),
-    ).toBe(false);
+    expect(imageConsentCovers(consent, { ...base, model: "gpt-4o" }, NOW)).toBe(
+      false,
+    );
     expect(
       imageConsentCovers(
         consent,
@@ -118,9 +118,9 @@ describe("imageConsentCovers", () => {
         NOW,
       ),
     ).toBe(false);
-    expect(
-      imageConsentCovers(consent, { ...base, imageCount: 13 }, NOW),
-    ).toBe(false);
+    expect(imageConsentCovers(consent, { ...base, imageCount: 13 }, NOW)).toBe(
+      false,
+    );
     expect(
       imageConsentCovers(consent, { ...base, resolution: 1024 }, NOW),
     ).toBe(false);

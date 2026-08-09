@@ -159,13 +159,6 @@ const BASE_SCRIPT: readonly DeterministicStep[] = [
   { text: "The proposal is ready." },
 ];
 
-/** Text-run script that reaches approve with TWO staged fillBoxes. */
-const BASE_TWO_FILLS: readonly DeterministicStep[] = [
-  { text: "First fill.", toolCalls: [fillBoxCall()] },
-  { text: "Second fill.", toolCalls: [fillBoxCall("call_fill2")] },
-  { text: "The proposal is ready." },
-];
-
 /** Correction that adds the four missing corner voxels of [0,2)^3. */
 const CORNER_FILL_STEP: DeterministicStep = {
   text: `Critique: ${JSON.stringify(CRITIQUE)}`,
@@ -201,7 +194,6 @@ const CORNER_REMOVE_STEP: DeterministicStep = {
     },
   ],
 };
-
 
 interface Harness {
   readonly store: DocumentStoreRead;
@@ -302,14 +294,15 @@ describe("visual refinement: evidence and consent (AC1/AC2)", () => {
     expect(result.refinement?.imagesSent).toBe(8);
     expect(result.refinement?.evaluation.promotable).toBe(true);
     // The critique requests carried the staged preview evidence.
-    const refineRequests = h.provider.requests.filter(
-      (request) => request.messages.some((m) => m.role === "user" && (m.images?.length ?? 0) > 0),
+    const refineRequests = h.provider.requests.filter((request) =>
+      request.messages.some(
+        (m) => m.role === "user" && (m.images?.length ?? 0) > 0,
+      ),
     );
     expect(refineRequests).toHaveLength(2);
     for (const request of refineRequests) {
       const users = request.messages.filter(
-        (m): m is Extract<ChatMessage, { role: "user" }> =>
-          m.role === "user",
+        (m): m is Extract<ChatMessage, { role: "user" }> => m.role === "user",
       );
       const critique = users[users.length - 1];
       expect(critique).toBeDefined();
@@ -353,7 +346,9 @@ describe("visual refinement: evidence and consent (AC1/AC2)", () => {
     });
     const result = runErr(await session.run());
     expect(result.reason).toBe("provider");
-    expect((result.error as { code?: string }).code).toBe("IMAGE_CONSENT_REQUIRED");
+    expect((result.error as { code?: string }).code).toBe(
+      "IMAGE_CONSENT_REQUIRED",
+    );
     // The base run staged work but refinement refused before transmission:
     // no critique request ever left the device.
     expect(
@@ -369,7 +364,13 @@ describe("visual refinement: evidence and consent (AC1/AC2)", () => {
   it("fails closed on image-count budget exhaustion instead of transmitting more", async () => {
     const h = harness();
     const session = h.makeSession(
-      [...BASE_SCRIPT, CRITIQUE_STEP, CRITIQUE_STEP, CRITIQUE_STEP, CRITIQUE_STEP],
+      [
+        ...BASE_SCRIPT,
+        CRITIQUE_STEP,
+        CRITIQUE_STEP,
+        CRITIQUE_STEP,
+        CRITIQUE_STEP,
+      ],
       { budgets: { maxImages: 4 } },
     );
     const result = runOk(await session.run());
@@ -399,7 +400,10 @@ describe("visual refinement: budgets (AC3)", () => {
     const session = h.makeSession(
       [
         ...BASE_SCRIPT,
-        { text: "critique", usage: { inputTokens: 70_000, outputTokens: 70_000 } },
+        {
+          text: "critique",
+          usage: { inputTokens: 70_000, outputTokens: 70_000 },
+        },
       ],
       { budgets: { maxTokens: 128_000 } },
     );
@@ -480,9 +484,11 @@ describe("visual refinement: budgets (AC3)", () => {
 describe("visual refinement: corrections stay staged commands (AC4)", () => {
   it("keeps corrections as ordinary staged commands with a visible diff", async () => {
     const h = harness();
-    const session = h.makeSession(
-      [...BASE_SCRIPT, CRITIQUE_STEP, DONE_CRITIQUE_STEP],
-    );
+    const session = h.makeSession([
+      ...BASE_SCRIPT,
+      CRITIQUE_STEP,
+      DONE_CRITIQUE_STEP,
+    ]);
     const result = runOk(await session.run());
     expect(result.stagedCommands).toBe(2); // 1 base + 1 correction
     const diff = session.preview.diff();
@@ -502,9 +508,11 @@ describe("visual refinement: corrections stay staged commands (AC4)", () => {
 
   it("applies the refined proposal as ONE labeled undoable history entry", async () => {
     const h = harness();
-    const session = h.makeSession(
-      [...BASE_SCRIPT, CRITIQUE_STEP, DONE_CRITIQUE_STEP],
-    );
+    const session = h.makeSession([
+      ...BASE_SCRIPT,
+      CRITIQUE_STEP,
+      DONE_CRITIQUE_STEP,
+    ]);
     await session.run();
     const base = h.store.revision;
     const applied = session.apply({ label: "AI: refined proposal" });
@@ -536,9 +544,11 @@ describe("visual refinement: corrections stay staged commands (AC4)", () => {
 
   it("discard drops the refined proposal with no live side effects", async () => {
     const h = harness();
-    const session = h.makeSession(
-      [...BASE_SCRIPT, CRITIQUE_STEP, DONE_CRITIQUE_STEP],
-    );
+    const session = h.makeSession([
+      ...BASE_SCRIPT,
+      CRITIQUE_STEP,
+      DONE_CRITIQUE_STEP,
+    ]);
     await session.run();
     const base = h.store.revision;
     session.discard();
@@ -572,7 +582,10 @@ describe("visual refinement: regression and oscillation gates (AC5)", () => {
     const session = h.makeSession(
       [
         ...BASE_SCRIPT,
-        { text: `Critique: ${JSON.stringify(CRITIQUE)}`, toolCalls: [deleteRegionCall()] },
+        {
+          text: `Critique: ${JSON.stringify(CRITIQUE)}`,
+          toolCalls: [deleteRegionCall()],
+        },
         CRITIQUE_STEP,
       ],
       { onEvent: (event) => events.push(event) },
@@ -612,9 +625,11 @@ describe("visual refinement: regression and oscillation gates (AC5)", () => {
 
   it("compares structural and visual outcomes before and after refinement", async () => {
     const h = harness();
-    const session = h.makeSession(
-      [...BASE_SCRIPT, CRITIQUE_STEP, DONE_CRITIQUE_STEP],
-    );
+    const session = h.makeSession([
+      ...BASE_SCRIPT,
+      CRITIQUE_STEP,
+      DONE_CRITIQUE_STEP,
+    ]);
     const result = runOk(await session.run());
     const evaluation = result.refinement?.evaluation;
     expect(evaluation).toBeDefined();
@@ -645,10 +660,9 @@ describe("visual refinement: revision conflict still applies", () => {
   it("checks the live revision before approval after refinement", async () => {
     const h = harness();
     let liveCurrent = true;
-    const session = h.makeSession(
-      [...BASE_SCRIPT, DONE_CRITIQUE_STEP],
-      { isLiveCurrent: () => liveCurrent },
-    );
+    const session = h.makeSession([...BASE_SCRIPT, DONE_CRITIQUE_STEP], {
+      isLiveCurrent: () => liveCurrent,
+    });
     const run = session.run();
     liveCurrent = false;
     const result = runErr(await run);

@@ -47,19 +47,12 @@ function patternedBytes(
 }
 
 /** Fake evidence capture with a deterministic content-probe hash. */
-export function createFakeEvidenceCapture(
-  options: { readonly width?: number; readonly height?: number } = {},
-): EvidenceCapture {
+export function createFakeEvidenceCapture(): EvidenceCapture {
   return {
     captureEvidence(request: EvidenceCaptureRequest): VisualEvidenceSet {
       const width = request.width ?? 8;
       const height = request.height ?? 8;
-      const views = request.views ?? [
-        "perspective",
-        "front",
-        "side",
-        "top",
-      ];
+      const views = request.views ?? ["perspective", "front", "side", "top"];
       const hash = fakeSemanticHash(request.store);
       const images: VisualEvidenceImage[] = views.map((view) => {
         const bytes = patternedBytes(hash, width, height, view);
@@ -70,7 +63,7 @@ export function createFakeEvidenceCapture(
           pngBytes: bytes,
           rgbaBytes: bytes,
           revision: request.store.revision,
-        semanticHash: hash,
+          semanticHash: hash,
           source: request.source,
           ...(request.sessionId === undefined
             ? {}
@@ -82,7 +75,9 @@ export function createFakeEvidenceCapture(
         revision: request.store.revision,
         semanticHash: hash,
         source: request.source,
-        ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
+        ...(request.sessionId === undefined
+          ? {}
+          : { sessionId: request.sessionId }),
         images,
       });
     },

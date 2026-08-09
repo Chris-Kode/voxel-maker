@@ -32,7 +32,6 @@ import {
   type ToolCall,
 } from "@voxel-maker/agent";
 
-
 /**
  * AI controller tests (plan S12.10/S12.14/S12.15, ticket #34 AC): the
  * desktop seam drives the real bounded agent loop over the real preview
@@ -205,9 +204,7 @@ function createHarness(
       imageConsentStore,
       clock,
       sleep: clock.sleep,
-      ...(options.capture === undefined
-        ? {}
-        : { capture: options.capture }),
+      ...(options.capture === undefined ? {} : { capture: options.capture }),
     },
   });
   composition.session.open({ document: fixtureDocument(), source: "system" });

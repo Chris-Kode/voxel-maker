@@ -136,11 +136,12 @@ function toVendorMessages(request: ProviderChatRequest): unknown[] {
           const parts: unknown[] = [
             { type: "text", text: message.content },
             ...images.map((image) => {
-              if (image.mimeType !== "image/png") {
+              const mimeType = image.mimeType as string;
+              if (mimeType !== "image/png") {
                 throw normalizedError(
                   "validation",
                   "UNSUPPORTED_IMAGE_MIME",
-                  `Unsupported image mime type: ${image.mimeType}`,
+                  `Unsupported image mime type: ${mimeType}`,
                   false,
                 );
               }
@@ -214,14 +215,14 @@ export function base64Encode(bytes: Uint8Array): string {
     const b = i + 1 < bytes.byteLength ? (bytes[i + 1] as number) : 0;
     const c = i + 2 < bytes.byteLength ? (bytes[i + 2] as number) : 0;
     const triple = (a << 16) | (b << 8) | c;
-    out += BASE64_ALPHABET[(triple >> 18) & 0x3f];
-    out += BASE64_ALPHABET[(triple >> 12) & 0x3f];
+    out += BASE64_ALPHABET.charAt((triple >> 18) & 0x3f);
+    out += BASE64_ALPHABET.charAt((triple >> 12) & 0x3f);
     out +=
       i + 1 < bytes.byteLength
-        ? BASE64_ALPHABET[(triple >> 6) & 0x3f]
+        ? BASE64_ALPHABET.charAt((triple >> 6) & 0x3f)
         : "=";
     out +=
-      i + 2 < bytes.byteLength ? BASE64_ALPHABET[triple & 0x3f] : "=";
+      i + 2 < bytes.byteLength ? BASE64_ALPHABET.charAt(triple & 0x3f) : "=";
   }
   return out;
 }
@@ -279,13 +280,16 @@ export class OpenAIProvider implements ProviderAdapter {
         continue;
       }
       for (const image of message.images ?? []) {
-        if (image.mimeType !== "image/png") {
+        // The chat contract types images as PNG, but the message may
+        // cross untrusted JSON boundaries: re-validate the runtime value.
+        const mimeType = image.mimeType as string;
+        if (mimeType !== "image/png") {
           yield {
             kind: "error",
             error: normalizedError(
               "validation",
               "UNSUPPORTED_IMAGE_MIME",
-              `Unsupported image mime type: ${image.mimeType}`,
+              `Unsupported image mime type: ${mimeType}`,
               false,
             ),
           };

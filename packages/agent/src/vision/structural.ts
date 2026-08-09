@@ -99,8 +99,8 @@ export function measureStructure(store: DocumentStoreRead): StructuralMetrics {
     materialCount,
     bounds: hasBounds
       ? Object.freeze({
-          min: Object.freeze([minX, minY, minZ]) as readonly [number, number, number],
-          max: Object.freeze([maxX, maxY, maxZ]) as readonly [number, number, number],
+          min: Object.freeze([minX, minY, minZ] as const),
+          max: Object.freeze([maxX, maxY, maxZ] as const),
         })
       : undefined,
   });

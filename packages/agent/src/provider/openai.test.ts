@@ -445,7 +445,7 @@ describe("OpenAI adapter: vision evidence (plan S15.3, ticket #40)", () => {
   it("encodes bounded standard-view PNGs as vision content parts", async () => {
     const bodies: Record<string, unknown>[] = [];
     const fetchImpl = ((_input: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      bodies.push(JSON.parse(init?.body as string) as Record<string, unknown>);
       return Promise.resolve(sseResponse([]));
     }) as typeof fetch;
     const provider = new OpenAIProvider({
@@ -474,8 +474,12 @@ describe("OpenAI adapter: vision evidence (plan S15.3, ticket #40)", () => {
         ],
       }),
     );
-    const message = bodies[0]?.messages as { content: unknown[] }[];
-    const parts = message?.[0]?.content as { type: string; image_url: { url: string; detail: string } }[];
+    const message = bodies[0]?.messages as { content: unknown[] }[] | undefined;
+    const parts = message?.[0]?.content as
+      | { type: string; image_url: { url: string; detail: string } }[]
+      | undefined;
+    expect(parts).toBeDefined();
+    if (parts === undefined) return;
     expect(parts[0]).toEqual({ type: "text", text: "Critique these views." });
     expect(parts[1]?.type).toBe("image_url");
     expect(parts[1]?.image_url.url.startsWith("data:image/png;base64,")).toBe(

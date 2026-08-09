@@ -42,11 +42,10 @@ export interface VisualCritique {
   /** Affected stable node ids (bounded; may be empty). */
   readonly affectedNodeIds: readonly string[];
   /** Optional affected region in volume-local coordinates. */
-  readonly region?:
-    | {
-        readonly min: readonly [number, number, number];
-        readonly max: readonly [number, number, number];
-      };
+  readonly region?: {
+    readonly min: readonly [number, number, number];
+    readonly max: readonly [number, number, number];
+  };
   /** What the image evidence shows (bounded text). */
   readonly evidence: string;
   /** Suggested generic correction (bounded text; never an edit itself). */
@@ -82,9 +81,7 @@ function boundedIds(value: unknown): readonly string[] | undefined {
   return Object.freeze(ids);
 }
 
-function boundedRegion(
-  value: unknown,
-): VisualCritique["region"] | undefined {
+function boundedRegion(value: unknown): VisualCritique["region"] | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;
@@ -96,9 +93,11 @@ function boundedRegion(
   if (min.length !== 3 || max.length !== 3) return undefined;
   const minVec: number[] = [];
   const maxVec: number[] = [];
+  const minItems = min as readonly unknown[];
+  const maxItems = max as readonly unknown[];
   for (let i = 0; i < 3; i += 1) {
-    const a = min[i];
-    const b = max[i];
+    const a = minItems[i];
+    const b = maxItems[i];
     if (typeof a !== "number" || !Number.isInteger(a)) return undefined;
     if (typeof b !== "number" || !Number.isInteger(b)) return undefined;
     if (
@@ -128,14 +127,21 @@ export function parseVisualCritique(
   | { readonly ok: true; readonly value: VisualCritique }
   | { readonly ok: false; readonly error: WorkspaceError } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { ok: false, error: critiqueError("Critique must be a JSON object") };
+    return {
+      ok: false,
+      error: critiqueError("Critique must be a JSON object"),
+    };
   }
   const record = value as Readonly<Record<string, JsonValue>>;
   const view = record.view;
   if (view !== "any" && !STANDARD_VIEWS.includes(view as StandardViewId)) {
     return {
       ok: false,
-      error: critiqueError(`Unknown critique view: ${String(view)}`),
+      error: critiqueError(
+        `Unknown critique view: ${
+          typeof view === "string" ? view : JSON.stringify(view)
+        }`,
+      ),
     };
   }
   const category = record.issueCategory;
@@ -143,7 +149,9 @@ export function parseVisualCritique(
     return {
       ok: false,
       error: critiqueError(
-        `Unknown critique category: ${String(category)}`,
+        `Unknown critique category: ${
+          typeof category === "string" ? category : JSON.stringify(category)
+        }`,
       ),
     };
   }

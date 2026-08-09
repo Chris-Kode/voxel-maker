@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { CommandBus, CommandRegistry } from "@voxel-maker/commands";
 import { commandId } from "@voxel-maker/shared";
 import { createInspectionStore } from "../fixtures.js";
 import { createPreviewRegistry } from "../registry.js";
@@ -44,8 +43,6 @@ describe("measureStructure", () => {
   it("detects staged changes through the preview session", () => {
     const { handle } = createInspectionStore();
     const registry = createPreviewRegistry();
-    const bus = new CommandBus(handle.store, registry, handle.writeCapability);
-    void bus;
     const session = createPreviewSession({
       live: handle.store,
       registry,
@@ -106,7 +103,3 @@ describe("structuralDelta", () => {
     expect(back.boundsDiagonalFactor).toBe(0);
   });
 });
-
-// Silence unused-import warnings for the CommandBus pairing used in the
-// preview staging test above.
-void CommandBus;
