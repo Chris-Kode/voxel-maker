@@ -17,10 +17,11 @@ import {
   type JsonValue,
   type TrackId,
 } from "@voxel-maker/shared";
-import type {
-  AnimationDescriptor,
-  TrackProperty,
-  VoxelDocument,
+import {
+  DEFAULT_DOCUMENT_LIMITS,
+  type AnimationDescriptor,
+  type TrackProperty,
+  type VoxelDocument,
 } from "@voxel-maker/model";
 import {
   invalidArgument,
@@ -49,7 +50,8 @@ import { requireNodeId, requireString, resolveCommandId } from "./parse.js";
  */
 
 /** Hard upper bound for clip duration and keyframe times (model limit). */
-const MAX_CLIP_DURATION_SECONDS = 86_400;
+const MAX_CLIP_DURATION_SECONDS =
+  DEFAULT_DOCUMENT_LIMITS.maxClipDurationSeconds;
 
 const ID_SCHEMA = { type: "string", minLength: 1, maxLength: 128 } as const;
 const DURATION_SCHEMA = {

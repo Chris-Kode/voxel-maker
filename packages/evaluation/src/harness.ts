@@ -50,10 +50,14 @@ import {
 } from "./versions.js";
 import {
   scenarioById,
-  type GeometryScenario,
   type ScenarioId,
+  type ScenarioShape,
 } from "./scenarios.js";
-import { rigScenarioById, type RigScenarioId } from "./rig-scenarios.js";
+import {
+  RIG_SCENARIOS,
+  rigScenarioById,
+  type RigScenarioId,
+} from "./rig-scenarios.js";
 
 /**
  * Fixed geometry evaluation harness (plan S12.12, ticket #35): runs one
@@ -104,7 +108,7 @@ export interface RunReport {
 /** The complete recorded result of one scenario evaluation. */
 export interface GeometryEvalResult {
   readonly scenarioId: ScenarioId | RigScenarioId;
-  readonly scenario: GeometryScenario;
+  readonly scenario: ScenarioShape;
   readonly versions: EvaluationVersions;
   readonly run: RunReport;
   readonly scores: GeometryEvalScores;
@@ -143,7 +147,7 @@ export interface EvaluateScenarioOptions {
 }
 
 /** Builds a committed fixture store of a scenario. */
-function createFixtureStore(scenario: GeometryScenario): {
+function createFixtureStore(scenario: ScenarioShape): {
   readonly store: DocumentStoreRead;
   readonly handle: DocumentStoreHandle;
 } {
@@ -179,7 +183,7 @@ function createFixtureStore(scenario: GeometryScenario): {
 
 /** The voxel scan volumes of a scenario (defaults to volume:main). */
 function scanVolumesOf(
-  scenario: GeometryScenario,
+  scenario: ScenarioShape,
 ): readonly { readonly volumeId: VolumeId; readonly region: IntAabb }[] {
   return (
     scenario.scanVolumes ?? [
@@ -212,26 +216,12 @@ function suiteConsent(providerId: string, model: string): ProviderConsent {
 }
 
 /** Routes a scenario id to the geometry or rig/animation suite. */
-function scenarioByIdOrRig(id: ScenarioId | RigScenarioId): GeometryScenario {
-  if ((Object.values(RIG_SCENARIO_IDS) as readonly string[]).includes(id)) {
-    return rigScenarioById(id as RigScenarioId) as unknown as GeometryScenario;
+function scenarioByIdOrRig(id: ScenarioId | RigScenarioId): ScenarioShape {
+  if (RIG_SCENARIOS.some((scenario) => scenario.id === id)) {
+    return rigScenarioById(id as RigScenarioId);
   }
   return scenarioById(id as ScenarioId);
 }
-
-/** Every rig scenario id (stable routing list). */
-const RIG_SCENARIO_IDS = [
-  "chest-lid-open",
-  "wheel-spin",
-  "wings-flap",
-  "arm-reach",
-  "abstract-rig",
-  "chest-farther",
-  "wheel-slower",
-  "wings-one",
-  "arm-elbow-limit",
-  "wheel-faster",
-] as const;
 
 /** Runs one fixed scenario and returns the complete scored result. */
 export async function evaluateScenario(
@@ -407,7 +397,7 @@ export async function evaluateScenario(
   });
 
   return {
-    scenarioId: scenario.id,
+    scenarioId: scenario.id as ScenarioId | RigScenarioId,
     scenario,
     versions: evaluationVersions({
       scenarioPrompt: scenario.prompt,

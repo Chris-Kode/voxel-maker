@@ -33,6 +33,12 @@ export interface RecipeOptions {
   readonly maxNameLength?: number;
   /** Maximum clips in the animation recipe page (default 50). */
   readonly pageSize?: number;
+  /**
+   * Targeted keyframe detail per track (plan S13.2): the edge-keyframe
+   * pair by default; when an `animationId` filter is passed, up to this
+   * many keyframes per track (default 4, hard cap 64).
+   */
+  readonly keyframesPerTrack?: number;
 }
 
 /** Resolves recipe options against the hard bounds (lower-only). */
@@ -44,12 +50,14 @@ export function resolveRecipeOptions(
   const maxResponseBytes = clamp(options?.maxResponseBytes, 65_536, 1_048_576);
   const maxNameLength = clamp(options?.maxNameLength, 128, 512);
   const pageSize = clamp(options?.pageSize, 50, 500);
+  const keyframesPerTrack = clamp(options?.keyframesPerTrack, 4, 64);
   return {
     maxNodes,
     maxHierarchyDepth,
     maxResponseBytes,
     maxNameLength,
     pageSize,
+    keyframesPerTrack,
   };
 }
 
@@ -251,7 +259,11 @@ export interface AnimationContextRecipe {
 /** Builds the bounded animation context recipe (plan S13.2). */
 export function animationContextRecipe(
   store: DocumentStoreRead,
-  options?: RecipeOptions & { readonly page?: number },
+  options?: RecipeOptions & {
+    readonly page?: number;
+    /** Restrict to one clip and enable targeted keyframe detail. */
+    readonly animationId?: string;
+  },
 ): AnimationContextRecipe {
   const resolved = resolveRecipeOptions(options);
   const limits: InspectionLimits = {
@@ -262,7 +274,12 @@ export function animationContextRecipe(
   };
   const budget = new ResponseBudget(resolved.maxResponseBytes);
   const document = store.getDocument();
-  const animations = Object.values(document.animations);
+  const animations =
+    options?.animationId === undefined
+      ? Object.values(document.animations)
+      : Object.values(document.animations).filter(
+          (animation) => animation.animationId === options.animationId,
+        );
   const page = options?.page ?? 1;
   const start = (page - 1) * resolved.pageSize;
   const pageAnimations = animations.slice(start, start + resolved.pageSize);
@@ -282,7 +299,10 @@ export function animationContextRecipe(
           targetNodeId: track.targetNodeId,
           interpolation: track.interpolation,
           keyframeCount: track.keyframes.length,
-          edgeKeyframes: edgeKeyframesOf(track),
+          edgeKeyframes: edgeKeyframesOf(
+            track,
+            options?.animationId === undefined ? 2 : resolved.keyframesPerTrack,
+          ),
         })),
       }) as JsonValue,
   );
@@ -296,24 +316,37 @@ export function animationContextRecipe(
   };
 }
 
-/** First and last keyframe of a track (the compact targeted detail). */
-function edgeKeyframesOf(track: AnimationDescriptor["tracks"][number]): {
+/** Targeted keyframe detail of a track (plan S13.2): up to `count`
+ * keyframes spread across the track (leading and trailing halves, no
+ * duplicates); the compact first/last pair when `count` is 2. */
+function edgeKeyframesOf(
+  track: AnimationDescriptor["tracks"][number],
+  count: number,
+): {
   readonly keyframeId: string;
   readonly time: number;
   readonly channel: string;
   readonly value: readonly number[];
 }[] {
   if (track.keyframes.length === 0) return [];
-  const first = track.keyframes[0];
-  const last = track.keyframes[track.keyframes.length - 1];
-  if (first === undefined || last === undefined) return [];
   const entry = (keyframe: (typeof track.keyframes)[number]) => ({
     keyframeId: keyframe.keyframeId,
     time: keyframe.time,
     channel: keyframe.property.channel,
     value: [...keyframe.property.value],
   });
-  return first === last ? [entry(first)] : [entry(first), entry(last)];
+  const all = track.keyframes;
+  if (all.length <= count) return all.map(entry);
+  const selected = new Set<number>();
+  const leading = Math.ceil(count / 2);
+  const trailing = count - leading;
+  for (let index = 0; index < leading && index < all.length; index += 1) {
+    selected.add(index);
+  }
+  for (let offset = 1; offset <= trailing; offset += 1) {
+    selected.add(all.length - offset);
+  }
+  return all.filter((_keyframe, index) => selected.has(index)).map(entry);
 }
 
 /** One bounded context block appended to the agent system prompt. */
@@ -337,14 +370,17 @@ export function composeAgentContextBlock(
   } = {},
 ): AgentContextBlock {
   const parts: string[] = [];
+  let truncated = false;
   if (options.rigging === true) {
     const recipe = rigContextRecipe(store, options.recipe);
+    truncated = recipe.truncated || truncated;
     parts.push(
       `Rig context (${String(recipe.nodes.length)} nodes, ${recipe.truncated ? "truncated" : "complete"}):\n${JSON.stringify(recipe)}`,
     );
   }
   if (options.animation === true) {
     const recipe = animationContextRecipe(store, options.recipe);
+    truncated = recipe.truncated || truncated;
     parts.push(
       `Animation context (${String(recipe.total)} clips, page ${String(recipe.page)}/${recipe.hasMore ? "more" : "all"}):\n${JSON.stringify(recipe)}`,
     );
@@ -354,5 +390,5 @@ export function composeAgentContextBlock(
     "Bounded context recipes of the CURRENT document state (read-only, authoritative):",
     ...parts,
   ].join("\n");
-  return { text, truncated: text.length > 0 };
+  return { text, truncated };
 }

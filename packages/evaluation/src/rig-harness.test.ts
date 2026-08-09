@@ -52,7 +52,7 @@ const PINNED_HASHES: Readonly<
   },
   "wheel-spin": {
     input: "8483465f3e6352d36e88c20e8fd5f7c4710c000037482c873b522cbbbfe3dfc2",
-    output: "2146c40b1ef8255afd0e4a9c16fd62dc560cb8b0b73d34638eace8b80781e825",
+    output: "fb35a4192b7ac276163fd7a7aa62980f047fc5735980ed5abb3c6ae10b482d49",
   },
   "wings-flap": {
     input: "c2aaada854108e64340e129425253ec2cb44900d2cec037d7e3ea91e633a2be1",
@@ -71,8 +71,8 @@ const PINNED_HASHES: Readonly<
     output: "cc784ecd29d3ef43423e7faa7ed4c8ac4138fa7d98679acb413edc9707e4280c",
   },
   "wheel-slower": {
-    input: "ede8743273112c634aad2dede8d5cdae0823141e898c2bd227a0d0a56c2cda9e",
-    output: "6cdab5045461cb5b8f49e8770a79ac51ef172adfe5795da25e8c079e4101e318",
+    input: "c1c6d6822dbb8d69f2d4426933710d1641675c4b9a930a06ac866af4041254ab",
+    output: "cd913036d776e5e8dace2ec12856ce23f4774409f4aac480e3505c699fb063e1",
   },
   "wings-one": {
     input: "55ae9cdca95e5749fc5c9567dbc73b580c57a94652cd8bf329f8989521bfb7d8",
@@ -83,8 +83,8 @@ const PINNED_HASHES: Readonly<
     output: "9466f2834c9293f66921a77fb4149fd2368cd8acc52fcc5004b6e0443bda5dc2",
   },
   "wheel-faster": {
-    input: "ede8743273112c634aad2dede8d5cdae0823141e898c2bd227a0d0a56c2cda9e",
-    output: "8c92294ffc7d02e275772cce8755840dfa19bdc8e0da9de9566932e3c3c3b4bd",
+    input: "c1c6d6822dbb8d69f2d4426933710d1641675c4b9a930a06ac866af4041254ab",
+    output: "1a1b99b4c688a89f12dcebdbead49833ce340f8d23724a3ad324727dc9531643",
   },
 };
 

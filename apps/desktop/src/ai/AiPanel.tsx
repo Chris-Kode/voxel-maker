@@ -235,7 +235,7 @@ export function AiPanel({
               aria-label="Review proposal"
             >
               <h3>Proposal ready for review</h3>
-              <AiDiffSummary state={state} />
+              <AiDiffSummary controller={controller} state={state} />
               {state.diff !== undefined &&
               state.diff.voxelEstimate >= LARGE_PROPOSAL_VOXELS ? (
                 <p className="ai-review-warning" role="alert">
@@ -286,7 +286,7 @@ export function AiPanel({
                 revision {String(state.liveRevision ?? 0)}. It was never
                 silently rebased — choose how to continue:
               </p>
-              <AiDiffSummary state={state} />
+              <AiDiffSummary controller={controller} state={state} />
               <div className="ai-actions">
                 <button
                   type="button"
@@ -400,10 +400,113 @@ export function AiPanel({
   );
 }
 
+/**
+ * Staged overlay clip player (plan S13.5, ticket #36): plays one staged
+ * clip through the controller's read-only sampler before Apply. Runtime
+ * projection only — no commands, no revisions, no live mutation.
+ */
+function StagedClipPlayer({
+  controller,
+  clips,
+}: {
+  readonly controller: AiController;
+  readonly clips: readonly {
+    readonly animationId: string;
+    readonly name: string;
+    readonly duration: number;
+  }[];
+}): React.JSX.Element | null {
+  const [selectedId, setSelectedId] = useState(clips[0]?.animationId ?? "");
+  const [playing, setPlaying] = useState(false);
+  const [sample, setSample] = useState<
+    | { readonly time: number; readonly movedNodes: readonly string[] }
+    | undefined
+  >(undefined);
+  const timerRef = useRef<number | null>(null);
+  const startedAtRef = useRef<number>(0);
+
+  const selected =
+    clips.find((clip) => clip.animationId === selectedId) ?? clips[0];
+  const activeId = selected?.animationId ?? "";
+  const duration = selected?.duration ?? 0;
+
+  const stop = (): void => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setPlaying(false);
+    setSample(undefined);
+  };
+
+  useEffect(
+    () => () => {
+      stop();
+    },
+    [],
+  );
+
+  const play = (): void => {
+    if (activeId.length === 0 || duration <= 0) return;
+    stop();
+    setPlaying(true);
+    startedAtRef.current = performance.now();
+    const tick = (): void => {
+      const elapsed = (performance.now() - startedAtRef.current) / 1000;
+      const time = elapsed % duration;
+      setSample(controller.sampleStagedClip(activeId, time) ?? undefined);
+    };
+    tick();
+    timerRef.current = window.setInterval(tick, 120);
+  };
+
+  if (clips.length === 0) return null;
+  return (
+    <div className="ai-clip-player">
+      <p>Staged overlay clip playback (pre-Apply, runtime-only):</p>
+      <label>
+        Clip{" "}
+        <select
+          value={activeId}
+          onChange={(event) => {
+            setSelectedId(event.target.value);
+            stop();
+          }}
+        >
+          {clips.map((clip) => (
+            <option key={clip.animationId} value={clip.animationId}>
+              {clip.name}
+            </option>
+          ))}
+        </select>
+      </label>{" "}
+      {playing ? (
+        <button type="button" onClick={stop}>
+          Stop
+        </button>
+      ) : (
+        <button type="button" onClick={play}>
+          Play overlay clip
+        </button>
+      )}
+      {sample !== undefined ? (
+        <p>
+          t={sample.time.toFixed(2)}s ·{" "}
+          {sample.movedNodes.length === 0
+            ? "no nodes moving"
+            : `${String(sample.movedNodes.length)} node${sample.movedNodes.length === 1 ? "" : "s"} moving`}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Bounded diff summary of the staged overlay (plan S11.11). */
 function AiDiffSummary({
+  controller,
   state,
 }: {
+  readonly controller: AiController;
   readonly state: AiControllerState;
 }): React.JSX.Element {
   const diff = state.diff;
@@ -440,7 +543,10 @@ function AiDiffSummary({
       </p>
       {state.stagedClips.length > 0 ? (
         <div className="ai-staged-clips">
-          <p>Staged overlay clips (playable before Apply):</p>
+          <p>
+            {String(state.stagedClips.length)} staged overlay clip
+            {state.stagedClips.length === 1 ? "" : "s"}:
+          </p>
           <ul>
             {state.stagedClips.map((clip) => (
               <li key={clip.animationId}>
@@ -452,6 +558,7 @@ function AiDiffSummary({
               </li>
             ))}
           </ul>
+          <StagedClipPlayer controller={controller} clips={state.stagedClips} />
         </div>
       ) : null}
     </div>

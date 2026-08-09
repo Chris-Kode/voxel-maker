@@ -11,8 +11,12 @@ import type { NodeId } from "@voxel-maker/shared";
  * the staged overlay: no commands, no revisions, no live mutation.
  */
 
-/** The two fixed sample times of one playback evidence pass. */
-export const PLAYBACK_SAMPLE_TIMES = [0, 0.5] as const;
+/** The two fixed sample fractions of one playback evidence pass: 25% and
+ * 75% of the clip duration. Fractions (not absolute times) keep the
+ * evidence independent of a clip's loop point — sampling exactly at the
+ * loop endpoint would compare an identity rotation against float residue
+ * instead of actual motion. */
+export const PLAYBACK_SAMPLE_FRACTIONS = [0.25, 0.75] as const;
 
 /** One playback evidence pass over a staged clip. */
 export interface PlaybackEvidence {
@@ -29,16 +33,16 @@ export function playbackEvidence(
 ): PlaybackEvidence {
   const document = store.getDocument();
   const duration = clip.duration;
-  const [timeA, timeB] = PLAYBACK_SAMPLE_TIMES;
+  const [fractionA, fractionB] = PLAYBACK_SAMPLE_FRACTIONS;
   const sampleA = evaluateAnimationRuntime(
     document,
     clip,
-    Math.min(timeA, duration),
+    Math.min(fractionA * duration, duration),
   );
   const sampleB = evaluateAnimationRuntime(
     document,
     clip,
-    Math.min(timeB * duration, duration),
+    Math.min(fractionB * duration, duration),
   );
   const movedNodes: NodeId[] = [];
   const worldA = sampleA.world;

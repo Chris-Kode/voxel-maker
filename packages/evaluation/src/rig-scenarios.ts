@@ -16,9 +16,9 @@ import {
 } from "./rig-fixtures.js";
 import { playbackEvidence } from "./playback.js";
 import type {
-  GeometryScenario,
   PlaybackSignal,
   PreviewSignal,
+  ScenarioShape,
 } from "./scenarios.js";
 
 /**
@@ -46,9 +46,7 @@ export type RigScenarioId =
   | "wheel-faster";
 
 /** A fixed rig/animation evaluation scenario. */
-export type RigScenario = Omit<GeometryScenario, "id"> & {
-  readonly id: RigScenarioId;
-};
+export type RigScenario = ScenarioShape & { readonly id: RigScenarioId };
 
 /** The empty allowed-change region: rig scenarios must change zero voxels. */
 const NO_VOXELS = {
@@ -467,6 +465,33 @@ const WHEEL_SPIN: RigScenario = {
           RIG_CLIP_IDS.wheelSpin,
           "track:eval:wheel-spin:wheel",
           "keyframe:eval:wheel-spin:1",
+          0.5,
+          [0, 1, 0],
+          Math.PI / 2,
+        ),
+        setKeyframe(
+          "call_k2",
+          RIG_CLIP_IDS.wheelSpin,
+          "track:eval:wheel-spin:wheel",
+          "keyframe:eval:wheel-spin:2",
+          1,
+          [0, 1, 0],
+          Math.PI,
+        ),
+        setKeyframe(
+          "call_k3",
+          RIG_CLIP_IDS.wheelSpin,
+          "track:eval:wheel-spin:wheel",
+          "keyframe:eval:wheel-spin:3",
+          1.5,
+          [0, 1, 0],
+          (3 * Math.PI) / 2,
+        ),
+        setKeyframe(
+          "call_k4",
+          RIG_CLIP_IDS.wheelSpin,
+          "track:eval:wheel-spin:wheel",
+          "keyframe:eval:wheel-spin:4",
           2,
           [0, 1, 0],
           2 * Math.PI,
@@ -480,8 +505,8 @@ const WHEEL_SPIN: RigScenario = {
     { text: "The proposal is ready for approval." },
   ],
   goldenRounds: 4,
-  goldenToolCalls: 8,
-  goldenCommands: 6,
+  goldenToolCalls: 11,
+  goldenCommands: 9,
   scanRegion: WHEEL_SCAN,
   scanVolumes: fixtureScanRegions("wheel"),
   allowedChangedRegion: NO_VOXELS,
@@ -510,11 +535,17 @@ const WHEEL_SPIN: RigScenario = {
           track !== undefined &&
           track.targetNodeId === wheel.wheel &&
           track.interpolation === "linear" &&
-          track.keyframes.length === 2 &&
+          track.keyframes.length === 5 &&
           track.keyframes.at(0)?.time === 0 &&
-          track.keyframes.at(1)?.time === 2 &&
+          track.keyframes.at(1)?.time === 0.5 &&
+          track.keyframes.at(4)?.time === 2 &&
           quatCloseTo(
             track.keyframes.at(1)?.property.value ?? [],
+            [0, 1, 0],
+            Math.PI / 2,
+          ) &&
+          quatCloseTo(
+            track.keyframes.at(4)?.property.value ?? [],
             [0, 1, 0],
             2 * Math.PI,
           )
@@ -1122,11 +1153,12 @@ const WHEEL_SLOWER: RigScenario = {
           clip !== undefined &&
           clip.loop === "loop" &&
           clip.tracks.length === 1 &&
-          track?.keyframes.length === 2 &&
+          track?.keyframes.length === 5 &&
           track.keyframes.at(0)?.time === 0 &&
-          track.keyframes.at(1)?.time === 2 &&
+          track.keyframes.at(1)?.time === 0.5 &&
+          track.keyframes.at(4)?.time === 2 &&
           quatCloseTo(
-            track.keyframes.at(1)?.property.value ?? [],
+            track.keyframes.at(4)?.property.value ?? [],
             [0, 1, 0],
             2 * Math.PI,
           )
@@ -1297,15 +1329,45 @@ const WHEEL_FASTER: RigScenario = {
   goldenTrace: [
     { text: "I will inspect the rigged wheel first.", toolCalls: [summary()] },
     {
-      text: "Moving the loop-point keyframe to 1s, then halving the duration.",
+      text: "Retiming the spin keyframes to one second, then halving the duration.",
       toolCalls: [
         {
-          id: "call_retime",
+          id: "call_retime_1",
           name: "moveKeyframe",
           arguments: {
             animationId: RIG_CLIP_IDS.wheelSpin,
             trackId: "track:eval:wheel-spin:wheel",
             keyframeId: "keyframe:eval:wheel-spin:1",
+            time: 0.25,
+          },
+        },
+        {
+          id: "call_retime_2",
+          name: "moveKeyframe",
+          arguments: {
+            animationId: RIG_CLIP_IDS.wheelSpin,
+            trackId: "track:eval:wheel-spin:wheel",
+            keyframeId: "keyframe:eval:wheel-spin:2",
+            time: 0.5,
+          },
+        },
+        {
+          id: "call_retime_3",
+          name: "moveKeyframe",
+          arguments: {
+            animationId: RIG_CLIP_IDS.wheelSpin,
+            trackId: "track:eval:wheel-spin:wheel",
+            keyframeId: "keyframe:eval:wheel-spin:3",
+            time: 0.75,
+          },
+        },
+        {
+          id: "call_retime_4",
+          name: "moveKeyframe",
+          arguments: {
+            animationId: RIG_CLIP_IDS.wheelSpin,
+            trackId: "track:eval:wheel-spin:wheel",
+            keyframeId: "keyframe:eval:wheel-spin:4",
             time: 1,
           },
         },
@@ -1319,8 +1381,8 @@ const WHEEL_FASTER: RigScenario = {
     { text: "The proposal is ready for approval." },
   ],
   goldenRounds: 4,
-  goldenToolCalls: 4,
-  goldenCommands: 2,
+  goldenToolCalls: 7,
+  goldenCommands: 5,
   scanRegion: WHEEL_SCAN,
   scanVolumes: fixtureScanRegions("wheel"),
   allowedChangedRegion: NO_VOXELS,
@@ -1335,7 +1397,7 @@ const WHEEL_FASTER: RigScenario = {
       check: (store) => clipOf(store, RIG_CLIP_IDS.wheelSpin)?.duration === 1,
     },
     {
-      name: "the loop point moved to 1s with an unchanged full revolution",
+      name: "the spin keyframes retimed to one second, full revolution kept",
       check: (store) => {
         const clip = clipOf(store, RIG_CLIP_IDS.wheelSpin);
         const track = trackOf(
@@ -1346,11 +1408,14 @@ const WHEEL_FASTER: RigScenario = {
           clip !== undefined &&
           clip.loop === "loop" &&
           clip.tracks.length === 1 &&
-          track?.keyframes.length === 2 &&
+          track?.keyframes.length === 5 &&
           track.keyframes.at(0)?.time === 0 &&
-          track.keyframes[1]?.time === 1 &&
+          track.keyframes.at(1)?.time === 0.25 &&
+          track.keyframes.at(2)?.time === 0.5 &&
+          track.keyframes.at(3)?.time === 0.75 &&
+          track.keyframes.at(4)?.time === 1 &&
           quatCloseTo(
-            track.keyframes.at(1)?.property.value ?? [],
+            track.keyframes.at(4)?.property.value ?? [],
             [0, 1, 0],
             2 * Math.PI,
           )

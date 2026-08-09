@@ -83,6 +83,19 @@ describe("animation context recipe (plan S13.2)", () => {
     expect(page.total).toBe(1);
     expect(page.hasMore).toBe(false);
   });
+
+  it("targeted keyframe detail pages a selected clip's keyframes", () => {
+    // The fixture track has exactly 2 keyframes; a targeted request with
+    // a larger budget still reports every keyframe (bounded by the cap).
+    const targeted = animationContextRecipe(store, {
+      animationId: FIXTURE_IDS.animationWave,
+      keyframesPerTrack: 8,
+    });
+    expect(targeted.total).toBe(1);
+    const track = targeted.clips[0]?.tracks[0];
+    expect(track?.edgeKeyframes.map((entry) => entry.time)).toEqual([0, 1]);
+    expect(track?.edgeKeyframes[0]?.value).toEqual([0, 0, 0, 1]);
+  });
 });
 
 describe("composeAgentContextBlock", () => {
@@ -97,6 +110,14 @@ describe("composeAgentContextBlock", () => {
     expect(block.text).toContain('"edgeKeyframes"');
     // No voxel dumps: the block must not contain voxel coordinate arrays.
     expect(block.text).not.toContain('"voxels"');
+    // The block-level truncated flag reflects recipe truncation, not the
+    // mere presence of text.
+    expect(block.truncated).toBe(false);
+    const tiny = composeAgentContextBlock(store, {
+      rigging: true,
+      recipe: { maxResponseBytes: 64 },
+    });
+    expect(tiny.truncated).toBe(true);
   });
 
   it("returns an empty block when no recipe is requested", () => {

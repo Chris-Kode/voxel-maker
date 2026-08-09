@@ -15,7 +15,17 @@ import {
   type DesktopComposition,
   type FilePicker,
 } from "../composition.js";
-import { autoConfirmPrompts } from "../test-prompts.js";
+import {
+  autoConfirmPrompts,
+  createScriptedPrompts,
+  requireResult,
+} from "../test-prompts.js";
+import { createMemoryRecentProjects } from "../recent-projects.js";
+import {
+  createSaveCoordinator,
+  createVxlProjectEncoder,
+} from "@voxel-maker/storage";
+import { createDocumentStore } from "@voxel-maker/document";
 import {
   createConsent,
   DeterministicProvider,
@@ -172,7 +182,7 @@ const RIG_SCRIPT: readonly DeterministicStep[] = [
           keyframeId: "keyframe:ai:test:1",
           time: 2,
           channel: "rotation",
-          value: [0, 0, 0, -1],
+          value: [0, Math.SQRT1_2, 0, Math.SQRT1_2],
         },
       },
     ],
@@ -317,6 +327,106 @@ describe("ai controller: overlay clip playback (plan S13.5)", () => {
     expect(h.composition.ai.state.stagedClips).toEqual([]);
     expect(h.composition.ai.overlayClip("anim:ai:test")).toBeUndefined();
     h.dispose();
+  });
+
+  it("sampleStagedClip plays the staged clip without live mutation", async () => {
+    const h = createHarness({ script: RIG_SCRIPT });
+    await h.composition.ai.refreshStatus();
+    await h.composition.ai.run("Rig the child and animate it.");
+    expect(h.composition.ai.state.phase).toBe("approve");
+    const sample = h.composition.ai.sampleStagedClip("anim:ai:test", 0.5);
+    expect(sample?.time).toBe(0.5);
+    expect(sample?.movedNodes).toContain("node:ai:child");
+    // The live document still has no clip; playback never touched it.
+    expect(
+      h.composition.session.current?.store.getDocument().animations[
+        "anim:ai:test" as never
+      ],
+    ).toBeUndefined();
+    expect(h.composition.session.current?.store.revision).toBe(0);
+    h.dispose();
+  });
+});
+
+describe("ai controller: save and reload retain rig/clip guarantees (AC)", () => {
+  it("an AI-applied rig and clip survive save, close, and reload", async () => {
+    const storage = new MemoryProjectStorage();
+    // Seed a project file so the file service binds the session to it
+    // (the save path requires a file-bound session).
+    const seedHandle = createDocumentStore({ document: fixtureDocument() });
+    const seedCoordinator = createSaveCoordinator({
+      store: seedHandle.store,
+      port: storage,
+      encoder: createVxlProjectEncoder(),
+    });
+    await seedCoordinator.save("ai-rig.vxl");
+    seedCoordinator.dispose();
+
+    const credentials = new MemoryCredentialStore();
+    const consent = new MemoryConsentStore();
+    const clock = new VirtualClock();
+    void credentials.save(
+      KEYCHAIN_SERVICE,
+      "deterministic",
+      new Secret("test-key"),
+    );
+    void consent.save(
+      createConsent({
+        providerId: "deterministic",
+        model: "deterministic-model",
+        categories: DISCLOSURE_CATEGORIES,
+        consentedAt: 0,
+        expiresAt: 1_000_000_000_000,
+        clock,
+      }),
+    );
+    const composition = createDesktopComposition({
+      storage,
+      picker: {
+        pickOpenPath: () => Promise.resolve("ai-rig.vxl"),
+        pickSavePath: (suggested) => Promise.resolve(suggested),
+      },
+      prompts: createScriptedPrompts(true),
+      recent: createMemoryRecentProjects(),
+      ai: {
+        provider: new DeterministicProvider({
+          script: RIG_SCRIPT,
+          clock,
+          sleep: clock.sleep,
+        }),
+        credentials,
+        consent,
+        clock,
+        sleep: clock.sleep,
+      },
+    });
+    const opened = requireResult(await composition.fileService.openProject());
+    expect(opened.ok).toBe(true);
+    await composition.ai.refreshStatus();
+    await composition.ai.run("Rig the child and animate it.");
+    expect(composition.ai.state.phase).toBe("approve");
+    composition.ai.apply();
+    expect(composition.ai.state.phase).toBe("idle");
+
+    // Save the applied proposal, close, and reload from storage.
+    const saved = requireResult(await composition.fileService.saveProject());
+    expect(saved.ok).toBe(true);
+    const closed = requireResult(await composition.fileService.closeProject());
+    expect(closed.ok).toBe(true);
+    expect(composition.session.current).toBeUndefined();
+    const reopened = requireResult(await composition.fileService.openProject());
+    expect(reopened.ok).toBe(true);
+    const reloaded = composition.session.current;
+    expect(reloaded).toBeDefined();
+    // The rig and the clip survive the native save/reload roundtrip.
+    expect(
+      reloaded?.store.getDocument().animations["anim:ai:test" as never],
+    ).toBeDefined();
+    const node = reloaded?.store.getDocument().nodes["node:ai:child" as never];
+    expect(
+      (node?.components ?? []).some((component) => component.kind === "pivot"),
+    ).toBe(true);
+    composition.dispose();
   });
 });
 

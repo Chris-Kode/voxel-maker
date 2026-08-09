@@ -82,9 +82,9 @@ export interface PlaybackSignal {
   ) => boolean;
 }
 
-/** One fixed evaluation scenario. */
-export interface GeometryScenario {
-  readonly id: ScenarioId;
+/** All fields of one fixed evaluation scenario (shared by both suites). */
+export interface ScenarioShape {
+  readonly id: string;
   readonly name: string;
   readonly description: string;
   /**
@@ -151,6 +151,9 @@ export interface GeometryScenario {
   /** Overlay-clip playback signals evaluated before Apply. */
   readonly playbackSignals?: readonly PlaybackSignal[];
 }
+
+/** One fixed geometry evaluation scenario (ticket #35). */
+export type GeometryScenario = ScenarioShape & { readonly id: ScenarioId };
 
 /** JSON-safe region value for tool-call arguments. */
 const box = (

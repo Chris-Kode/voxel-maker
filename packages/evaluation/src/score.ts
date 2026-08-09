@@ -1,7 +1,7 @@
 import type { AgentRunReason } from "@voxel-maker/agent";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import type { MaterialId } from "@voxel-maker/shared";
-import type { GeometryScenario } from "./scenarios.js";
+import type { ScenarioShape } from "./scenarios.js";
 import { EVAL_IDS, regionCoordinates, voxelKey } from "./fixtures.js";
 import {
   changedAnimations,
@@ -144,7 +144,7 @@ export interface GeometryEvalScores {
 
 /** Inputs every score dimension needs. */
 export interface ScoreInputs {
-  readonly scenario: GeometryScenario;
+  readonly scenario: ScenarioShape;
   readonly runOk: boolean;
   readonly runReason: AgentRunReason | undefined;
   readonly applyOk: boolean;
@@ -182,7 +182,7 @@ function scoreOf(passed: number, total: number): number {
 
 /** Task completion: fraction of semantic checks that pass. */
 function scoreTaskCompletion(
-  scenario: GeometryScenario,
+  scenario: ScenarioShape,
   after: DocumentStoreRead,
 ): TaskCompletionScore {
   const failures: string[] = [];
@@ -209,18 +209,21 @@ function scanKey(volumeId: string, coordinate: readonly number[]): string {
 
 /** Unrelated changes: voxel, material, node, and clip diffs outside allowances. */
 function scoreUnrelatedChanges(
-  scenario: GeometryScenario,
+  scenario: ScenarioShape,
   before: DocumentStoreRead,
   after: DocumentStoreRead,
 ): UnrelatedChangesScore {
   const scans = scenario.scanVolumes ?? [
     { volumeId: EVAL_IDS.volumeMain, region: scenario.scanRegion },
   ];
-  const allowed = new Set(
-    regionCoordinates(scenario.allowedChangedRegion).map((coordinate) =>
-      scanKey(EVAL_IDS.volumeMain, coordinate),
-    ),
-  );
+  // Allowances are keyed per scan volume so multi-volume scenarios (rig
+  // suite, ticket #36) can never collide coordinates across volumes.
+  const allowed = new Set<string>();
+  for (const scan of scans) {
+    for (const coordinate of regionCoordinates(scenario.allowedChangedRegion)) {
+      allowed.add(scanKey(scan.volumeId, coordinate));
+    }
+  }
   const expected = new Set<string>();
   for (const region of scenario.expectedShape) {
     for (const coordinate of regionCoordinates(region)) {
@@ -321,7 +324,7 @@ function ratioOf(golden: number, actual: number): number {
 
 /** Efficiency: tool-call, round, and command counts vs the golden trace. */
 function scoreEfficiency(
-  scenario: GeometryScenario,
+  scenario: ScenarioShape,
   rounds: number,
   toolCalls: number,
   commands: number,
@@ -456,7 +459,7 @@ function usedMaterialsExist(
 
 /** Rendered previews: the scenario's signals over before/after evidence. */
 function scoreRenderedPreviews(
-  scenario: GeometryScenario,
+  scenario: ScenarioShape,
   beforePreviews: PreviewEvidenceSet,
   afterPreviews: PreviewEvidenceSet,
 ): RenderedPreviewsScore {
@@ -480,7 +483,7 @@ function scoreRenderedPreviews(
 /** Computes every scoring dimension for one scenario run. */
 /** Overlay-clip playback: fraction of playback signals that pass. */
 function scoreOverlayPlayback(
-  scenario: GeometryScenario,
+  scenario: ScenarioShape,
   playback: ScoreInputs["playback"],
 ): OverlayPlaybackScore {
   if (playback === undefined) {

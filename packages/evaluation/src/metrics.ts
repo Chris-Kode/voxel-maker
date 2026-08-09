@@ -279,7 +279,6 @@ export function changedMaterials(
   return changes;
 }
 
-/** Changed node ids between two documents (any canonical difference). */
 /**
  * Exact changed-animation (clip) id set between two documents: ids whose
  * descriptor differs by deep equality (ticket #36 follow-up evidence).

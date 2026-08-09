@@ -374,6 +374,24 @@ export function evalClipOf(kind: RigFixtureKind): AnimationDescriptor {
               rotationKeyframe("keyframe:eval:wheel-spin:0", 0, [0, 1, 0], 0),
               rotationKeyframe(
                 "keyframe:eval:wheel-spin:1",
+                0.5,
+                [0, 1, 0],
+                Math.PI / 2,
+              ),
+              rotationKeyframe(
+                "keyframe:eval:wheel-spin:2",
+                1,
+                [0, 1, 0],
+                Math.PI,
+              ),
+              rotationKeyframe(
+                "keyframe:eval:wheel-spin:3",
+                1.5,
+                [0, 1, 0],
+                (3 * Math.PI) / 2,
+              ),
+              rotationKeyframe(
+                "keyframe:eval:wheel-spin:4",
                 2,
                 [0, 1, 0],
                 2 * Math.PI,
