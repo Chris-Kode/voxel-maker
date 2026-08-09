@@ -100,8 +100,12 @@ function vecOption(
 }
 
 /** Reads a validated region option value (never throws). */
-function regionOf(options: Readonly<Record<string, unknown>>): IntAabb | undefined {
-  const region = options.region as Readonly<Record<string, unknown>> | undefined;
+function regionOf(
+  options: Readonly<Record<string, unknown>>,
+): IntAabb | undefined {
+  const region = options.region as
+    | Readonly<Record<string, unknown>>
+    | undefined;
   if (region === undefined) return undefined;
   const min = vecOption(region, "min");
   const max = vecOption(region, "max");
@@ -254,10 +258,14 @@ function validateBoundedRegion(region: unknown, field: string): void {
     }
   }
   if (regionVolume(mn, mx) > MAX_SCAN_VOLUME) {
-    checkError(INVALID_CHECK_OPTIONS_CODE, `${field} region volume out of range`, {
-      field,
-      volume: regionVolume(mn, mx),
-    });
+    checkError(
+      INVALID_CHECK_OPTIONS_CODE,
+      `${field} region volume out of range`,
+      {
+        field,
+        volume: regionVolume(mn, mx),
+      },
+    );
   }
 }
 
@@ -379,7 +387,13 @@ export const STRUCTURAL_CHECKS: readonly StructuralCheckDefinition[] =
         const mismatches =
           region === undefined
             ? -1
-            : countSymmetryMismatches(store, context.volumeId, axis, plane, region);
+            : countSymmetryMismatches(
+                store,
+                context.volumeId,
+                axis,
+                plane,
+                region,
+              );
         return {
           name: "symmetric-along-axis",
           passed: mismatches === 0,
@@ -408,20 +422,29 @@ export function structuralCheckByName(
 export function validateStructuralCheck(name: string, options: unknown): void {
   const check = structuralCheckByName(name);
   if (check === undefined) {
-    checkError(UNKNOWN_STRUCTURAL_CHECK_CODE, `Unknown structural check: ${name}`, {
-      check: name,
-    });
+    checkError(
+      UNKNOWN_STRUCTURAL_CHECK_CODE,
+      `Unknown structural check: ${name}`,
+      {
+        check: name,
+      },
+    );
   }
   const errors = schemaErrors(check.optionSchema, options);
   if (errors.length > 0) {
-    checkError(INVALID_CHECK_OPTIONS_CODE, `Invalid options for check ${name}`, {
-      check: name,
-      errors: [...errors],
-    });
+    checkError(
+      INVALID_CHECK_OPTIONS_CODE,
+      `Invalid options for check ${name}`,
+      {
+        check: name,
+        errors: [...errors],
+      },
+    );
   }
   const record = options as Readonly<Record<string, unknown>>;
   for (const field of ["region", "scanRegion"] as const) {
-    if (record[field] !== undefined) validateBoundedRegion(record[field], field);
+    if (record[field] !== undefined)
+      validateBoundedRegion(record[field], field);
   }
 }
 

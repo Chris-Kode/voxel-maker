@@ -1,7 +1,4 @@
-import type {
-  BaselineView,
-  SkillVisualBaseline,
-} from "./manifest.js";
+import type { BaselineView, SkillVisualBaseline } from "./manifest.js";
 
 /**
  * Visual-baseline evaluation (plan S14.10, ticket #38): each creation
@@ -63,8 +60,6 @@ export function evaluateVisualBaselines(
 }
 
 /** True when every visual baseline of the skill passed. */
-export function baselinesPassed(
-  results: readonly BaselineResult[],
-): boolean {
+export function baselinesPassed(results: readonly BaselineResult[]): boolean {
   return results.every((result) => result.passed);
 }

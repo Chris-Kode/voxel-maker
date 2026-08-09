@@ -241,7 +241,11 @@ export function validateSkillManifest(
   environment: SkillEnvironment,
 ): SkillManifest {
   if (!isRecord(value)) {
-    invalid(INVALID_SKILL_MANIFEST_CODE, "Skill manifest must be an object", {});
+    invalid(
+      INVALID_SKILL_MANIFEST_CODE,
+      "Skill manifest must be an object",
+      {},
+    );
   }
 
   const manifestVersion = value.manifestVersion;
@@ -264,7 +268,11 @@ export function validateSkillManifest(
     });
   }
 
-  const description = boundedString(value.description, 1, MAX_DESCRIPTION_LENGTH);
+  const description = boundedString(
+    value.description,
+    1,
+    MAX_DESCRIPTION_LENGTH,
+  );
   if (description === undefined) {
     invalid(SKILL_NAME_CODE, "Invalid skill description", {
       description: value.description,
@@ -465,7 +473,11 @@ function validateEvaluation(
       });
     }
     checkNames.add(checkName);
-    const checkDescription = boundedString(entry.description, 1, MAX_TEXT_LENGTH);
+    const checkDescription = boundedString(
+      entry.description,
+      1,
+      MAX_TEXT_LENGTH,
+    );
     if (checkDescription === undefined) {
       invalid(SKILL_EVALUATION_CODE, "Invalid check description", {
         index,
@@ -473,8 +485,19 @@ function validateEvaluation(
       });
     }
     // Resolves the check against the structural-check registry and
-    // validates its options (unknown checks and bad options fail here).
-    validateStructuralCheck(checkName, entry.options);
+    // validates its options; unknown checks and bad options surface as
+    // the manifest's evaluation error with the check-level code in the
+    // context.
+    try {
+      validateStructuralCheck(checkName, entry.options);
+    } catch (error) {
+      const cause =
+        error instanceof WorkspaceError ? error.code : "UNKNOWN_ERROR";
+      invalid(SKILL_EVALUATION_CODE, `Invalid structural check ${checkName}`, {
+        check: checkName,
+        cause,
+      });
+    }
     return Object.freeze({
       name: checkName,
       description: checkDescription,
@@ -545,8 +568,12 @@ function validateEvaluation(
   return Object.freeze({
     scenarioId,
     fixedPrompt,
-    structuralChecks: Object.freeze(parsedChecks) as readonly SkillStructuralCheck[],
-    visualBaselines: Object.freeze(parsedBaselines) as readonly SkillVisualBaseline[],
+    structuralChecks: Object.freeze(
+      parsedChecks,
+    ) as readonly SkillStructuralCheck[],
+    visualBaselines: Object.freeze(
+      parsedBaselines,
+    ) as readonly SkillVisualBaseline[],
     efficiency,
   });
 }
@@ -554,7 +581,10 @@ function validateEvaluation(
 function ratioBound(value: unknown, field: string): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    invalid(SKILL_EVALUATION_CODE, `Invalid baseline ${field}`, { field, value });
+    invalid(SKILL_EVALUATION_CODE, `Invalid baseline ${field}`, {
+      field,
+      value,
+    });
   }
   if (value < 0 || value > 1) {
     invalid(SKILL_EVALUATION_CODE, `Baseline ${field} out of range`, {

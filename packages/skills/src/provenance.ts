@@ -16,7 +16,7 @@ import { digestHex } from "./hash.js";
 /** Label prefix of skill provenance (`skill:<name>@<version>`). */
 export const SKILL_PROVENANCE_PREFIX = "skill";
 
-const LABEL_PATTERN = /^skill:([a-z0-9-]+)@([0-9]+\.[0-9]+\.[0-9]+)$/u;
+const LABEL_PATTERN = /^skill:([a-z0-9.-]+)@([0-9]+\.[0-9]+\.[0-9]+)$/u;
 
 /** The provenance label of one skill version. */
 export function provenanceLabel(name: string, version: string): string {
@@ -64,7 +64,6 @@ export function applyWithProvenance(
     ...options,
     label: options.label ?? provenanceLabel(name, version),
     correlationId:
-      options.correlationId ??
-      provenanceCorrelationId(name, version, seed),
+      options.correlationId ?? provenanceCorrelationId(name, version, seed),
   });
 }
