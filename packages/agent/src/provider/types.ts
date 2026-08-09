@@ -2,6 +2,7 @@ import type { JsonValue } from "@voxel-maker/shared";
 import type { ToolContract, ToolError } from "../contract.js";
 import { schemaErrorDetails } from "../schema.js";
 import { UNKNOWN_TOOL_CODE } from "../registry.js";
+import type { StandardViewId } from "../vision/evidence.js";
 
 /**
  * Provider-neutral chat contract (plan S12.2, ticket #33): normalized
@@ -103,7 +104,7 @@ export interface ChatImage {
   /** Bounded PNG bytes (validated at capture). */
   readonly bytes: Uint8Array;
   /** The standard view this image shows. */
-  readonly view: string;
+  readonly view: StandardViewId;
   readonly width: number;
   readonly height: number;
   /** Store revision the image was rendered from. */
@@ -317,21 +318,19 @@ export function estimateTextTokens(text: string): number {
 }
 
 /**
- * Deterministic vision token estimate (plan S15.3, ticket #40): counts
- * one 512px tile per full 512x512 block plus a fixed per-image overhead,
- * mirroring the conservative high-detail OpenAI billing shape. The
+ * Deterministic vision token estimate (plan S15.3, ticket #40): the v1
+ * adapter sends every evidence image at OpenAI `detail: "low"`, which is
+ * billed as a flat per-image token count regardless of dimensions. The
  * estimate is a product-policy constant shared by the token budget and
- * the cost reservation, so image-bearing requests are bounded before
- * transmission.
+ * the cost reservation, so the approved estimate matches the charged
+ * amount and image-bearing requests stay bounded before transmission.
  */
 export function estimateImageTokens(image: {
   readonly width: number;
   readonly height: number;
 }): number {
-  const tiles =
-    Math.max(1, Math.ceil(image.width / 512)) *
-    Math.max(1, Math.ceil(image.height / 512));
-  return 85 + tiles * 170;
+  void image;
+  return 85;
 }
 
 function messageTokens(message: ChatMessage): number {

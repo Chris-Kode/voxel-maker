@@ -361,6 +361,12 @@ export function AiPanel({
               ) : null}
               {state.refinement?.evaluation !== undefined ? (
                 <div className="ai-refinement-eval" role="group">
+                  {state.refinement.lastCritique !== undefined ? (
+                    <p>
+                      Last critique: {state.refinement.lastCritique.category} —
+                      {state.refinement.lastCritique.evidence}
+                    </p>
+                  ) : null}
                   <p>
                     Visual refinement evaluation: structural occupancy changed
                     by {formatDelta(state.refinement.evaluation.occupancyDelta)}

@@ -309,6 +309,9 @@ describe("visual refinement: evidence and consent (AC1/AC2)", () => {
       const images = critique?.images ?? [];
       expect(images).toHaveLength(4);
       expect(critique?.content).toContain("standard views");
+      // S15.3: compact structural context travels with the images.
+      expect(critique?.content).toContain("Structure:");
+      expect(critique?.content).toContain("occupied voxels");
       for (const image of images) {
         expect(image.mimeType).toBe("image/png");
         expect(image.source).toBe("preview");
@@ -427,6 +430,67 @@ describe("visual refinement: budgets (AC3)", () => {
     );
     const result = runErr(await session.run());
     expect(result.reason).toBe("limit");
+  });
+
+  it("counts critique requests against the session round budget", async () => {
+    const h = harness();
+    const session = h.makeSession(
+      [...BASE_SCRIPT, CRITIQUE_STEP, CRITIQUE_STEP, DONE_CRITIQUE_STEP],
+      { budgets: { maxRounds: 3 } },
+    );
+    // Base run consumes 2 rounds; iteration 1 takes the 3rd; the second
+    // critique round would exceed the 3-round session budget.
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    const context = (result.error as { context?: { resource?: string } })
+      .context;
+    expect(context?.resource).toBe("rounds");
+  });
+
+  it("enforces the approved plan image cap even when the session budget is higher", async () => {
+    const h = harness();
+    const session = h.makeSession(
+      [...BASE_SCRIPT, CRITIQUE_STEP, CRITIQUE_STEP, DONE_CRITIQUE_STEP],
+      {
+        refinement: {
+          capture: h.capture,
+          plan: createVisualRefinementPlan({
+            providerId: "deterministic",
+            model: "deterministic-model",
+            resolution: 8,
+            maxImages: 4,
+          }),
+          consent: imageConsent(),
+        },
+      },
+    );
+    const result = runOk(await session.run());
+    // Only one full evidence pass fits the approved plan (4 images).
+    expect(result.refinement?.iterations).toBe(1);
+    expect(result.refinement?.imagesSent).toBe(4);
+    expect(result.state).toBe("approve");
+  });
+
+  it("enforces the approved plan iteration cap even when the session budget is higher", async () => {
+    const h = harness();
+    const session = h.makeSession(
+      [...BASE_SCRIPT, CRITIQUE_STEP, CRITIQUE_STEP, DONE_CRITIQUE_STEP],
+      {
+        refinement: {
+          capture: h.capture,
+          plan: createVisualRefinementPlan({
+            providerId: "deterministic",
+            model: "deterministic-model",
+            resolution: 8,
+            maxVisualIterations: 1,
+          }),
+          consent: imageConsent(),
+        },
+      },
+    );
+    const result = runOk(await session.run());
+    expect(result.refinement?.iterations).toBe(1);
+    expect(result.state).toBe("approve");
   });
 
   it("enforces the duration budget across critique rounds", async () => {

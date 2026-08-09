@@ -1,6 +1,6 @@
 # Bounded visual refinement v1
 
-**Status:** v1 (ticket #40, plan S15.1–S15.9)
+**Status:** v1 (ticket #40, plan S15.1–S15.5, S15.7, S15.9; S15.6 and the S15.8 dataset remain follow-ups)
 
 Visual refinement lets a consenting user improve an AI proposal using
 fixed standard-view rendered evidence, without creating an unbounded
@@ -137,9 +137,34 @@ labeled undoable history entry). The human remains the final authority
   status, gated Apply.
 - `apps/desktop/src/ai/AiPanel.tsx` — consent and status UI.
 
+## Session semantics of image consent
+
+A consent record names the provider, model, views, image count, maximum
+resolution, estimated cost, and expiry, and the approved plan is
+re-validated (coverage check) at the start of every run. Like text
+consent (ADR-0010), the record persists for 30 days and is reused by
+later runs of the same provider+model until it expires or is revoked;
+changing any covered dimension (provider, model, views, count,
+resolution, cost) requires a fresh approval. No consent, expired
+consent, or insufficient coverage means zero image transmission.
+
+## Relationship to the fixed-scenario evaluation harness
+
+`packages/evaluation` (ticket #35) hosts the fixed-scenario harness for
+initial AI geometry workflows: recorded traces, structural metrics,
+rendered previews, and promotion thresholds. The per-run refinement gate
+in this ticket lives in the agent package because the loop must enforce
+limits and gate promotion inside the bounded run, and the agent package
+cannot depend on the harness. The two layers share the same goals
+(structural + visual outcomes, regression-preventing promotion); the
+S15.8 dataset work should add visual-refinement scenarios to
+`packages/evaluation` and, where feasible, share the metric helpers.
+
 ## Follow-up work
 
 - S15.6: deterministic intersection/silhouette pre-checks before paid
   vision (geometry-only checks are currently deferred).
 - S15.8: a broader visual regression dataset (fox/bird/house/vehicle/
   abstract fixtures with versioned views) for the evaluation harness.
+- S15.7: evidence thumbnails in the panel (the rendered PNGs are already
+  available through the evidence capture seam).

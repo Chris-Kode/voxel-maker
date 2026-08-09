@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { STANDARD_VIEWS } from "@voxel-maker/agent";
+import { STANDARD_PREVIEW_VIEWS } from "@voxel-maker/renderer";
 import {
   commandId,
   documentId,
@@ -182,5 +184,15 @@ describe("createRendererEvidenceCapture", () => {
       height: 4,
     });
     expect(store.revision).toBe(before);
+  });
+});
+
+describe("standard-view seam conformance (ticket #40)", () => {
+  it("pins the agent evidence views to the renderer preview protocol", () => {
+    // The agent package cannot import the renderer; the composition
+    // adapter bridges the two vocabularies with a cast. This test keeps
+    // that cast honest: the fixed render protocol and the evidence
+    // protocol must name the same four views in the same order.
+    expect([...STANDARD_VIEWS]).toEqual([...STANDARD_PREVIEW_VIEWS]);
   });
 });

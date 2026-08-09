@@ -125,19 +125,18 @@ function evidenceError(
   });
 }
 
-/** Validates one capture request before any render work. */
-export function validateEvidenceRequest(
-  request: EvidenceCaptureRequest,
-): EvidenceCaptureRequest {
-  const views =
-    request.views === undefined ? [...STANDARD_VIEWS] : [...request.views];
-  if (views.length === 0 || views.length > MAX_EVIDENCE_IMAGES) {
+/** Validates a non-empty, non-repeating subset of the standard views. */
+export function validateStandardViews(
+  views: readonly StandardViewId[],
+): readonly StandardViewId[] {
+  const list = [...views];
+  if (list.length === 0 || list.length > MAX_EVIDENCE_IMAGES) {
     throw evidenceError(
       "INVALID_EVIDENCE_VIEWS",
-      `Evidence capture needs between 1 and ${String(MAX_EVIDENCE_IMAGES)} standard views`,
+      `Expected between 1 and ${String(MAX_EVIDENCE_IMAGES)} standard views`,
     );
   }
-  for (const view of views) {
+  for (const view of list) {
     if (!STANDARD_VIEWS.includes(view)) {
       throw evidenceError(
         "INVALID_EVIDENCE_VIEW",
@@ -145,12 +144,22 @@ export function validateEvidenceRequest(
       );
     }
   }
-  if (new Set(views).size !== views.length) {
+  if (new Set(list).size !== list.length) {
     throw evidenceError(
       "INVALID_EVIDENCE_VIEWS",
-      "Evidence views must not repeat",
+      "Standard views must not repeat",
     );
   }
+  return Object.freeze(list);
+}
+
+/** Validates one capture request before any render work. */
+export function validateEvidenceRequest(
+  request: EvidenceCaptureRequest,
+): EvidenceCaptureRequest {
+  const views = validateStandardViews(
+    request.views === undefined ? [...STANDARD_VIEWS] : request.views,
+  );
   const width = request.width ?? DEFAULT_EVIDENCE_SIZE;
   const height = request.height ?? DEFAULT_EVIDENCE_SIZE;
   if (!Number.isInteger(width) || !Number.isInteger(height)) {

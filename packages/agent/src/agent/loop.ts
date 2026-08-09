@@ -718,8 +718,16 @@ class AgentSessionImpl implements AgentSession {
         break;
       }
       // Iteration cap ends the phase gracefully (the cap is a plan
-      // boundary, not a violation).
-      if (this.#ledger.visualIterations >= this.#budgets.maxVisualIterations) {
+      // boundary, not a violation). The approved plan's own caps bind
+      // first (they can only be equal to or stricter than the session
+      // defaults).
+      if (
+        this.#ledger.visualIterations >=
+        Math.min(
+          this.#budgets.maxVisualIterations,
+          config.plan.maxVisualIterations,
+        )
+      ) {
         stopped = "iteration-cap";
         break;
       }
@@ -727,7 +735,7 @@ class AgentSessionImpl implements AgentSession {
       // transmitted-image budget.
       if (
         this.#ledger.imagesSent + config.plan.imageCount >
-        this.#budgets.maxImages
+        Math.min(this.#budgets.maxImages, config.plan.maxImages)
       ) {
         stopped = "image-cap";
         break;
@@ -737,6 +745,15 @@ class AgentSessionImpl implements AgentSession {
         return {
           kind: "failed",
           result: this.#failedResult("limit", reserve.error),
+        };
+      }
+      // Critique requests are model rounds: they count against the
+      // session's hard round budget like any other provider request.
+      const round = this.#ledger.reserveRound();
+      if (!round.ok) {
+        return {
+          kind: "failed",
+          result: this.#failedResult("limit", round.error),
         };
       }
       iterations += 1;
@@ -960,6 +977,14 @@ class AgentSessionImpl implements AgentSession {
     config: VisualRefinementConfig,
     evidence: VisualEvidenceSet,
   ): ProviderChatRequest {
+    // Compact structural context alongside the images (S15.3): the model
+    // sees bounded occupancy/bounds/materials so its critique is grounded
+    // in structure, not pixels alone.
+    const structure = measureStructure(this.preview);
+    const bounds =
+      structure.bounds === undefined
+        ? "empty"
+        : `[${String(structure.bounds.min)}..${String(structure.bounds.max)}]`;
     const images = evidence.images.map((image) => ({
       mimeType: "image/png" as const,
       bytes: image.pngBytes,
@@ -976,12 +1001,14 @@ class AgentSessionImpl implements AgentSession {
         {
           role: "user",
           content:
-            config.critiquePrompt ??
-            DEFAULT_CRITIQUE_PROMPT +
-              `\nEvidence: ${String(evidence.images.length)} standard views ` +
-              `(${String(evidence.images[0]?.width ?? 0)}px), revision ` +
-              `${String(evidence.revision)}, semantic hash ` +
-              `${evidence.semanticHash}.`,
+            (config.critiquePrompt ?? DEFAULT_CRITIQUE_PROMPT) +
+            `\nEvidence: ${String(evidence.images.length)} standard views ` +
+            `(${String(evidence.images[0]?.width ?? 0)}px), revision ` +
+            `${String(evidence.revision)}, semantic hash ` +
+            `${evidence.semanticHash}. ` +
+            `Structure: ${String(structure.occupiedVoxels)} occupied voxels, ` +
+            `${String(structure.nonEmptyChunks)} chunks, ` +
+            `${String(structure.materialCount)} materials, bounds ${bounds}.`,
           images,
         },
       ],

@@ -138,21 +138,24 @@ export interface AiControllerState {
   /** The approved per-session visual refinement plan. */
   readonly refinementPlan: VisualRefinementPlan | undefined;
   /** Visual refinement summary of the last run. */
-  readonly refinement:
-    | {
-        readonly iterations: number;
-        readonly imagesSent: number;
-        readonly evaluation:
-          | {
-              readonly promotable: boolean;
-              readonly regressions: readonly string[];
-              readonly overallSimilarity: number;
-              readonly occupancyDelta: number;
-            }
-          | undefined;
-      }
-    | undefined;
+  readonly refinement: AiRefinementSummary | undefined;
 }
+
+/** UI-facing summary of one visual refinement run. */
+export type AiRefinementSummary = {
+  readonly iterations: number;
+  readonly imagesSent: number;
+  readonly lastCritique?: {
+    readonly category: string;
+    readonly evidence: string;
+  };
+  readonly evaluation?: {
+    readonly promotable: boolean;
+    readonly regressions: readonly string[];
+    readonly overallSimilarity: number;
+    readonly occupancyDelta: number;
+  };
+};
 
 export interface AiControllerOptions {
   readonly session: DocumentSession;
@@ -283,7 +286,7 @@ class AiControllerImpl implements AiController {
   #visualEnabled = false;
   #imageConsent: ImageTransmissionConsent | undefined;
   #refinementPlan: VisualRefinementPlan | undefined;
-  #refinement: AiControllerState["refinement"] | undefined;
+  #refinement: AiRefinementSummary | undefined;
   readonly #listeners = new Set<() => void>();
   /** Bounded activity entries of the current run. */
   readonly #activity: AiActivityEntry[] = [];
@@ -421,6 +424,11 @@ class AiControllerImpl implements AiController {
         this.#emit();
       }
     }
+  }
+
+  /** Reads the refinement summary without same-method narrowing. */
+  #refinementSummary(): AiRefinementSummary | undefined {
+    return this.#refinement;
   }
 
   /** Derives the per-session plan from a stored consent record. */
@@ -734,9 +742,13 @@ class AiControllerImpl implements AiController {
       this.#voxelEstimate = result.diff.voxelEstimate;
       if (result.refinement !== undefined) {
         this.#refinementEvaluation = result.refinement.evaluation;
+        // Method-boundary read: the field was reset earlier in this
+        // method, so control-flow would otherwise narrow it to undefined.
+        const lastCritique = this.#refinementSummary()?.lastCritique;
         this.#refinement = {
           iterations: result.refinement.iterations,
           imagesSent: result.refinement.imagesSent,
+          ...(lastCritique === undefined ? {} : { lastCritique }),
           evaluation: {
             promotable: result.refinement.evaluation.promotable,
             regressions: result.refinement.evaluation.regressions,
@@ -965,7 +977,25 @@ class AiControllerImpl implements AiController {
           message: boundText(event.error.message),
         });
         break;
-      case "refine":
+      case "refine": {
+        // The latest parsed critique persists across rounds (later
+        // no-op rounds and the final done event carry none).
+        const previous = this.#refinementSummary();
+        const critique =
+          event.critique === undefined
+            ? previous?.lastCritique
+            : {
+                category: event.critique.issueCategory,
+                evidence: boundText(event.critique.evidence),
+              };
+        this.#refinement = {
+          iterations: event.iteration,
+          imagesSent: event.imagesSent,
+          ...(critique === undefined ? {} : { lastCritique: critique }),
+          ...(previous?.evaluation === undefined
+            ? {}
+            : { evaluation: previous.evaluation }),
+        };
         this.#pushActivity({
           kind: "state",
           message: boundText(
@@ -977,6 +1007,7 @@ class AiControllerImpl implements AiController {
           ),
         });
         break;
+      }
     }
     this.#emit();
   }

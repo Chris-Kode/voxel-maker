@@ -367,15 +367,13 @@ describe("ProviderError interop", () => {
 });
 
 describe("estimateImageTokens (plan S15.3, ticket #40)", () => {
-  it("charges a fixed overhead plus 170 tokens per 512px tile", () => {
-    expect(estimateImageTokens({ width: 512, height: 512 })).toBe(85 + 170);
-    expect(estimateImageTokens({ width: 1024, height: 1024 })).toBe(
-      85 + 170 * 4,
-    );
-    expect(estimateImageTokens({ width: 1, height: 1 })).toBe(85 + 170);
-    expect(estimateImageTokens({ width: 2048, height: 1024 })).toBe(
-      85 + 170 * 8,
-    );
+  it("charges the flat low-detail rate the v1 adapter sends", () => {
+    // The adapter transmits every evidence image at detail:"low", which
+    // OpenAI bills as a flat 85 tokens per image regardless of size.
+    expect(estimateImageTokens({ width: 512, height: 512 })).toBe(85);
+    expect(estimateImageTokens({ width: 1024, height: 1024 })).toBe(85);
+    expect(estimateImageTokens({ width: 1, height: 1 })).toBe(85);
+    expect(estimateImageTokens({ width: 2048, height: 2048 })).toBe(85);
   });
 
   it("counts image tokens in whole-request estimates and budgets", () => {

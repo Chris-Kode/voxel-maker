@@ -560,6 +560,9 @@ describe("ai panel: visual refinement (ticket #40)", () => {
     expect(mounted.panel.textContent).toContain("Visual refinement evaluation");
     expect(mounted.panel.textContent).toContain("visual similarity");
     expect(mounted.panel.textContent).toContain("2 visual iterations");
+    // The parsed critique is surfaced in the review panel.
+    expect(mounted.panel.textContent).toContain("Last critique:");
+    expect(mounted.panel.textContent).toContain("geometry-gap");
     mounted.unmount();
   });
 });

@@ -3,8 +3,8 @@ import { estimateImageTokens } from "../provider/types.js";
 import { priceForModel } from "../provider/cost.js";
 import {
   MAX_EVIDENCE_DIMENSION,
-  MAX_EVIDENCE_IMAGES,
   STANDARD_VIEWS,
+  validateStandardViews,
   type StandardViewId,
 } from "./evidence.js";
 
@@ -95,24 +95,13 @@ export function createImageConsent(
       "Image consent needs a provider and a model",
     );
   }
-  if (input.views.length === 0 || input.views.length > MAX_EVIDENCE_IMAGES) {
+  let views: readonly StandardViewId[];
+  try {
+    views = validateStandardViews(input.views);
+  } catch {
     throw consentError(
       "INVALID_IMAGE_CONSENT",
-      `Image consent needs between 1 and ${String(MAX_EVIDENCE_IMAGES)} standard views`,
-    );
-  }
-  for (const view of input.views) {
-    if (!STANDARD_VIEWS.includes(view)) {
-      throw consentError(
-        "INVALID_IMAGE_CONSENT",
-        `Unknown standard view: ${view}`,
-      );
-    }
-  }
-  if (new Set(input.views).size !== input.views.length) {
-    throw consentError(
-      "INVALID_IMAGE_CONSENT",
-      "Image consent views must not repeat",
+      "Image consent views must be a non-empty, non-repeating subset of the standard views",
     );
   }
   if (
@@ -156,7 +145,7 @@ export function createImageConsent(
   return Object.freeze({
     providerId: input.providerId,
     model: input.model,
-    views: Object.freeze([...input.views]),
+    views,
     maxImages: input.maxImages,
     maxResolution: input.maxResolution,
     estimatedCostUsd: input.estimatedCostUsd,
@@ -305,21 +294,16 @@ export function estimateImagePassCostUsd(
 export function createVisualRefinementPlan(
   input: VisualRefinementPlanInput,
 ): VisualRefinementPlan {
-  const views =
-    input.views === undefined ? [...STANDARD_VIEWS] : [...input.views];
-  if (views.length === 0 || views.length > MAX_EVIDENCE_IMAGES) {
+  let views: readonly StandardViewId[];
+  try {
+    views = validateStandardViews(
+      input.views === undefined ? [...STANDARD_VIEWS] : input.views,
+    );
+  } catch {
     throw consentError(
       "INVALID_REFINEMENT_PLAN",
-      `A refinement plan needs between 1 and ${String(MAX_EVIDENCE_IMAGES)} views`,
+      "A refinement plan needs a non-empty, non-repeating subset of the standard views",
     );
-  }
-  for (const view of views) {
-    if (!STANDARD_VIEWS.includes(view)) {
-      throw consentError(
-        "INVALID_REFINEMENT_PLAN",
-        `Unknown standard view: ${view}`,
-      );
-    }
   }
   const resolution = input.resolution ?? 512;
   if (
@@ -375,7 +359,7 @@ export function createVisualRefinementPlan(
   return Object.freeze({
     providerId: input.providerId,
     model: input.model,
-    views: Object.freeze(views),
+    views,
     resolution,
     imageCount,
     maxImages,
