@@ -13,6 +13,8 @@
     "check": "pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm coverage && pnpm build && pnpm check:boundaries && pnpm check:entrypoints && pnpm demo:headless",
     "check:boundaries": "node scripts/check-boundaries.mjs && depcruise --validate .dependency-cruiser.cjs apps packages",
     "check:entrypoints": "node scripts/check-entrypoints.mjs",
+    "check:security": "node scripts/check-native-capabilities.mjs && node scripts/check-licenses.mjs && node scripts/check-secrets.mjs",
+    "check:audit": "node scripts/check-audit.mjs",
     "clean": "turbo run clean && node scripts/clean.mjs .turbo",
     "demo:headless": "node apps/headless/dist/cli.js && node apps/headless/dist/persistence-cli.js && node apps/headless/dist/recovery-cli.js",
     "format": "prettier --check .",
