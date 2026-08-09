@@ -195,6 +195,47 @@ describe("importVox", () => {
     );
   });
 
+  it("does not reuse an existing material with the same color but different opacity", () => {
+    const document = createDocument({
+      documentId: "document:import:0004" as never,
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [],
+          transform: identity,
+          components: [],
+        },
+      ],
+      materials: [
+        {
+          materialId: materialId(1),
+          name: "translucent red",
+          color: "#ff0000",
+          opacity: 0.5,
+          roughness: 0,
+          metallic: 0,
+          emissive: 0,
+        },
+      ],
+      volumes: [],
+    });
+    const { store, bus } = harness(document);
+    // Palette index 1 is #ff0000 with alpha 255 (opacity 1): reusing the
+    // existing translucent red would silently discard the palette alpha,
+    // so the import must create a new opaque material instead.
+    const bytes = encodeVox({ models: [cube], palette });
+    const outcome = importVox(bus, store, { bytes, expectedRevision: 0 });
+    expect(outcome.materialsCreated).toBe(2);
+    expect(store.getDocument().materials[materialId(1)]?.opacity).toBe(0.5);
+    expect(store.getDocument().materials[materialId(2)]?.opacity).toBe(1);
+    expect(store.getVoxel(volumeId("volume:import:0001"), [0, 0, 0])).toBe(
+      materialId(2),
+    );
+  });
+
   it("remaps colliding palette ids to free material ids", () => {
     const document = createDocument({
       documentId: "document:import:0003" as never,

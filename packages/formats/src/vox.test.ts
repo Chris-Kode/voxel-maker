@@ -142,6 +142,25 @@ describe("encodeVox", () => {
       "VOX_RGBA_LENGTH",
     );
   });
+
+  it("rejects out-of-range palette channels instead of wrapping bytes", () => {
+    const bad = [
+      { r: 300, g: 0, b: 0, a: 255 },
+      ...Array.from({ length: 255 }, () => ({ r: 0, g: 0, b: 0, a: 255 })),
+    ];
+    expectCode(
+      () => encodeVox({ models: [cubeModel], palette: bad }),
+      "VOX_INVALID_PALETTE",
+    );
+    const nan = [
+      { r: Number.NaN, g: 0, b: 0, a: 255 },
+      ...Array.from({ length: 255 }, () => ({ r: 0, g: 0, b: 0, a: 255 })),
+    ];
+    expectCode(
+      () => encodeVox({ models: [cubeModel], palette: nan }),
+      "VOX_INVALID_PALETTE",
+    );
+  });
 });
 
 describe("parseVox", () => {

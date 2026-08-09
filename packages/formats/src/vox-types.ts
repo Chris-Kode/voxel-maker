@@ -132,6 +132,7 @@ export const VOX_IMPORT_WARNINGS = {
   defaultPalette: "VOX_DEFAULT_PALETTE_USED",
   emptyIndexVoxels: "VOX_EMPTY_INDEX_VOXELS_SKIPPED",
   modelName: "VOX_MODEL_NAMES_UNAVAILABLE",
+  modelCubeTrimmed: "VOX_MODEL_CUBE_TRIMMED",
 } as const;
 
 /** Stable export loss codes (ADR-0011 loss report). */

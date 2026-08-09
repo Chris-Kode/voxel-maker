@@ -109,6 +109,26 @@ describe("mapVoxImport", () => {
     expect(plan.nodes.map((node) => node.name)).toEqual(["Model 1", "Model 2"]);
   });
 
+  it("warns when the declared model cube exceeds the occupied bounds", () => {
+    // A 10x10x10 declared cube holding one voxel: the empty space is not
+    // preserved on re-export, and the import must say so explicitly.
+    const model: VoxModel = {
+      sizeX: 10,
+      sizeY: 10,
+      sizeZ: 10,
+      voxels: [{ x: 3, y: 4, z: 5, colorIndex: 1 }],
+    };
+    const parsed = parseVox(encodeVox({ models: [model], palette }));
+    const plan = mapVoxImport(parsed, ids);
+    expect(plan.warnings.some((w) => w.code === "VOX_MODEL_CUBE_TRIMMED")).toBe(
+      true,
+    );
+    expect(plan.volumes[0]?.bounds).toEqual({
+      min: [3, 5, -4],
+      max: [4, 6, -3],
+    });
+  });
+
   it("carries parser warnings into the plan", () => {
     // A raw VOX file without an RGBA chunk triggers the default-palette
     // warning, which must pass through the mapping.

@@ -66,9 +66,11 @@ release (ADR-0011).
 - Used palette entries (indices 1..255) become Materials. Import maps
   `(R, G, B)` to the canonical `#rrggbb` color and alpha to opacity
   (`a / 255`); roughness, metallic, and emissive are 0.
-- Import reuses an existing document material with the identical color,
-  prefers the palette index as the material id when free, and otherwise
-  remaps to the lowest free id; conflicts never fail the import silently.
+- Import reuses an existing document material with the identical color
+  **and** opacity (reuse on color alone would silently discard the palette
+  alpha), prefers the palette index as the material id when free, and
+  otherwise remaps to the lowest free id; conflicts never fail the import
+  silently.
 - Export requires at most 255 non-empty colors. Opacity maps to palette
   alpha with 8-bit rounding (reported); roughness/metallic/emissive values
   are reported as dropped; materials that quantize to the same palette
@@ -88,6 +90,10 @@ release (ADR-0011).
 
 ## Dimensions and origin
 
+- Import keeps the declared model cube's occupied voxels only: when the
+  declared `SIZE` exceeds the occupied bounds, the empty space is reported
+  as a `VOX_MODEL_CUBE_TRIMMED` warning because it is not preserved on
+  re-export (the exported `SIZE` is the occupied extent).
 - Export requires each volume's occupied bounds to fit 256 voxels per
   axis (the VOX unsigned cube); larger volumes block with a loss report.
 - Because the axis mapping flips `Z`, a volume's VOX-space origin is

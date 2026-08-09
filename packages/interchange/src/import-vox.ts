@@ -143,15 +143,17 @@ export function importVox(
       });
     }
     const colorKey = hexColor(color);
+    const opacity = color.a / 255;
     const existingByColor = materialColorCache.get(colorKey);
     if (existingByColor !== undefined) {
       materialIdByIndex.set(colorIndex, existingByColor);
       return existingByColor;
     }
     let resolved: MaterialId | undefined;
-    // 1. Reuse an existing material with the identical color.
+    // 1. Reuse an existing material with the identical color AND opacity;
+    //    reusing on color alone would silently discard the palette alpha.
     for (const [id, record] of Object.entries(document.materials)) {
-      if (record.color === colorKey) {
+      if (record.color === colorKey && record.opacity === opacity) {
         resolved = Number(id) as MaterialId;
         break;
       }

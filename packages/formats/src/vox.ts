@@ -650,6 +650,19 @@ export function encodeVox(input: VoxEncodeInput): Uint8Array {
       { entries: palette.length },
     );
   }
+  for (const entry of palette) {
+    for (const channel of ["r", "g", "b", "a"] as const) {
+      const value = entry[channel];
+      if (!Number.isInteger(value) || value < 0 || value > 255) {
+        throw voxError(
+          "validation",
+          "VOX_INVALID_PALETTE",
+          "Palette channels must be integers from 0 through 255",
+          { channel, value: String(value) },
+        );
+      }
+    }
+  }
   for (const model of models) {
     for (const axis of [model.sizeX, model.sizeY, model.sizeZ]) {
       if (axis === 0 || axis > VOX_MAX_AXIS_SIZE) {

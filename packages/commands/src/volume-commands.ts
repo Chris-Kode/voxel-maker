@@ -118,6 +118,12 @@ function parseCreatePayload(
       path: ["payload"],
     });
   }
+  const entries =
+    payload.entries === undefined
+      ? undefined
+      : // Validated and bounded by parseRawEntries in `parse` before any
+        // staging; kept as the raw record here so no unchecked cast escapes.
+        (payload.entries as CreateVolumePayload["entries"]);
   return {
     volumeId: parseVolumeId(payload.volumeId, ["payload", "volumeId"]),
     ...(payload.name !== undefined
@@ -126,9 +132,7 @@ function parseCreatePayload(
     ...(payload.bounds !== undefined
       ? { bounds: parseRegion(payload.bounds, limits, ["payload", "bounds"]) }
       : {}),
-    ...(payload.entries !== undefined
-      ? { entries: payload.entries as VolumeEntriesPayload }
-      : {}),
+    ...(entries === undefined ? {} : { entries }),
   };
 }
 

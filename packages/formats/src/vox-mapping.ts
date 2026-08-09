@@ -6,6 +6,7 @@ import {
 } from "@voxel-maker/shared";
 import type { Vec3i } from "@voxel-maker/math";
 import type { VoxelDocument } from "@voxel-maker/model";
+import { CHUNK_EDGE } from "@voxel-maker/voxel";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 import {
   VOX_MAX_AXIS_SIZE,
@@ -108,6 +109,27 @@ export function mapVoxImport(
       max = max === undefined ? [...coordinate] : maxVec(max, coordinate);
       entries.push({ coordinate, material: material.materialId });
     }
+    if (
+      min !== undefined &&
+      max !== undefined &&
+      (model.sizeX > max[0] - min[0] + 1 ||
+        model.sizeY > max[1] - min[1] + 1 ||
+        model.sizeZ > max[2] - min[2] + 1)
+    ) {
+      warnings.push({
+        code: VOX_IMPORT_WARNINGS.modelCubeTrimmed,
+        message:
+          "The declared model cube exceeds the occupied voxel bounds; empty space is not preserved on re-export",
+        context: {
+          declaredX: model.sizeX,
+          declaredY: model.sizeY,
+          declaredZ: model.sizeZ,
+          occupiedX: max[0] - min[0] + 1,
+          occupiedY: max[1] - min[1] + 1,
+          occupiedZ: max[2] - min[2] + 1,
+        },
+      });
+    }
     const volumeId = ids.volumeId(volumes.length);
     const nodeId = ids.nodeId(nodes.length);
     const name = `Model ${String(nodes.length + 1)}`;
@@ -177,19 +199,8 @@ interface VoxelNode {
   readonly name: string | undefined;
 }
 
-/**
- * Preflights a document for VOX export (plan S8.4, ADR-0011). Every
- * unsupported feature is either resolved through an explicit choice or
- * blocks the export with a structured loss report; nothing is dropped
- * silently.
- */
-export function preflightVoxExport(
-  document: VoxelDocument,
-  getVolume: VoxVolumeAccess,
-  choices: VoxExportChoices = {},
-): VoxExportPreflight {
-  const blocked: VoxExportLoss[] = [];
-  const losses: VoxExportLoss[] = [];
+/** Collects every node carrying a voxel component, in document order. */
+function collectVoxelNodes(document: VoxelDocument): VoxelNode[] {
   const voxelNodes: VoxelNode[] = [];
   for (const node of Object.values(document.nodes)) {
     const component = node.components.find(
@@ -205,6 +216,23 @@ export function preflightVoxExport(
       name: node.name,
     });
   }
+  return voxelNodes;
+}
+
+/**
+ * Preflights a document for VOX export (plan S8.4, ADR-0011). Every
+ * unsupported feature is either resolved through an explicit choice or
+ * blocks the export with a structured loss report; nothing is dropped
+ * silently.
+ */
+export function preflightVoxExport(
+  document: VoxelDocument,
+  getVolume: VoxVolumeAccess,
+  choices: VoxExportChoices = {},
+): VoxExportPreflight {
+  const blocked: VoxExportLoss[] = [];
+  const losses: VoxExportLoss[] = [];
+  const voxelNodes = collectVoxelNodes(document);
   const nonRoot = voxelNodes.filter((node) => !node.parentIsRoot);
   if (nonRoot.length > 0) {
     if (choices.flattenHierarchy === true) {
@@ -480,21 +508,7 @@ export function planVoxExport(
   preflight: Extract<VoxExportPreflight, { readonly ok: true }>,
   choices: VoxExportChoices = {},
 ): VoxExportPlan {
-  const voxelNodes: VoxelNode[] = [];
-  for (const node of Object.values(document.nodes)) {
-    const component = node.components.find(
-      (candidate) => candidate.kind === "voxel",
-    );
-    if (component === undefined) continue;
-    voxelNodes.push({
-      nodeId: node.nodeId,
-      volumeId: component.volumeId,
-      parentIsRoot: node.parentId === document.rootNodeId,
-      transformIsIdentity: transformEqualsIdentity(node.transform),
-      hasChildren: node.children.length > 0,
-      name: node.name,
-    });
-  }
+  const voxelNodes = collectVoxelNodes(document);
   const usedMaterialIds = new Set<MaterialId>();
   for (const node of voxelNodes) {
     const volume = getVolume(node.volumeId);
@@ -555,9 +569,9 @@ export function planVoxExport(
         const material = chunk[index] as number;
         if (material === 0) continue;
         const local: Vec3i = [
-          index % 16,
-          Math.floor(index / 16) % 16,
-          Math.floor(index / 256),
+          index % CHUNK_EDGE,
+          Math.floor(index / CHUNK_EDGE) % CHUNK_EDGE,
+          Math.floor(index / (CHUNK_EDGE * CHUNK_EDGE)),
         ];
         const editor: Vec3i = [
           coordinate[0] * 16 + local[0],
