@@ -1,5 +1,8 @@
-import { readFile, readdir } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -9,10 +12,22 @@ import {
   VOXEL_FILL_CYLINDER_COMMAND,
   VOXEL_MIRROR_REGION_COMMAND,
   VOXEL_SET_BATCH_COMMAND,
+  CommandBus,
+  journalTransactionToJson,
+  type CommittedTransactionRecord,
 } from "@voxel-maker/commands";
-import { createPreviewRegistry } from "@voxel-maker/agent";
+import {
+  canonicalAssetSemanticHash,
+  type DocumentStoreRead,
+} from "@voxel-maker/document";
+import {
+  createPreviewRegistry,
+  createPreviewSession,
+} from "@voxel-maker/agent";
+import type { VolumeId } from "@voxel-maker/shared";
 import { GENERATOR_DEFINITIONS, proposeGenerator } from "./registry.js";
-import { FIXTURE_IDS } from "./fixtures.js";
+import { FIXTURE_IDS, createGeneratorFixture } from "./fixtures.js";
+import { applyWithProvenance } from "./provenance.js";
 
 /**
  * Boundary tests (ticket #37, AC4): generators require no renderer and no
@@ -192,3 +207,147 @@ async function sourceFiles(directory: string): Promise<string[]> {
   }
   return files;
 }
+
+describe("skill catalog removal (AC4, plan S14 boundary test)", () => {
+  it("no package in the workspace depends on the skill catalog", async () => {
+    const root = join(skillsRoot(), "..", "..");
+    const packageDirs = ["packages", "apps"];
+    const manifests = [];
+    for (const dir of packageDirs) {
+      const base = join(root, dir);
+      for (const entry of await readdir(base, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const manifestPath = join(base, entry.name, "package.json");
+        const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+          dependencies?: Readonly<Record<string, string>>;
+        };
+        manifests.push({ name: entry.name, manifest });
+      }
+    }
+    for (const { name, manifest } of manifests) {
+      const dependencies = Object.keys(manifest.dependencies ?? {});
+      expect(
+        dependencies.includes("@voxel-maker/skills"),
+        `${name} must not depend on @voxel-maker/skills (removable catalog)`,
+      ).toBe(false);
+    }
+  });
+
+  it("core packages never import the skill catalog from source", async () => {
+    const root = join(skillsRoot(), "..", "..");
+    const coreDirs = ["packages", "apps"];
+    for (const dir of coreDirs) {
+      const base = join(root, dir);
+      for (const entry of await readdir(base, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name === "skills") continue;
+        for (const file of await sourceFiles(join(base, entry.name))) {
+          const contents = await readFile(file, "utf8");
+          expect(
+            contents.includes("@voxel-maker/skills"),
+            `${relative(root, file)} must not import @voxel-maker/skills`,
+          ).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("documents created with a skill open, edit, animate, and export without the catalog", async () => {
+    // Build a skill-created document: one stairs proposal applied with
+    // provenance through the ordinary preview seam.
+    const fixture = createGeneratorFixture();
+    const records: CommittedTransactionRecord[] = [];
+    const registry = createPreviewRegistry();
+    const bus = new CommandBus(
+      fixture.handle.store,
+      registry,
+      fixture.handle.writeCapability,
+      undefined,
+      { onCommitted: (record) => records.push(record) },
+    );
+    const proposal = proposeGenerator("generator.stairs", STAIRS_PARAMS, {
+      volumeId: FIXTURE_IDS.volume,
+      material: FIXTURE_IDS.material,
+      seed: "ac4-removal-seed",
+    });
+    const session = createPreviewSession({
+      live: fixture.store,
+      applyBus: bus,
+    });
+    expect(session.stageMany(proposal.commands).ok).toBe(true);
+    const applied = applyWithProvenance(
+      session,
+      "skill.furniture",
+      "1.0.0",
+      "ac4-removal-seed",
+    );
+    expect(applied.ok, JSON.stringify(applied)).toBe(true);
+    const expectedHash = canonicalSemanticHashOf(fixture.store);
+
+    // Persisted artifacts: the base document (revision 0) and the
+    // recovery journal (seed + provenance-labeled apply).
+    const dir = await mkdtemp(join(tmpdir(), "voxel-maker-ac4-"));
+    const documentPath = join(dir, "document.json");
+    const journalPath = join(dir, "journal.jsonl");
+    await writeFile(documentPath, JSON.stringify(BASE_DOCUMENT), "utf8");
+    await writeFile(
+      journalPath,
+      records
+        .map((record) => JSON.stringify(journalTransactionToJson(record)))
+        .join("\n"),
+      "utf8",
+    );
+
+    // A child process that imports ONLY the generic stack
+    // (commands/document/model/animation/formats) — never the skill
+    // catalog — opens, recovers, edits, animates, and exports the
+    // document, then reports the recovered semantic hash.
+    const scriptPath = join(skillsRoot(), "test", "catalog-free-child.mjs");
+    const result = await execFileAsync(
+      process.execPath,
+      [scriptPath, documentPath, journalPath],
+      {
+        timeout: 30_000,
+        env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+      },
+    );
+    expect(result.stderr, result.stderr).toBe("");
+    const lines = result.stdout.trim().split("\n");
+    expect(lines[0]).toBe("OPEN-EDIT-ANIMATE-EXPORT-OK");
+    expect(lines[1]).toBe(`HASH ${expectedHash}`);
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+const execFileAsync = promisify(execFileCallback);
+
+/** Canonical semantic hash of the current committed store state. */
+function canonicalSemanticHashOf(store: DocumentStoreRead): string {
+  const document = store.getDocument();
+  const volumes = new Map<VolumeId, unknown>();
+  for (const key of Object.keys(document.volumes)) {
+    const volumeId = key as VolumeId;
+    const volume = store.getVolume(volumeId);
+    if (volume !== undefined) volumes.set(volumeId, volume);
+  }
+  // The map holds the store's volume read views; the hash function only
+  // reads their runtime shape, so this cast is test-only glue.
+  return canonicalAssetSemanticHash(
+    document,
+    volumes as unknown as Parameters<typeof canonicalAssetSemanticHash>[1],
+  );
+}
+
+/** The empty base fixture document exactly as it was opened (revision 0). */
+const BASE_DOCUMENT = (() => {
+  const fixture = createGeneratorFixture();
+  return fixture.store.getDocument();
+})();
+
+const STAIRS_PARAMS = {
+  start: [0, 0, 0],
+  count: 3,
+  width: 4,
+  depth: 2,
+  stepHeight: 1,
+  axis: "x",
+};
