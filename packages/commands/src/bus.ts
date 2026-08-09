@@ -21,12 +21,13 @@ import type {
 } from "@voxel-maker/document";
 import type { VoxelDocument } from "@voxel-maker/model";
 import {
+  VoxelVolume,
   chunkBounds,
   chunkKey,
   type VoxelChangeSet,
-  type VoxelVolume,
   type VoxelWriteCapability,
 } from "@voxel-maker/voxel";
+import { missingVolume } from "./parse-helpers.js";
 import {
   DEFAULT_COMMAND_LIMITS,
   type Command,
@@ -162,6 +163,8 @@ type RunMode =
 /** Copy-on-write staging state for one transaction (plan 4.3). */
 interface StagedOverlay {
   readonly volumes: Map<VolumeId, VoxelVolume>;
+  /** Committed volumes marked for removal in this transaction (ticket #24). */
+  readonly removedVolumes: Set<VolumeId>;
   document: MutableDocument | undefined;
 }
 
@@ -366,6 +369,7 @@ export class CommandBus {
 
     const staged: StagedOverlay = {
       volumes: new Map<VolumeId, VoxelVolume>(),
+      removedVolumes: new Set<VolumeId>(),
       document: undefined,
     };
     const context = this.#makeContext(staged);
@@ -440,7 +444,11 @@ export class CommandBus {
     };
     try {
       this.#store.commit(
-        { document: stagedDocument, volumes: staged.volumes },
+        {
+          document: stagedDocument,
+          volumes: staged.volumes,
+          removedVolumes: [...staged.removedVolumes],
+        },
         event,
         this.#writeCapability,
       );
@@ -594,6 +602,9 @@ export class CommandBus {
       get document(): VoxelDocument {
         return staged.document ?? store.getDocument();
       },
+      get committedDocument(): VoxelDocument {
+        return store.getDocument();
+      },
       limits: store.limits,
       getVoxel: (volumeId, coordinate) => {
         const stagedVolume = staged.volumes.get(volumeId);
@@ -613,6 +624,32 @@ export class CommandBus {
         const clone = store.stageVolume(volumeId);
         if (clone !== undefined) staged.volumes.set(volumeId, clone);
         return clone;
+      },
+      isVolumeStaged: (volumeId) => staged.volumes.has(volumeId),
+      stageNewVolume: (volumeId) => {
+        if (store.getDocument().volumes[volumeId] !== undefined) {
+          throw new WorkspaceError({
+            family: "validation",
+            code: "DUPLICATE_VOLUME_ID",
+            message: "Volume already exists in the document",
+            context: { volumeId },
+          });
+        }
+        const created = new VoxelVolume(
+          volumeId,
+          store.volumeLimits,
+          this.#writeCapability,
+        );
+        staged.volumes.set(volumeId, created);
+        return created;
+      },
+      stageRemoveVolume: (volumeId) => {
+        if (store.getDocument().volumes[volumeId] === undefined) {
+          throw missingVolume(volumeId);
+        }
+        staged.removedVolumes.add(volumeId);
+        // A removal supersedes any earlier staged clone or creation.
+        staged.volumes.delete(volumeId);
       },
       stageDocument: () => {
         if (staged.document === undefined) {

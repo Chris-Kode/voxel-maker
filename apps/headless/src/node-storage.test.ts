@@ -353,6 +353,7 @@ describe("NodeProjectStorage real filesystem behavior", () => {
         {
           document: { ...store.getDocument(), revision: 1 },
           volumes: new Map([[volume, staged]]),
+          removedVolumes: [],
         },
         {
           revisionBefore: 0,

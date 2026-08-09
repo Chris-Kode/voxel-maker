@@ -718,6 +718,7 @@ function fakeStore(
   return {
     revision: 0,
     limits: DEFAULT_DOCUMENT_LIMITS,
+    volumeLimits: DEFAULT_VOXEL_VOLUME_LIMITS,
     getDocument: () => document,
     getVolume: (volumeId) => (volumeId === VOLUME ? view : undefined),
     getVoxel: () => 0 as never,

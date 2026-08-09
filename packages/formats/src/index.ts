@@ -54,3 +54,44 @@ export {
   type VxlReadOptions,
   type VxlWriteInput,
 } from "./container.js";
+export { VOX_DEFAULT_PALETTE } from "./vox-palette.js";
+export {
+  VOX_MAGIC,
+  VOX_MAX_AXIS_SIZE,
+  VOX_MAX_COLOR_INDEX,
+  VOX_PALETTE_ENTRIES,
+  VOX_RGBA_CHUNK_BYTES,
+  VOX_VERSION,
+  encodeVox,
+  parseVox,
+} from "./vox.js";
+export {
+  hexColor,
+  mapVoxImport,
+  planVoxExport,
+  preflightVoxExport,
+  type VoxImportIdFactory,
+  type VoxVolumeAccess,
+} from "./vox-mapping.js";
+export {
+  DEFAULT_VOX_PARSE_LIMITS,
+  VOX_EXPORT_LOSSES,
+  VOX_IMPORT_WARNINGS,
+  type VoxColor,
+  type VoxEncodeInput,
+  type VoxExportChoices,
+  type VoxExportLoss,
+  type VoxExportModel,
+  type VoxExportPlan,
+  type VoxExportPreflight,
+  type VoxImportMaterial,
+  type VoxImportNode,
+  type VoxImportPlan,
+  type VoxImportVolume,
+  type VoxModel,
+  type VoxParseLimits,
+  type VoxParseResult,
+  type VoxUnknownChunk,
+  type VoxVoxel,
+  type VoxWarning,
+} from "./vox-types.js";

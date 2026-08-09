@@ -52,6 +52,13 @@ import {
   registerMaterialCommands,
 } from "./material-commands.js";
 import {
+  VOLUME_CREATE_COMMAND,
+  VOLUME_DELETE_COMMAND,
+  createVolumeCommand,
+  deleteVolumeCommand,
+  registerVolumeCommands,
+} from "./volume-commands.js";
+import {
   commandKey,
   runCommandConformanceSuite,
   type CommandConformanceSpec,
@@ -212,6 +219,160 @@ const removeSpec: CommandConformanceSpec = {
 runCommandConformanceSuite(setSpec, { describe, it, expect });
 runCommandConformanceSuite(removeSpec, { describe, it, expect });
 
+// ---------------------------------------------------------------------------
+// volume.create / volume.delete (ticket #24): generic volume lifecycle
+// ---------------------------------------------------------------------------
+
+const NEW_VOLUME = volumeId("volume:conformance:created");
+const SECOND_VOLUME = volumeId("volume:conformance:second");
+const THIRD_VOLUME = volumeId("volume:conformance:third");
+
+/**
+ * Conformance document for volume lifecycle commands: the root node carries
+ * no voxel component so every declared volume is unreferenced and deletable.
+ */
+function createVolumeConformanceDocument(): VoxelDocument {
+  return createDocument({
+    documentId: "document:conformance:0001" as never,
+    metadata: { title: "command conformance", tags: [] },
+    rootNodeId: "node:conformance:root" as never,
+    nodes: [
+      {
+        nodeId: "node:conformance:root" as never,
+        name: "Root",
+        parentId: null,
+        children: [],
+        transform: identity,
+        components: [],
+      },
+    ],
+    materials: [
+      {
+        materialId: materialId(1),
+        name: "demo",
+        color: "#ff8800",
+        opacity: 1,
+        roughness: 0.5,
+        metallic: 0,
+        emissive: 0,
+      },
+    ],
+    volumes: [
+      {
+        volumeId: VOLUME,
+        bounds: { min: [-1, -1, -1], max: [1, 1, 1] },
+      },
+      {
+        volumeId: SECOND_VOLUME,
+        bounds: { min: [0, 0, 0], max: [2, 2, 2] },
+      },
+    ],
+  });
+}
+
+const volumeCreateSpec: CommandConformanceSpec = {
+  name: "volume.create@1",
+  type: VOLUME_CREATE_COMMAND,
+  schemaVersion: 1,
+  inversePolicy: "exact-restore",
+  createDocument: createVolumeConformanceDocument,
+  register: registerVolumeCommands,
+  buildValid: (id) =>
+    createVolumeCommand(id, {
+      volumeId: NEW_VOLUME,
+      name: "Imported",
+      bounds: { min: [0, 0, -2], max: [3, 3, 0] },
+    }),
+  buildInvalid: (id) => ({
+    id,
+    type: VOLUME_CREATE_COMMAND,
+    schemaVersion: 1,
+    payload: { volumeId: VOLUME },
+  }),
+  buildExecuteInvalid: (id) =>
+    createVolumeCommand(id, {
+      volumeId: NEW_VOLUME,
+      entries: [{ coordinate: [2_000_000, 0, 0], material: materialId(1) }],
+    }),
+  assertApplied: (store) => {
+    const descriptor = store.getDocument().volumes[NEW_VOLUME];
+    expect(descriptor?.name).toBe("Imported");
+    expect(descriptor?.bounds).toEqual({
+      min: [0, 0, -2],
+      max: [3, 3, 0],
+    });
+    expect(store.getVolume(NEW_VOLUME)?.occupiedCount()).toBe(0);
+  },
+  assertUndone: (store) => {
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+  },
+  buildSecondValid: (id) =>
+    createVolumeCommand(id, {
+      volumeId: THIRD_VOLUME,
+      entries: [{ coordinate: [5, 5, 5], material: materialId(1) }],
+    }),
+  assertSecondApplied: (store) => {
+    expect(store.getVoxel(THIRD_VOLUME, [5, 5, 5])).toBe(1);
+    expect(store.getDocument().volumes[NEW_VOLUME]?.name).toBe("Imported");
+  },
+};
+runCommandConformanceSuite(volumeCreateSpec, { describe, it, expect });
+
+const volumeDeleteSpec: CommandConformanceSpec = {
+  name: "volume.delete@1",
+  type: VOLUME_DELETE_COMMAND,
+  schemaVersion: 1,
+  inversePolicy: "exact-restore",
+  createDocument: createVolumeConformanceDocument,
+  register: registerVolumeCommands,
+  seed: (bus, store) => {
+    const result = bus.execute(
+      createVolumeCommand(commandId("command:conformance:volume.delete:seed"), {
+        volumeId: NEW_VOLUME,
+        name: "Seeded",
+        entries: [
+          { coordinate: [0, 0, 0], material: materialId(1) },
+          { coordinate: [3, 3, 3], material: materialId(1) },
+        ],
+      }),
+      {
+        transactionId: transactionId(
+          "transaction:conformance:volume.delete:seed",
+        ),
+        expectedRevision: store.revision,
+        source: "ui",
+      },
+    );
+    if (!result.ok) throw new Error("volume.delete seed failed");
+  },
+  buildValid: (id) => deleteVolumeCommand(id, { volumeId: NEW_VOLUME }),
+  buildInvalid: (id) => ({
+    id,
+    type: VOLUME_DELETE_COMMAND,
+    schemaVersion: 1,
+    payload: { volumeId: 123 },
+  }),
+  assertApplied: (store) => {
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+  },
+  assertUndone: (store) => {
+    const volume = store.getVolume(NEW_VOLUME);
+    expect(volume?.occupiedCount()).toBe(2);
+    expect(store.getVoxel(NEW_VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(NEW_VOLUME, [3, 3, 3])).toBe(1);
+    expect(store.getDocument().volumes[NEW_VOLUME]?.name).toBe("Seeded");
+  },
+  buildSecondValid: (id) =>
+    deleteVolumeCommand(id, { volumeId: SECOND_VOLUME }),
+  assertSecondApplied: (store) => {
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+    expect(store.getVolume(SECOND_VOLUME)).toBeUndefined();
+  },
+};
+runCommandConformanceSuite(volumeDeleteSpec, { describe, it, expect });
+
 /** Every registered persistent command must declare a conformance spec (plan 4.17). */
 const CONFORMANCE_TESTED_COMMANDS = [
   commandKey(MATERIAL_CREATE_COMMAND, 1),
@@ -224,6 +385,8 @@ const CONFORMANCE_TESTED_COMMANDS = [
   commandKey(NODE_SET_COMPONENTS_COMMAND, 1),
   commandKey(NODE_SET_METADATA_COMMAND, 1),
   commandKey(NODE_SET_TRANSFORM_COMMAND, 1),
+  commandKey(VOLUME_CREATE_COMMAND, 1),
+  commandKey(VOLUME_DELETE_COMMAND, 1),
   commandKey(VOXEL_APPLY_PATCHES_COMMAND, 1),
   commandKey(VOXEL_COPY_REGION_COMMAND, 1),
   commandKey(VOXEL_DELETE_REGION_COMMAND, 1),
@@ -248,6 +411,7 @@ describe("command conformance coverage", () => {
     registerRegionCommands(registry);
     registerNodeCommands(registry);
     registerMaterialCommands(registry);
+    registerVolumeCommands(registry);
     const registered = registry
       .list()
       .map(({ type, schemaVersion }) => commandKey(type, schemaVersion));

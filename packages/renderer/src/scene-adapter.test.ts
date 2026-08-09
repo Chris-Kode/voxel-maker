@@ -150,7 +150,7 @@ function createHarness(
     }
     spec.mutateDocument?.(clone);
     handle.store.commit(
-      { document: clone, volumes: stagedVolumes },
+      { document: clone, volumes: stagedVolumes, removedVolumes: [] },
       {
         revisionBefore: handle.store.revision,
         revisionAfter: clone.revision,
@@ -663,7 +663,7 @@ describe("scene adapter", () => {
     volume.setVoxel([10, 10, 10], 1, handle.writeCapability);
     stagedVolumes.set(VOLUME, volume);
     handle.store.commit(
-      { document: clone, volumes: stagedVolumes },
+      { document: clone, volumes: stagedVolumes, removedVolumes: [] },
       {
         revisionBefore: handle.store.revision,
         revisionAfter: clone.revision,

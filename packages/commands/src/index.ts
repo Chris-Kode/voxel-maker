@@ -144,3 +144,23 @@ export {
   type DeleteMaterialPayload,
   type UpdateMaterialPayload,
 } from "./material-commands.js";
+export {
+  VOLUME_COMMAND_SCHEMA_VERSION,
+  VOLUME_CREATE_COMMAND,
+  VOLUME_DELETE_COMMAND,
+  createVolumeCommand,
+  deleteVolumeCommand,
+  readVolumeEntries,
+  registerVolumeCommands,
+  type CreateVolumeInput,
+  type CreateVolumePayload,
+  type DeleteVolumePayload,
+} from "./volume-commands.js";
+export {
+  MAX_VOLUME_ENTRY_PAYLOAD_COUNT,
+  VOLUME_ENTRY_BINARY_BYTES,
+  VOLUME_ENTRY_PAYLOAD_FORMAT,
+  decodeVolumeEntries,
+  encodeVolumeEntries,
+  type VolumeEntriesPayload,
+} from "./volume-payload.js";

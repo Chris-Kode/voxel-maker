@@ -26,9 +26,16 @@ import type {
 /** Read context shared by validation and execution (plan 4.1). */
 export interface CommandValidationContext {
   readonly document: VoxelDocument;
+  /** The committed document before this transaction; never sees staged effects. */
+  readonly committedDocument: VoxelDocument;
   readonly limits: DocumentLimits;
   getVoxel(volumeId: VolumeId, coordinate: Vec3i): MaterialId;
   getVolume(volumeId: VolumeId): VoxelVolumeReadView | undefined;
+  /**
+   * True when a volume was staged earlier in this transaction (created or
+   * cloned). Unlike `getVolume`, this never reports committed volumes.
+   */
+  isVolumeStaged(volumeId: VolumeId): boolean;
 }
 
 /**
@@ -81,6 +88,19 @@ export interface CommandExecutionContext extends CommandValidationContext {
    * transaction; it is discarded on failure.
    */
   stageDocument(): MutableDocument;
+  /**
+   * Creates a fresh volume in the staged overlay (ticket #24). The caller
+   * must also stage a matching `VolumeDescriptor`; the store rejects a
+   * staged volume without a descriptor. Fails when the committed document
+   * already contains the volume.
+   */
+  stageNewVolume(volumeId: VolumeId): VoxelVolume;
+  /**
+   * Marks a committed volume for removal in this transaction (ticket #24).
+   * The caller must also remove its descriptor from the staged document;
+   * the store rejects an inconsistent removal.
+   */
+  stageRemoveVolume(volumeId: VolumeId): void;
   readonly writeCapability: VoxelWriteCapability;
 }
 

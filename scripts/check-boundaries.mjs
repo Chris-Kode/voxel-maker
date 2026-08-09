@@ -57,6 +57,16 @@ const allowedDependencies = {
     "rigging",
     "animation",
   ],
+  interchange: [
+    "shared",
+    "math",
+    "model",
+    "document",
+    "voxel",
+    "commands",
+    "formats",
+    "storage",
+  ],
   storage: ["shared", "math", "model", "document", "voxel", "formats"],
   agent: [
     "shared",

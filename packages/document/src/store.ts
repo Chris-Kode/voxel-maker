@@ -18,6 +18,7 @@ import {
   DEFAULT_VOXEL_VOLUME_LIMITS,
   type VoxelChunkSeed,
   type VoxelVolume,
+  type VoxelVolumeLimits,
   type VoxelVolumeReadView,
   type VoxelWriteCapability,
 } from "@voxel-maker/voxel";
@@ -65,12 +66,20 @@ export interface StagedState {
   readonly document: VoxelDocument;
   /** Volumes touched by the transaction; untouched volumes keep committed state. */
   readonly volumes: ReadonlyMap<VolumeId, VoxelVolume>;
+  /**
+   * Volumes removed by the transaction (ticket #24). Every id must exist in
+   * the committed document and must be absent from the staged document;
+   * otherwise the commit rejects atomically.
+   */
+  readonly removedVolumes: readonly VolumeId[];
 }
 
 /** Immutable read surface of the authoritative document store. */
 export interface DocumentStoreRead {
   readonly revision: number;
   readonly limits: DocumentLimits;
+  /** Volume resource limits applied to every volume of the document. */
+  readonly volumeLimits: VoxelVolumeLimits;
   getDocument(): VoxelDocument;
   getVolume(volumeId: VolumeId): VoxelVolumeReadView | undefined;
   /** Material at a voxel coordinate; 0 when empty or the volume is missing. */
@@ -197,6 +206,10 @@ class DocumentStoreImpl implements DocumentStore {
     return this.#limits;
   }
 
+  get volumeLimits(): VoxelVolumeLimits {
+    return this.#repository.volumeLimits;
+  }
+
   getDocument(): VoxelDocument {
     return this.#document;
   }
@@ -286,8 +299,27 @@ class DocumentStoreImpl implements DocumentStore {
         });
       }
     }
+    for (const volumeId of staged.removedVolumes) {
+      if (this.#document.volumes[volumeId] === undefined) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "MISSING_VOLUME",
+          message: "Removed volume is not part of the committed document",
+          context: { volumeId },
+        });
+      }
+      if (staged.document.volumes[volumeId] !== undefined) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "REMOVED_VOLUME_KEPT",
+          message: "Removed volume must be absent from the staged document",
+          context: { volumeId },
+        });
+      }
+    }
     this.#document = deepFreeze(staged.document);
     this.#repository.installVolumes(staged.volumes);
+    this.#repository.removeVolumes(staged.removedVolumes);
     this.#emit(deepFreeze(event));
   }
 

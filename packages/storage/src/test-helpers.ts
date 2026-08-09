@@ -126,6 +126,7 @@ function commitStaged(
   const stagedState: StagedState = {
     document,
     volumes: new Map([[VOLUME, staged]]),
+    removedVolumes: [],
   };
   store.commit(stagedState, event, writeCapability);
   return store.revision;
