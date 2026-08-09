@@ -4,6 +4,10 @@ import {
   type Mat4,
   type Transform,
 } from "@voxel-maker/math";
+import {
+  evaluateConstrainedLocalTransform,
+  rotationConstraintsOf,
+} from "@voxel-maker/rigging";
 import type {
   AnimationDescriptor,
   SceneNode,
@@ -13,12 +17,13 @@ import type { AnimationId, NodeId } from "@voxel-maker/shared";
 import { sampleClip, type NodeOverrides } from "./evaluate.js";
 
 /**
- * Layered runtime transform evaluation (plan S10.5, ticket #28). ADR-0006
- * freezes the evaluation order: base Document state, then animation
- * override, then (once constraint evaluation lands, ticket #27) constraints,
- * before the hierarchy world pass. This module implements the base and
- * animation layers plus the world pass; constraint clamping will slot in
- * between the override and the world pass when #27 ships.
+ * Layered runtime transform evaluation (plan S10.5, tickets #28/#27).
+ * ADR-0006 freezes the evaluation order: base Document state, then
+ * animation override, then constraints, before the hierarchy world pass.
+ * This module implements all four layers: the base and animation layers
+ * produce the local table, the constraint layer clamps each local
+ * rotation in persisted order, and the world pass composes the clamped
+ * locals root-first.
  *
  * The evaluation is a pure runtime projection: it reads the immutable
  * document and clip, returns fresh immutable maps, and never issues
@@ -206,9 +211,9 @@ export function evaluateWorldTransforms(
 
 /**
  * Evaluates the complete layered runtime state: base document state, then
- * animation override, then the hierarchy world pass (ADR-0006 order;
- * constraints arrive in ticket #27). Pure, deterministic, and immutable:
- * no commands, revisions, or document writes occur.
+ * animation override, then rotation constraints, then the hierarchy world
+ * pass (ADR-0006 order). Pure, deterministic, and immutable: no commands,
+ * revisions, or document writes occur.
  */
 export function evaluateAnimationRuntime(
   document: VoxelDocument,
@@ -226,6 +231,35 @@ export function evaluateAnimationRuntime(
     time: sample?.time ?? 0,
     clipId: clip?.animationId ?? null,
     local,
-    world: evaluateWorldTransforms(document, local),
+    world: evaluateWorldTransforms(
+      document,
+      applyConstraintsToLocal(document, local),
+    ),
   };
+}
+
+/**
+ * Applies the constraint layer to a local-transform table: each node's
+ * rotation is clamped in persisted constraint order (plan S9.5, ticket
+ * #27) after the animation override and before the world pass. Nodes
+ * without constraints pass through unchanged (same object, no copy).
+ */
+function applyConstraintsToLocal(
+  document: VoxelDocument,
+  local: ReadonlyMap<NodeId, Transform>,
+): ReadonlyMap<NodeId, Transform> {
+  const constrained = new Map<NodeId, Transform>();
+  for (const [nodeId, transform] of local) {
+    const node = document.nodes[nodeId];
+    constrained.set(
+      nodeId,
+      node === undefined
+        ? transform
+        : evaluateConstrainedLocalTransform(
+            transform,
+            rotationConstraintsOf(node),
+          ),
+    );
+  }
+  return constrained;
 }
