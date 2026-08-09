@@ -11,8 +11,10 @@ import {
   streamToResponse,
   validateToolCall,
   DEFAULT_RETRY_POLICY,
+  estimateImageTokens,
   estimateRequestTokens,
   estimateTextTokens,
+  type ChatImage,
   type ChatMessage,
   type ProviderEvent,
   type ToolCall,
@@ -361,5 +363,47 @@ describe("ProviderError interop", () => {
         new WorkspaceError({ family: "limit", code: "X", message: "y" }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("estimateImageTokens (plan S15.3, ticket #40)", () => {
+  it("charges a fixed overhead plus 170 tokens per 512px tile", () => {
+    expect(estimateImageTokens({ width: 512, height: 512 })).toBe(85 + 170);
+    expect(estimateImageTokens({ width: 1024, height: 1024 })).toBe(
+      85 + 170 * 4,
+    );
+    expect(estimateImageTokens({ width: 1, height: 1 })).toBe(85 + 170);
+    expect(estimateImageTokens({ width: 2048, height: 1024 })).toBe(
+      85 + 170 * 8,
+    );
+  });
+
+  it("counts image tokens in whole-request estimates and budgets", () => {
+    const image: ChatImage = {
+      mimeType: "image/png",
+      bytes: new Uint8Array([1, 2, 3]),
+      view: "front",
+      width: 1024,
+      height: 1024,
+      revision: 3,
+      source: "preview",
+    };
+    const plain: ChatMessage = { role: "user", content: "hello" };
+    const withImage: ChatMessage = {
+      role: "user",
+      content: "hello",
+      images: [image],
+    };
+    const base = estimateRequestTokens({
+      model: "m",
+      messages: [plain],
+    });
+    const withImages = estimateRequestTokens({
+      model: "m",
+      messages: [withImage],
+    });
+    expect(withImages - base).toBe(
+      estimateImageTokens({ width: 1024, height: 1024 }),
+    );
   });
 });
