@@ -122,9 +122,10 @@ describe("reparentFeedback (plan S7.11)", () => {
       ok: false,
       reason: "root",
     });
-    expect(
-      reparentFeedback(document, nodeId("node:hier:ghost"), B),
-    ).toEqual({ ok: false, reason: "missing-node" });
+    expect(reparentFeedback(document, nodeId("node:hier:ghost"), B)).toEqual({
+      ok: false,
+      reason: "missing-node",
+    });
     expect(reparentFeedback(document, A, nodeId("node:hier:ghost"))).toEqual({
       ok: false,
       reason: "missing-target",
@@ -213,8 +214,22 @@ describe("defaultChildName", () => {
           transform: identity,
           components: [],
         },
-        { nodeId: A, name: "A", parentId: ROOT, children: [], transform: identity, components: [] },
-        { nodeId: B, name: "B", parentId: ROOT, children: [], transform: identity, components: [] },
+        {
+          nodeId: A,
+          name: "A",
+          parentId: ROOT,
+          children: [],
+          transform: identity,
+          components: [],
+        },
+        {
+          nodeId: B,
+          name: "B",
+          parentId: ROOT,
+          children: [],
+          transform: identity,
+          components: [],
+        },
         {
           nodeId: nodeId("node:hier:extra"),
           name: "Node",
@@ -231,9 +246,9 @@ describe("defaultChildName", () => {
   });
 
   it("falls back to Node for unknown parents", () => {
-    expect(defaultChildName(createDemoDocument(), nodeId("node:hier:ghost"))).toBe(
-      "Node",
-    );
+    expect(
+      defaultChildName(createDemoDocument(), nodeId("node:hier:ghost")),
+    ).toBe("Node");
   });
 });
 
@@ -251,9 +266,7 @@ describe("hierarchy command construction", () => {
     );
     const result = bus.execute(command, txOptions(store.revision));
     expect(result.ok).toBe(true);
-    const created = store
-      .getDocument()
-      .nodes[nodeId("node:hier:create")];
+    const created = store.getDocument().nodes[nodeId("node:hier:create")];
     expect(created?.name).toBe("Node");
     expect(created?.parentId).toBe(B);
     expect(created?.transform).toEqual(identity);
@@ -268,7 +281,11 @@ describe("hierarchy command construction", () => {
     const registry = new CommandRegistry();
     registerNodeCommands(registry);
     const bus = new CommandBus(store, registry, writeCapability);
-    const rename = buildRenameCommand(commandId("command:hier:rename"), B, "Bolt");
+    const rename = buildRenameCommand(
+      commandId("command:hier:rename"),
+      B,
+      "Bolt",
+    );
     expect(bus.execute(rename, txOptions(store.revision)).ok).toBe(true);
     const renamed = store.getDocument().nodes[B];
     if (renamed === undefined) throw new Error("missing renamed node");
@@ -344,14 +361,12 @@ function worldOrigin(document: VoxelDocument, id: NodeId): readonly number[] {
     if (node === undefined) throw new Error("missing node in chain");
     matrix = multiply(matrix, transformToMatrix(node.transform));
   }
-  return [
-    matrix[3] as number,
-    matrix[7] as number,
-    matrix[11] as number,
-  ];
+  return [matrix[3] as number, matrix[7] as number, matrix[11] as number];
 }
 
-const identityMatrix = (): readonly number[] => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const identityMatrix = (): readonly number[] => [
+  1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+];
 
 const multiply = (
   a: readonly number[],
@@ -384,10 +399,22 @@ const transformToMatrix = (transform: Transform): readonly number[] => {
   const r21 = 2 * (qy * qz + qx * qw);
   const r22 = 1 - 2 * (qx * qx + qy * qy);
   return [
-    r00 * sx, r01 * sy, r02 * sz, tx,
-    r10 * sx, r11 * sy, r12 * sz, ty,
-    r20 * sx, r21 * sy, r22 * sz, tz,
-    0, 0, 0, 1,
+    r00 * sx,
+    r01 * sy,
+    r02 * sz,
+    tx,
+    r10 * sx,
+    r11 * sy,
+    r12 * sz,
+    ty,
+    r20 * sx,
+    r21 * sy,
+    r22 * sz,
+    tz,
+    0,
+    0,
+    0,
+    1,
   ];
 };
 

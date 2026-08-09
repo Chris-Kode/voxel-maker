@@ -661,7 +661,6 @@ export function rotateVector(
   const uux = x * ux;
   const uuy = y * uy;
   const uuz = z * uz;
-  const uuv = x * vx + y * vy + z * vz;
   const uwx = w * ux;
   const uwy = w * uy;
   const uwz = w * uz;
@@ -721,13 +720,7 @@ export function quaternionToEulerXYZ(
     );
     return canonicalVec3([xAngle, yAngle, 0]);
   }
-  const xAngle = Math.atan2(
-    2 * (x * w - y * z),
-    1 - 2 * (x * x + y * y),
-  );
-  const zAngle = Math.atan2(
-    2 * (z * w - x * y),
-    1 - 2 * (y * y + z * z),
-  );
+  const xAngle = Math.atan2(2 * (x * w - y * z), 1 - 2 * (x * x + y * y));
+  const zAngle = Math.atan2(2 * (z * w - x * y), 1 - 2 * (y * y + z * z));
   return canonicalVec3([xAngle, yAngle, zAngle]);
 }

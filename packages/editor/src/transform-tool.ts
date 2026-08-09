@@ -116,7 +116,10 @@ export interface GestureHost {
    * Executes one atomic labeled transaction; returns the error, or
    * undefined on success. Never partially applies a drag.
    */
-  update(commands: readonly Command[], label: string): WorkspaceError | undefined;
+  update(
+    commands: readonly Command[],
+    label: string,
+  ): WorkspaceError | undefined;
   /** Seals the drag as one history entry. */
   end(): void;
   /** Rolls the document back to the exact pre-drag transforms. */
@@ -162,11 +165,7 @@ const subtract = (a: Vec3, b: Vec3): Vec3 => [
   a[2] - b[2],
 ];
 
-const add = (a: Vec3, b: Vec3): Vec3 => [
-  a[0] + b[0],
-  a[1] + b[1],
-  a[2] + b[2],
-];
+const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 const scale = (a: Vec3, factor: number): Vec3 => [
   a[0] * factor,
@@ -220,21 +219,30 @@ function nodeSelectionBounds(
     }
     // A node without voxels still participates: use its world origin.
     const resolved: SelectionWorldBounds =
-      local ?? (() => {
+      local ??
+      (() => {
         const origin = applyMatrixPoint(matrix, [0, 0, 0]);
         return { min: origin, max: origin };
       })();
-    bounds =
-      bounds === undefined ? resolved : unionBounds(bounds, resolved);
+    bounds = bounds === undefined ? resolved : unionBounds(bounds, resolved);
   }
   return bounds;
 }
 
 function applyMatrixPoint(matrix: Mat4, point: Vec3): Vec3 {
   return [
-    matrix[0] * point[0] + matrix[1] * point[1] + matrix[2] * point[2] + matrix[3],
-    matrix[4] * point[0] + matrix[5] * point[1] + matrix[6] * point[2] + matrix[7],
-    matrix[8] * point[0] + matrix[9] * point[1] + matrix[10] * point[2] + matrix[11],
+    matrix[0] * point[0] +
+      matrix[1] * point[1] +
+      matrix[2] * point[2] +
+      matrix[3],
+    matrix[4] * point[0] +
+      matrix[5] * point[1] +
+      matrix[6] * point[2] +
+      matrix[7],
+    matrix[8] * point[0] +
+      matrix[9] * point[1] +
+      matrix[10] * point[2] +
+      matrix[11],
   ];
 }
 
@@ -317,7 +325,8 @@ export function transformTargets(
     nodeIds: selection
       .filter(
         (entry): entry is Extract<SelectionEntry, { readonly kind: "node" }> =>
-          entry.kind === "node" && store.getDocument().nodes[entry.nodeId] !== undefined,
+          entry.kind === "node" &&
+          store.getDocument().nodes[entry.nodeId] !== undefined,
       )
       .map((entry) => entry.nodeId),
     center,
@@ -572,7 +581,8 @@ class TransformToolImpl implements TransformTool {
   /** Drag plane normal: perpendicular to the axis, facing the camera. */
   #dragPlaneNormal(axis: Vec3): Vec3 {
     const forward = this.#host.cameraForward();
-    const fallback = normalize(cross(axis, [0, 1, 0])) ?? normalize(cross(axis, [1, 0, 0])) ?? [1, 0, 0];
+    const fallback = normalize(cross(axis, [0, 1, 0])) ??
+      normalize(cross(axis, [1, 0, 0])) ?? [1, 0, 0];
     return normalize(cross(forward, axis)) ?? fallback;
   }
 
@@ -615,7 +625,14 @@ class TransformToolImpl implements TransformTool {
       const node = document.nodes[nodeId];
       const baseline = drag.baseline.get(nodeId);
       if (node === undefined || baseline === undefined) continue;
-      const next = this.#nextTransform(store, drag, nodeId, node.transform, baseline, point);
+      const next = this.#nextTransform(
+        store,
+        drag,
+        nodeId,
+        node.transform,
+        baseline,
+        point,
+      );
       if (next === undefined) continue;
       // Skip no-op updates so tiny drags never create empty transactions.
       const transform = canonicalTransform(next);
@@ -642,7 +659,9 @@ class TransformToolImpl implements TransformTool {
     switch (drag.handle.mode) {
       case "translate": {
         const delta = dot(subtract(point, drag.startPoint), drag.axis);
-        const amount = this.#snapping ? snapValue(delta, this.#translateSnap) : delta;
+        const amount = this.#snapping
+          ? snapValue(delta, this.#translateSnap)
+          : delta;
         if (amount === 0) return current;
         const direction =
           this.#space === "world"
@@ -664,14 +683,15 @@ class TransformToolImpl implements TransformTool {
         const d1 = normalize(subtract(point, drag.targets.center));
         if (d0 === undefined || d1 === undefined) return undefined;
         const angle = Math.atan2(dot(cross(d0, d1), drag.axis), dot(d0, d1));
-        const amount = this.#snapping ? snapValue(angle, this.#rotateSnap) : angle;
+        const amount = this.#snapping
+          ? snapValue(angle, this.#rotateSnap)
+          : angle;
         if (Math.abs(amount) < 1e-12) return current;
         if (this.#space === "world") {
           // W' = T(center) R T(-center) W(baseline), then resolve the
           // local transform under the baseline parent world (ADR-0001).
           const world = transformToMatrix(baseline);
-          const parentWorld =
-            drag.parentWorld.get(nodeId) ?? identityMatrix();
+          const parentWorld = drag.parentWorld.get(nodeId) ?? identityMatrix();
           const rotatedWorld = rotateWorldMatrix(
             world,
             drag.targets.center,
@@ -689,7 +709,10 @@ class TransformToolImpl implements TransformTool {
             scale: local.scale,
           };
         }
-        const delta = quaternionFromAxisAngle(AXES[drag.handle.axis] as Vec3, amount);
+        const delta = quaternionFromAxisAngle(
+          AXES[drag.handle.axis] as Vec3,
+          amount,
+        );
         return {
           translation: baseline.translation,
           pivot: baseline.pivot,
@@ -700,7 +723,9 @@ class TransformToolImpl implements TransformTool {
       case "scale": {
         const delta = dot(subtract(point, drag.startPoint), drag.axis);
         const raw = 1 + delta / drag.targets.radius;
-        const snapped = this.#snapping ? 1 + snapValue(raw - 1, this.#scaleSnap) : raw;
+        const snapped = this.#snapping
+          ? 1 + snapValue(raw - 1, this.#scaleSnap)
+          : raw;
         const factor = Math.max(snapped, MIN_SCALE_FACTOR);
         if (Math.abs(factor - 1) < 1e-12) return current;
         if (this.#space === "local") {
@@ -715,7 +740,10 @@ class TransformToolImpl implements TransformTool {
         }
         // World mode: scale along the world axis expressed in the node's
         // local frame.
-        const localAxis = rotateVector(quaternionConjugate(current.rotation), drag.axis);
+        const localAxis = rotateVector(
+          quaternionConjugate(current.rotation),
+          drag.axis,
+        );
         return {
           translation: baseline.translation,
           pivot: baseline.pivot,
@@ -775,7 +803,10 @@ function rotateWorldMatrix(
     rotation: [0, 0, 0, 1],
     scale: [1, 1, 1],
   });
-  return multiplyMatrices(multiplyMatrices(rotationMatrix, translateBack), world);
+  return multiplyMatrices(
+    multiplyMatrices(rotationMatrix, translateBack),
+    world,
+  );
 }
 
 /** Creates the transform gizmo tool for one composition. */

@@ -275,7 +275,10 @@ const RX: GizmoHandle = { mode: "rotate", axis: 0 };
 const RZ: GizmoHandle = { mode: "rotate", axis: 2 };
 const SX: GizmoHandle = { mode: "scale", axis: 0 };
 
-const expectNear = (actual: readonly number[], expected: readonly number[]): void => {
+const expectNear = (
+  actual: readonly number[],
+  expected: readonly number[],
+): void => {
   expect(actual).toHaveLength(expected.length);
   actual.forEach((value, index) => {
     expect(value).toBeCloseTo(expected[index] as number, 6);
@@ -303,7 +306,11 @@ describe("transformTargets", () => {
   it("is undefined without live node entries", () => {
     const { store } = createHarness([]);
     expect(transformTargets(store, [])).toBeUndefined();
-    expect(transformTargets(store, [{ kind: "voxel", volumeId: VOLUME, voxel: [0, 0, 0] }])).toBeUndefined();
+    expect(
+      transformTargets(store, [
+        { kind: "voxel", volumeId: VOLUME, voxel: [0, 0, 0] },
+      ]),
+    ).toBeUndefined();
   });
 });
 
@@ -353,15 +360,13 @@ describe("translate drag (plan S7.8)", () => {
     // center (the volume bounds center) moves to (-1,1,1).
     const rotated = eulerXYZToQuaternion([0, 0, Math.PI / 2]);
     expect(
-      h.bus
-        .execute(
-          setNodeTransformCommand(commandId("command:gizmo:rot"), {
-            nodeId: A,
-            transform: { ...identity, rotation: rotated },
-          }),
-          txOptions(h.store.revision),
-        )
-        .ok,
+      h.bus.execute(
+        setNodeTransformCommand(commandId("command:gizmo:rot"), {
+          nodeId: A,
+          transform: { ...identity, rotation: rotated },
+        }),
+        txOptions(h.store.revision),
+      ).ok,
     ).toBe(true);
     h.tool.setSpace("local");
     h.setRay(localXPlaneRay(0));
@@ -449,18 +454,16 @@ describe("scale drag (plan S7.8)", () => {
     const h = createHarness(nodeSelection(A));
     // Rotate A 90 deg around Z: world X maps onto local -Y.
     expect(
-      h.bus
-        .execute(
-          setNodeTransformCommand(commandId("command:gizmo:rot"), {
-            nodeId: A,
-            transform: {
-              ...identity,
-              rotation: eulerXYZToQuaternion([0, 0, Math.PI / 2]),
-            },
-          }),
-          txOptions(h.store.revision),
-        )
-        .ok,
+      h.bus.execute(
+        setNodeTransformCommand(commandId("command:gizmo:rot"), {
+          nodeId: A,
+          transform: {
+            ...identity,
+            rotation: eulerXYZToQuaternion([0, 0, Math.PI / 2]),
+          },
+        }),
+        txOptions(h.store.revision),
+      ).ok,
     ).toBe(true);
     h.tool.setSpace("world");
     h.setRay(xPlaneRay(0));
@@ -516,15 +519,13 @@ describe("drag lifecycle (plan S7.8/S4.10)", () => {
     // An intervening commit (another node) seals the gesture mid-drag;
     // the next update must fail and surface a notice.
     expect(
-      h.bus
-        .execute(
-          setNodeTransformCommand(commandId("command:gizmo:other"), {
-            nodeId: B,
-            transform: { ...identity, translation: [5, 0, 0] },
-          }),
-          txOptions(h.store.revision),
-        )
-        .ok,
+      h.bus.execute(
+        setNodeTransformCommand(commandId("command:gizmo:other"), {
+          nodeId: B,
+          transform: { ...identity, translation: [5, 0, 0] },
+        }),
+        txOptions(h.store.revision),
+      ).ok,
     ).toBe(true);
     h.setRay(xPlaneRay(0.5));
     const result = h.tool.pointerMove(10, 10);
@@ -549,4 +550,3 @@ function txOptions(expectedRevision: number): TransactionOptions {
     source: "ui",
   };
 }
-

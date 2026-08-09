@@ -28,10 +28,7 @@ import {
   type TransformTool,
   type TransformToolHost,
 } from "@voxel-maker/editor";
-import {
-  createGizmoOverlay,
-  type GizmoOverlay,
-} from "./gizmo.js";
+import { createGizmoOverlay, type GizmoOverlay } from "./gizmo.js";
 import type { DocumentSession } from "@voxel-maker/session";
 import { MAX_VOXELS_PER_OPERATION } from "@voxel-maker/voxel";
 import {
@@ -480,7 +477,12 @@ class ViewportControllerImpl implements ViewportController {
   refreshGizmo(): void {
     const store = this.#session.current?.store;
     if (store === undefined) {
-      this.#gizmo.update(undefined, this.#transform.mode, this.#transform.space, undefined);
+      this.#gizmo.update(
+        undefined,
+        this.#transform.mode,
+        this.#transform.space,
+        undefined,
+      );
       return;
     }
     const targets = transformTargets(store, this.#editor.selection);
@@ -585,7 +587,9 @@ class ViewportControllerImpl implements ViewportController {
       ray: (clientX, clientY) => this.cameraRay(clientX, clientY),
       nextCommandId: (): CommandId => {
         this.#transformSequence += 1;
-        return commandId(`command:transform:${String(this.#transformSequence)}`);
+        return commandId(
+          `command:transform:${String(this.#transformSequence)}`,
+        );
       },
       beginGesture: (): GestureHost | undefined => {
         const current = session.current;

@@ -1,8 +1,4 @@
-import {
-  nodeId,
-  type CommandId,
-  type NodeId,
-} from "@voxel-maker/shared";
+import { nodeId, type CommandId, type NodeId } from "@voxel-maker/shared";
 import type { VoxelDocument } from "@voxel-maker/model";
 import {
   createNodeCommand,
@@ -42,11 +38,7 @@ export type DeleteFeedback =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      readonly reason:
-        | "missing-node"
-        | "root"
-        | "has-children"
-        | "referenced";
+      readonly reason: "missing-node" | "root" | "has-children" | "referenced";
     };
 
 /**
@@ -86,7 +78,8 @@ export function isAncestor(
   maybeAncestorId: NodeId,
 ): boolean {
   const seen = new Set<NodeId>();
-  let current: NodeId | undefined = document.nodes[nodeId]?.parentId ?? undefined;
+  let current: NodeId | undefined =
+    document.nodes[nodeId]?.parentId ?? undefined;
   while (current !== undefined) {
     if (current === maybeAncestorId) return true;
     if (seen.has(current)) return false;
@@ -204,7 +197,11 @@ export function buildReparentCommand(
 ): Command<"node.reparent"> | undefined {
   const feedback = reparentFeedback(document, nodeId, targetId);
   if (!feedback.ok) return undefined;
-  return reparentNodeCommand(id, { nodeId, newParentId: targetId, placement: "preserve-world" }, document);
+  return reparentNodeCommand(
+    id,
+    { nodeId, newParentId: targetId, placement: "preserve-world" },
+    document,
+  );
 }
 
 /** Derives a deterministic node id from the command id (branded). */

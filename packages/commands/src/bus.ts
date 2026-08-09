@@ -715,7 +715,11 @@ export class CommandBus {
       this.#past[this.#past.length - 2] = merged;
       this.#past.pop();
       this.#inverseBytes += merged.inverseBytes - replacedBytes;
-      this.#pending = { key, firstForward: pending.firstForward, entry: merged };
+      this.#pending = {
+        key,
+        firstForward: pending.firstForward,
+        entry: merged,
+      };
     } else {
       // Incompatible resources or types: the just-committed entry seals
       // (it stays a normal undoable entry) and becomes the first segment
@@ -731,10 +735,7 @@ export class CommandBus {
    * the exact pre-gesture semantic state. On failure the pending entry
    * seals and remains undoable.
    */
-  cancelGesture(
-    key: string,
-    options: TransactionOptions,
-  ): TransactionResult {
+  cancelGesture(key: string, options: TransactionOptions): TransactionResult {
     if (this.#activeGestureKey !== key) {
       return err(
         new WorkspaceError({

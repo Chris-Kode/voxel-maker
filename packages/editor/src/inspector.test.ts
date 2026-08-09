@@ -39,7 +39,9 @@ describe("inspector text parsing (plan S7.12)", () => {
   it("parses comma and whitespace separated vectors", () => {
     expect(parseVec3Input("1, 2, 3", "translation")).toEqual([1, 2, 3]);
     expect(parseVec3Input("1 2 3", "translation")).toEqual([1, 2, 3]);
-    expect(parseVec3Input("-0, 0.5, -1e3", "translation")).toEqual([0, 0.5, -1000]);
+    expect(parseVec3Input("-0, 0.5, -1e3", "translation")).toEqual([
+      0, 0.5, -1000,
+    ]);
   });
 
   it("rejects malformed vectors with a structured error", () => {
@@ -64,7 +66,9 @@ describe("inspector text parsing (plan S7.12)", () => {
     const text = formatRotationDegrees(rotation);
     const back = parseRotationDegreesInput(text);
     for (let index = 0; index < 4; index += 1) {
-      expect(Math.abs((back[index] as number) - (rotation[index] as number))).toBeLessThan(0.01);
+      expect(
+        Math.abs((back[index] as number) - (rotation[index] as number)),
+      ).toBeLessThan(0.01);
     }
   });
 
@@ -111,7 +115,10 @@ describe("mixed multi-selection resolution (plan S7.12)", () => {
   it("compares rotation through the canonical Euler branch", () => {
     const q = eulerXYZToQuaternion([0, 0, 0.5]);
     const field = transformFieldValue(
-      [{ ...identity, rotation: q }, { ...identity, rotation: q }],
+      [
+        { ...identity, rotation: q },
+        { ...identity, rotation: q },
+      ],
       "rotation",
     );
     expect(field).toEqual({ kind: "value", value: quaternionToEulerXYZ(q) });
@@ -129,14 +136,23 @@ describe("transform edit command construction (plan S7.12)", () => {
       nextCommandId,
       [
         { nodeId: A, transform: { ...identity, translation: [1, 2, 3] } },
-        { nodeId: B, transform: { ...identity, translation: [4, 5, 6], scale: [2, 2, 2] } },
+        {
+          nodeId: B,
+          transform: { ...identity, translation: [4, 5, 6], scale: [2, 2, 2] },
+        },
       ],
       "translation",
       [9, 9, 9],
     );
     expect(commands).toHaveLength(2);
-    const first = commands[0]?.payload as { nodeId: NodeId; transform: Transform };
-    const second = commands[1]?.payload as { nodeId: NodeId; transform: Transform };
+    const first = commands[0]?.payload as {
+      nodeId: NodeId;
+      transform: Transform;
+    };
+    const second = commands[1]?.payload as {
+      nodeId: NodeId;
+      transform: Transform;
+    };
     expect(first.nodeId).toBe(A);
     expect(first.transform.translation).toEqual([9, 9, 9]);
     expect(first.transform.scale).toEqual([1, 1, 1]);

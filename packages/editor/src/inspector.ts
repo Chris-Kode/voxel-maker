@@ -29,11 +29,7 @@ import type { Component, MetadataRecord } from "@voxel-maker/model";
  */
 
 /** One editable transform field. */
-export type TransformField =
-  | "translation"
-  | "rotation"
-  | "scale"
-  | "pivot";
+export type TransformField = "translation" | "rotation" | "scale" | "pivot";
 
 /** Result of resolving one field across a multi-selection. */
 export type FieldValue =
@@ -225,7 +221,11 @@ export function parseMetadataInput(text: string): MetadataRecord {
 }
 
 function assertJsonValues(value: unknown, seen: Set<object>): void {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
     return;
   }
   if (typeof value === "number") {

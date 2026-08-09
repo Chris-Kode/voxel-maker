@@ -313,7 +313,9 @@ describe("viewport controller", () => {
     const moved = state.store.getDocument().nodes[CHILD]?.transform;
     if (moved === undefined) throw new Error("missing node");
     expect(moved.translation[0]).not.toBe(baseline.translation[0]);
-    expect(Math.abs(moved.translation[0] - baseline.translation[0]) % 0.25).toBeLessThan(1e-9);
+    expect(
+      Math.abs(moved.translation[0] - baseline.translation[0]) % 0.25,
+    ).toBeLessThan(1e-9);
     expect(moved.translation[1]).toBe(baseline.translation[1]);
     expect(moved.translation[2]).toBe(baseline.translation[2]);
 

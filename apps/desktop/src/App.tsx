@@ -179,7 +179,11 @@ export function App(): React.JSX.Element {
           </span>
         ) : null}
         {editorState.activeTool === "select" ? (
-          <span className="gizmo-controls" role="group" aria-label="Transform gizmo">
+          <span
+            className="gizmo-controls"
+            role="group"
+            aria-label="Transform gizmo"
+          >
             {GIZMO_MODES.map((mode) => (
               <button
                 key={mode.id}
@@ -189,7 +193,9 @@ export function App(): React.JSX.Element {
                     ? "active"
                     : undefined
                 }
-                aria-pressed={composition.viewport.transformTool.mode === mode.id}
+                aria-pressed={
+                  composition.viewport.transformTool.mode === mode.id
+                }
                 onClick={() => {
                   composition.viewport.transformTool.setMode(mode.id);
                   composition.viewport.refreshGizmo();
@@ -206,7 +212,9 @@ export function App(): React.JSX.Element {
                   ? "active"
                   : undefined
               }
-              aria-pressed={composition.viewport.transformTool.space === "world"}
+              aria-pressed={
+                composition.viewport.transformTool.space === "world"
+              }
               onClick={() => {
                 composition.viewport.transformTool.setSpace("world");
                 composition.viewport.refreshGizmo();
@@ -221,7 +229,9 @@ export function App(): React.JSX.Element {
                   ? "active"
                   : undefined
               }
-              aria-pressed={composition.viewport.transformTool.space === "local"}
+              aria-pressed={
+                composition.viewport.transformTool.space === "local"
+              }
               onClick={() => {
                 composition.viewport.transformTool.setSpace("local");
                 composition.viewport.refreshGizmo();

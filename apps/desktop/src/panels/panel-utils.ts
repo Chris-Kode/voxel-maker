@@ -138,5 +138,7 @@ export function executeTransaction(
     source: "ui",
     label,
   });
-  return result.ok ? { ok: true } : { ok: false, message: result.error.message };
+  return result.ok
+    ? { ok: true }
+    : { ok: false, message: result.error.message };
 }

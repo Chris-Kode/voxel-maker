@@ -103,11 +103,19 @@ export function InspectorPanel({
             : parseVec3Input(text, field);
       const commands = buildSetTransformFieldCommands(
         () => panelIds.nextCommandId(),
-        nodes.map((node) => ({ nodeId: node.nodeId, transform: node.transform })),
+        nodes.map((node) => ({
+          nodeId: node.nodeId,
+          transform: node.transform,
+        })),
         field,
         value,
       );
-      const result = executeTransaction(session, panelIds, commands, "Edit transform");
+      const result = executeTransaction(
+        session,
+        panelIds,
+        commands,
+        "Edit transform",
+      );
       if (!result.ok) editor.pushNotice("error", result.message);
     } catch (error) {
       const message =
@@ -123,14 +131,24 @@ export function InspectorPanel({
       single.nodeId,
       components,
     );
-    const result = executeTransaction(session, panelIds, [command], "Edit components");
+    const result = executeTransaction(
+      session,
+      panelIds,
+      [command],
+      "Edit components",
+    );
     if (!result.ok) editor.pushNotice("error", result.message);
   };
 
   const addComponent = (component: Component): void => {
     if (single === undefined) return;
-    if (single.components.some((existing) => existing.kind === component.kind)) {
-      editor.pushNotice("warning", `The node already has a ${component.kind} component`);
+    if (
+      single.components.some((existing) => existing.kind === component.kind)
+    ) {
+      editor.pushNotice(
+        "warning",
+        `The node already has a ${component.kind} component`,
+      );
       return;
     }
     setComponents([...single.components, component]);
@@ -176,7 +194,10 @@ export function InspectorPanel({
       ) : (
         <ul className="component-list">
           {single.components.map((component, index) => (
-            <li key={`${component.kind}-${String(index)}`} className="component-row">
+            <li
+              key={`${component.kind}-${String(index)}`}
+              className="component-row"
+            >
               <span className="component-kind">{component.kind}</span>
               <span className="component-summary">
                 <ComponentSummary
@@ -245,7 +266,12 @@ export function InspectorPanel({
                 single.nodeId,
                 text,
               );
-              const result = executeTransaction(session, panelIds, [command], "Edit metadata");
+              const result = executeTransaction(
+                session,
+                panelIds,
+                [command],
+                "Edit metadata",
+              );
               if (!result.ok) editor.pushNotice("error", result.message);
             } catch (error) {
               const message =
@@ -386,7 +412,8 @@ function MetadataEditor({
   onCommit: (text: string) => void;
 }): React.JSX.Element {
   const node = document.nodes[nodeId];
-  const initial = node?.metadata === undefined ? "" : formatMetadata(node.metadata);
+  const initial =
+    node?.metadata === undefined ? "" : formatMetadata(node.metadata);
   const [text, setText] = useState(initial);
   return (
     <textarea

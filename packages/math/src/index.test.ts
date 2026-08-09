@@ -311,7 +311,11 @@ describe("quaternion composition utilities", () => {
     const qz = [0, 0, HALF, HALF] as const;
     const qx = [HALF, 0, 0, HALF] as const;
     const composed = quaternionMultiply(qx, qz);
-    const axis = [1 / Math.sqrt(3), -1 / Math.sqrt(3), 1 / Math.sqrt(3)] as const;
+    const axis = [
+      1 / Math.sqrt(3),
+      -1 / Math.sqrt(3),
+      1 / Math.sqrt(3),
+    ] as const;
     const expected = quaternionFromAxisAngle(axis, (2 * Math.PI) / 3);
     expect(composed[0]).toBeCloseTo(expected[0], 9);
     expect(composed[1]).toBeCloseTo(expected[1], 9);
@@ -363,12 +367,10 @@ describe("quaternion composition utilities", () => {
     expect(locked[2]).toBeCloseTo(0, 9);
     // The folded x reproduces the same rotation.
     const recomposed = eulerXYZToQuaternion(locked);
+    const expected = eulerXYZToQuaternion([0.3, Math.PI / 2, 0.7]);
     for (let index = 0; index < 4; index += 1) {
       expect(
-        Math.abs(
-          (recomposed[index] as number) -
-            eulerXYZToQuaternion([0.3, Math.PI / 2, 0.7])[index]!,
-        ),
+        Math.abs((recomposed[index] as number) - (expected[index] as number)),
       ).toBeLessThan(1e-9);
     }
     // Principal branch: x/z in [-pi, pi], y in [-pi/2, pi/2].

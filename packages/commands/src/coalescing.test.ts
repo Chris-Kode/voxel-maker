@@ -64,7 +64,10 @@ function createDemoDocument(): VoxelDocument {
   });
 }
 
-function createBus(): { bus: CommandBus; store: ReturnType<typeof createDocumentStore>["store"] } {
+function createBus(): {
+  bus: CommandBus;
+  store: ReturnType<typeof createDocumentStore>["store"];
+} {
   const { store, writeCapability } = createDocumentStore({
     document: createDemoDocument(),
   });
@@ -83,10 +86,13 @@ const move = (
   translation: readonly [number, number, number],
 ): Command<typeof NODE_SET_TRANSFORM_COMMAND, SetNodeTransformPayload> => {
   sequence += 1;
-  return setNodeTransformCommand(commandId(`command:coalesce:${String(sequence)}`), {
-    nodeId: node,
-    transform: { ...identity, translation },
-  });
+  return setNodeTransformCommand(
+    commandId(`command:coalesce:${String(sequence)}`),
+    {
+      nodeId: node,
+      transform: { ...identity, translation },
+    },
+  );
 };
 
 const tx = (expectedRevision: number): TransactionOptions => {
@@ -107,7 +113,6 @@ const translationOf = (
   if (record === undefined) throw new Error(`missing node ${node}`);
   return record.transform.translation;
 };
-
 
 describe("CommandBus gesture coalescing (plan S4.10)", () => {
   it("presents a whole drag as one history entry with the gesture label", () => {
@@ -220,7 +225,10 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
     const { bus, store } = createBus();
     const gesture = bus.beginGesture("drag:translate:a");
     expect(gesture.update([move(A, [1, 0, 0])], tx(0)).ok).toBe(true);
-    const bad: Command<typeof NODE_SET_TRANSFORM_COMMAND, SetNodeTransformPayload> = {
+    const bad: Command<
+      typeof NODE_SET_TRANSFORM_COMMAND,
+      SetNodeTransformPayload
+    > = {
       id: commandId("command:coalesce:bad"),
       type: NODE_SET_TRANSFORM_COMMAND,
       schemaVersion: 1,

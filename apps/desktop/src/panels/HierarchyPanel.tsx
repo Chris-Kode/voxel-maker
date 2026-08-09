@@ -134,10 +134,16 @@ export function HierarchyPanel({
     if (document.document === undefined) return;
     const current = document.document.nodes[nodeId];
     const nextName = renameText.trim();
-    if (current?.name === nextName || (nextName === "" && current?.name === undefined)) {
+    if (
+      current?.name === nextName ||
+      (nextName === "" && current?.name === undefined)
+    ) {
       return;
     }
-    commit([buildRenameCommand(panelIds.nextCommandId(), nodeId, nextName)], "Rename node");
+    commit(
+      [buildRenameCommand(panelIds.nextCommandId(), nodeId, nextName)],
+      "Rename node",
+    );
   };
 
   const remove = (nodeId: NodeId): void => {
@@ -147,7 +153,12 @@ export function HierarchyPanel({
       editor.pushNotice("error", deleteReason(feedback.reason));
       return;
     }
-    if (commit([buildDeleteCommand(panelIds.nextCommandId(), nodeId)], "Delete node")) {
+    if (
+      commit(
+        [buildDeleteCommand(panelIds.nextCommandId(), nodeId)],
+        "Delete node",
+      )
+    ) {
       editor.setSelection(
         editorState.selection.filter((entry) => {
           if (entry.kind !== "node") return true;
@@ -188,13 +199,18 @@ export function HierarchyPanel({
     if (command === undefined) {
       const feedback = reparentFeedback(document.document, dragged, target);
       if (!feedback.ok) {
-        editor.pushNotice("error", REJECTION_LABELS[feedback.reason] ?? "Cannot drop the node here");
+        editor.pushNotice(
+          "error",
+          REJECTION_LABELS[feedback.reason] ?? "Cannot drop the node here",
+        );
       }
       return;
     }
     if (commit([command], "Reparent node")) {
       editor.setSelection([
-        ...editorState.selection.filter((entry) => entry.kind !== "node" || entry.nodeId !== dragged),
+        ...editorState.selection.filter(
+          (entry) => entry.kind !== "node" || entry.nodeId !== dragged,
+        ),
         { kind: "node", nodeId: dragged },
       ]);
     }
@@ -217,7 +233,9 @@ export function HierarchyPanel({
             "hierarchy-row",
             selected ? "selected" : undefined,
             dropState !== undefined && dropState.ok ? "drop-target" : undefined,
-            dropState !== undefined && !dropState.ok ? "drop-invalid" : undefined,
+            dropState !== undefined && !dropState.ok
+              ? "drop-invalid"
+              : undefined,
           ]
             .filter(Boolean)
             .join(" ")}
@@ -361,7 +379,9 @@ export function HierarchyPanel({
           ＋ Root child
         </button>
       </h2>
-      <div className="hierarchy-tree">{renderNode(document.document.rootNodeId, 0)}</div>
+      <div className="hierarchy-tree">
+        {renderNode(document.document.rootNodeId, 0)}
+      </div>
     </section>
   );
 }
@@ -376,7 +396,8 @@ function isDescendantOf(
   nodeId: NodeId,
 ): boolean {
   const seen = new Set<NodeId>();
-  let current: NodeId | undefined = document.nodes[nodeId]?.parentId ?? undefined;
+  let current: NodeId | undefined =
+    document.nodes[nodeId]?.parentId ?? undefined;
   while (current !== undefined) {
     if (current === ancestor) return true;
     if (seen.has(current)) return false;
