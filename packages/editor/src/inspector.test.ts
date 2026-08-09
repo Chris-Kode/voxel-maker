@@ -7,8 +7,12 @@ import {
 } from "@voxel-maker/shared";
 import { eulerXYZToQuaternion, type Transform } from "@voxel-maker/math";
 import {
+  buildAddJointCommand,
+  buildRemoveJointCommand,
+  buildRemovePivotCommand,
   buildSetComponentsCommand,
   buildSetMetadataCommand,
+  buildSetPivotCommand,
   buildSetTransformFieldCommands,
   formatMetadata,
   formatNumber,
@@ -213,5 +217,48 @@ describe("transform edit command construction (plan S7.12)", () => {
     // NaN is not valid JSON; engines reject it at parse time (the helper
     // additionally rejects non-finite numbers defensively).
     expect(() => parseMetadataInput('{"a": NaN}')).toThrow(/JSON|finite/u);
+  });
+});
+
+describe("articulation component command construction (plan S9.3, ticket #26)", () => {
+  it("builds a node.setPivot command with the canonical pivot", () => {
+    const command = buildSetPivotCommand(
+      commandId("command:inspector:set-pivot"),
+      A,
+      [1, -0, 2],
+    );
+    expect(command.type).toBe("node.setPivot");
+    expect(command.schemaVersion).toBe(1);
+    expect(command.payload).toEqual({ nodeId: A, pivot: [1, 0, 2] });
+  });
+
+  it("builds node.removePivot, node.addJoint, and node.removeJoint commands", () => {
+    expect(
+      buildRemovePivotCommand(commandId("command:inspector:remove-pivot"), A)
+        .type,
+    ).toBe("node.removePivot");
+    expect(
+      buildAddJointCommand(commandId("command:inspector:add-joint"), B).type,
+    ).toBe("node.addJoint");
+    expect(
+      buildRemoveJointCommand(commandId("command:inspector:remove-joint"), B)
+        .type,
+    ).toBe("node.removeJoint");
+  });
+
+  it("carries the branded node id in every payload", () => {
+    const commands = [
+      buildSetPivotCommand(
+        commandId("command:inspector:set-pivot"),
+        A,
+        [0, 0, 0],
+      ),
+      buildRemovePivotCommand(commandId("command:inspector:remove-pivot"), A),
+      buildAddJointCommand(commandId("command:inspector:add-joint"), A),
+      buildRemoveJointCommand(commandId("command:inspector:remove-joint"), A),
+    ] as const;
+    for (const command of commands) {
+      expect((command.payload as { nodeId: NodeId }).nodeId).toBe(A);
+    }
   });
 });

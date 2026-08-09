@@ -26,6 +26,7 @@
   "dependencies": {
     "@voxel-maker/shared": "workspace:*",
     "@voxel-maker/model": "workspace:*",
-    "@voxel-maker/document": "workspace:*"
+    "@voxel-maker/document": "workspace:*",
+    "@voxel-maker/math": "workspace:*"
   }
 }

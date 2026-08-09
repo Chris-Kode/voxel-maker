@@ -30,6 +30,7 @@ import {
   fillSphereCommand,
   registerBatchCommands,
   registerMaterialCommands,
+  registerArticulationCommands,
   registerNodeCommands,
   registerRegionCommands,
   registerVoxelCommands,
@@ -77,6 +78,7 @@ export async function runPersistenceTrace(): Promise<string> {
   registerBatchCommands(registry);
   registerRegionCommands(registry);
   registerNodeCommands(registry);
+  registerArticulationCommands(registry);
   registerMaterialCommands(registry);
   const bus = new CommandBus(store, registry, writeCapability);
 

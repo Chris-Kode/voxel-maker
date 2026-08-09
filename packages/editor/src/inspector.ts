@@ -12,9 +12,13 @@ import {
   type Vec3,
 } from "@voxel-maker/math";
 import {
+  addJointCommand,
+  removeJointCommand,
+  removePivotCommand,
   setNodeComponentsCommand,
   setNodeMetadataCommand,
   setNodeTransformCommand,
+  setPivotCommand,
   type Command,
 } from "@voxel-maker/commands";
 import type { Component, MetadataRecord } from "@voxel-maker/model";
@@ -212,6 +216,43 @@ function applyField(
     case "pivot":
       return { ...transform, pivot: value as Vec3 };
   }
+}
+
+/**
+ * Builds a `node.setPivot` command that creates or updates the singleton
+ * pivot component (plan S9.3, ticket #26). The command bus validates the
+ * node and canonicalizes the pivot.
+ */
+export function buildSetPivotCommand(
+  id: CommandId,
+  nodeId: NodeId,
+  pivot: Vec3,
+): Command<"node.setPivot"> {
+  return setPivotCommand(id, { nodeId, pivot });
+}
+
+/** Builds a `node.removePivot` command (no-op when the pivot is absent). */
+export function buildRemovePivotCommand(
+  id: CommandId,
+  nodeId: NodeId,
+): Command<"node.removePivot"> {
+  return removePivotCommand(id, { nodeId });
+}
+
+/** Builds a `node.addJoint` command (no-op when the joint is present). */
+export function buildAddJointCommand(
+  id: CommandId,
+  nodeId: NodeId,
+): Command<"node.addJoint"> {
+  return addJointCommand(id, { nodeId });
+}
+
+/** Builds a `node.removeJoint` command (no-op when the joint is absent). */
+export function buildRemoveJointCommand(
+  id: CommandId,
+  nodeId: NodeId,
+): Command<"node.removeJoint"> {
+  return removeJointCommand(id, { nodeId });
 }
 
 /** Builds a `node.setComponents` command (single selection; plan S7.12). */

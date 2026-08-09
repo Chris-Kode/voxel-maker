@@ -6,6 +6,7 @@ import {
   createDocumentStore,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import type { Component } from "@voxel-maker/model";
 import {
   chunkCoordinate,
   chunkIndex,
@@ -61,7 +62,7 @@ function boxSeeds(): VoxelChunkSeed[] {
   }));
 }
 
-function buildStore(): DocumentStoreRead {
+function buildStore(boxComponents?: readonly Component[]): DocumentStoreRead {
   const document = createDocument({
     documentId: documentId("document:overlay:0001"),
     metadata: { title: "overlay fixture" },
@@ -81,7 +82,10 @@ function buildStore(): DocumentStoreRead {
         parentId: ROOT,
         children: [],
         transform: { ...IDENTITY, translation: [2, 0, 0] },
-        components: [{ kind: "voxel", schemaVersion: 1, volumeId: VOLUME }],
+        components: [
+          { kind: "voxel", schemaVersion: 1, volumeId: VOLUME },
+          ...(boxComponents ?? []),
+        ],
       },
     ],
     materials: [
@@ -253,6 +257,7 @@ describe("overlay manager", () => {
       axes: true,
       bounds: true,
       pivots: true,
+      joints: true,
     });
     expect(overlays.toggle("grid")).toBe(false);
     expect(
@@ -262,6 +267,35 @@ describe("overlay manager", () => {
     expect(
       (objectsOfType(scene, THREE.GridHelper)[0] as THREE.GridHelper).visible,
     ).toBe(true);
+    overlays.dispose();
+  });
+
+  it("shows joint ring markers for selected joint-annotated nodes", () => {
+    const scene = new THREE.Scene();
+    const overlays = createOverlayManager(scene);
+    const store = buildStore([{ kind: "joint", schemaVersion: 1 }]);
+    overlays.update(store, [{ kind: "node", nodeId: BOX }]);
+    const rings = objectsOfType(scene, THREE.LineLoop);
+    // One ring at the box node's world pivot (2, 0, 0).
+    expect(rings).toHaveLength(1);
+    const ring = rings[0] as THREE.LineLoop;
+    expect(ring.position.x).toBe(2);
+    expect(ring.position.y).toBe(0);
+    expect(ring.position.z).toBe(0);
+    expect((ring.material as THREE.LineBasicMaterial).depthTest).toBe(false);
+    expect(ring.renderOrder).toBe(3);
+    // Deselecting removes the ring.
+    overlays.update(store, []);
+    expect(objectsOfType(scene, THREE.LineLoop)).toHaveLength(0);
+    overlays.dispose();
+  });
+
+  it("does not show joint rings for nodes without a joint annotation", () => {
+    const scene = new THREE.Scene();
+    const overlays = createOverlayManager(scene);
+    const store = buildStore();
+    overlays.update(store, [{ kind: "node", nodeId: BOX }]);
+    expect(objectsOfType(scene, THREE.LineLoop)).toHaveLength(0);
     overlays.dispose();
   });
 
