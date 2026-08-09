@@ -38,6 +38,7 @@ import type { CommittedTransactionRecord } from "./codec.js";
 import type {
   CommandExecutionContext,
   CommandExecution,
+  DeclaredAffectedResources,
   InverseCommand,
   MutableDocument,
 } from "./registry.js";
@@ -70,6 +71,62 @@ interface HistoryEntry {
   readonly correlationId?: string;
   readonly label?: string;
   readonly inverseBytes: number;
+  /**
+   * Declared affected-resource union of the forward commands (plan 5.3).
+   * Coalescing requires compatible resources on the latest unsealed entry
+   * (ADR-0003).
+   */
+  readonly affected: DeclaredAffectedResources;
+  /** Forward command types in order; coalescing requires an exact match. */
+  readonly types: readonly string[];
+}
+
+/**
+ * One open coalescing gesture (plan S4.10, ADR-0003). A gesture runs many
+ * deterministic transactions while presenting exactly one history entry:
+ * every compatible `update` executes a normal atomic transaction and then
+ * replaces the unsealed history entry, so the drag reads as a single
+ * user-meaningful action. The entry seals on `end`, on an incompatible or
+ * intervening commit, on undo/redo, on lifecycle replacement (a fresh bus
+ * per install), or on failure.
+ */
+export interface GestureHandle {
+  /** The deterministic coalescing key supplied at `beginGesture`. */
+  readonly key: string;
+  /** False once the gesture is sealed (end, cancel, or external commit). */
+  readonly active: boolean;
+  /**
+   * Executes one coalesced update as a normal atomic transaction and
+   * replaces the pending history entry when the key matches and the new
+   * commands declare compatible affected resources and identical types.
+   * On failure the pending entry seals and the error is returned.
+   */
+  update(
+    commands: readonly Command[],
+    options: TransactionOptions,
+  ): TransactionResult;
+  /**
+   * Seals the pending history entry as a normal undoable entry. No-op when
+   * the gesture is already sealed or never committed an update.
+   */
+  end(): void;
+  /**
+   * Rolls the document back to the exact pre-gesture state by executing the
+   * pending entry's inverse as one transaction that leaves no history entry
+   * behind (plan S4.10 "pointer cancel rollback"). `options` carries the
+   * fresh transaction id and the current expected revision. Returns the
+   * rollback result; on failure the pending entry seals and remains
+   * undoable.
+   */
+  cancel(options: TransactionOptions): TransactionResult;
+}
+
+/** State of the unsealed gesture; `entry` is the live entry in `#past`. */
+interface PendingGesture {
+  readonly key: string;
+  /** Commands of the first update; redo replays them before the latest. */
+  readonly firstForward: readonly Command[];
+  readonly entry: HistoryEntry;
 }
 
 interface IdempotencyRecord {
@@ -91,7 +148,12 @@ export interface CommandBusHooks {
 type RunMode =
   | { readonly kind: "commit" }
   | { readonly kind: "undo"; readonly entry: HistoryEntry }
-  | { readonly kind: "redo"; readonly entry: HistoryEntry };
+  | { readonly kind: "redo"; readonly entry: HistoryEntry }
+  /**
+   * Gesture cancel rollback (plan S4.10): executes the pending inverse as
+   * one atomic transaction that leaves no history entry behind.
+   */
+  | { readonly kind: "cancel"; readonly entry: HistoryEntry };
 
 /** Copy-on-write staging state for one transaction (plan 4.3). */
 interface StagedOverlay {
@@ -122,6 +184,10 @@ export class CommandBus {
   #past: HistoryEntry[] = [];
   #future: HistoryEntry[] = [];
   #inverseBytes = 0;
+  /** Key of the gesture opened by `beginGesture` until it seals. */
+  #activeGestureKey: string | undefined;
+  /** The unsealed coalescing gesture, when one is active (plan S4.10). */
+  #pending: PendingGesture | undefined;
   readonly #idempotency = new Map<TransactionId, IdempotencyRecord>();
 
   readonly #hooks: CommandBusHooks;
@@ -145,16 +211,40 @@ export class CommandBus {
     return this.executeTransaction([command], options);
   }
 
+  /**
+   * Opens a coalescing gesture (plan S4.10). Returns a handle whose
+   * `update` calls execute normal transactions but replace the unsealed
+   * history entry, so the whole drag presents as one history entry.
+   * Throws when another gesture is already active on this bus.
+   */
+  beginGesture(key: string): GestureHandle {
+    if (this.#activeGestureKey !== undefined) {
+      throw new WorkspaceError({
+        family: "conflict",
+        code: "GESTURE_ACTIVE",
+        message: "Another coalescing gesture is already active",
+        context: { key: this.#activeGestureKey },
+      });
+    }
+    this.#activeGestureKey = key;
+    return new GestureHandleImpl(this, key);
+  }
+
   /** Executes a batch of commands atomically as one transaction. */
   executeTransaction(
     commands: readonly Command[],
     options: TransactionOptions,
   ): TransactionResult {
+    // An intervening commit seals the unsealed gesture entry (ADR-0003).
+    this.#sealPending();
     return this.#runTransaction(commands, options, { kind: "commit" });
   }
 
   /** Undoes the most recent transaction, restoring exact semantic state. */
   undo(options: TransactionOptions): TransactionResult {
+    // Undo seals the unsealed gesture entry, then undoes it like any
+    // other entry (ADR-0003).
+    this.#sealPending();
     const entry = this.#past[this.#past.length - 1];
     if (entry === undefined) {
       // Revision verification precedes idempotent replay (plan 5.4).
@@ -183,6 +273,8 @@ export class CommandBus {
 
   /** Redoes the most recently undone transaction. */
   redo(options: TransactionOptions): TransactionResult {
+    // Redo seals the unsealed gesture entry (ADR-0003).
+    this.#sealPending();
     const entry = this.#future[this.#future.length - 1];
     if (entry === undefined) {
       // Revision verification precedes idempotent replay (plan 5.4).
@@ -377,6 +469,8 @@ export class CommandBus {
           total + canonicalJson(inverse.payload as JsonValue).length,
         0,
       ),
+      affected: unionAffectedResources(executions),
+      types: commands.map((command) => command.type),
     };
 
     if (mode.kind === "commit") {
@@ -388,12 +482,25 @@ export class CommandBus {
         ...mode.entry,
         ...historyMetadata(options, revisionBefore, revisionAfter),
       });
-    } else {
+    } else if (mode.kind === "redo") {
       this.#future.pop();
       this.#pushPast({
         ...mode.entry,
         ...historyMetadata(options, revisionBefore, revisionAfter),
       });
+    } else {
+      // Gesture cancel rollback: the inverse restored the pre-gesture
+      // state; no history entry is created, moved, or replaced. The
+      // handle validates the pending entry before running, so a mismatch
+      // here is a programming error, never a user-visible failure.
+      if (this.#pending?.entry !== mode.entry) {
+        throw new Error(
+          "CommandBus: cancel rollback entry is not the pending gesture",
+        );
+      }
+      this.#past.pop();
+      this.#inverseBytes -= mode.entry.inverseBytes;
+      this.#sealPending();
     }
 
     const result: TransactionSuccess = {
@@ -529,6 +636,135 @@ export class CommandBus {
     this.#future = [];
   }
 
+  /** Seals the unsealed gesture entry; it becomes a normal history entry. */
+  #sealPending(): void {
+    this.#activeGestureKey = undefined;
+    this.#pending = undefined;
+  }
+
+  /** Key of the active gesture, or undefined once it is sealed. */
+  activeGestureKey(): string | undefined {
+    return this.#activeGestureKey;
+  }
+
+  /** Seals the matching gesture on `end`; no-op for foreign or sealed keys. */
+  sealGesture(key: string): void {
+    if (this.#activeGestureKey === key) this.#sealPending();
+  }
+
+  /**
+   * One coalesced gesture update (plan S4.10). Runs a normal atomic
+   * transaction, then either merges the new entry into the unsealed one
+   * (compatible resources and types) or seals and starts a fresh segment.
+   */
+  gestureUpdate(
+    key: string,
+    commands: readonly Command[],
+    options: TransactionOptions,
+  ): TransactionResult {
+    const pending = this.#pending;
+    if (pending === undefined || pending.key !== key) {
+      // First update of a segment (the gesture itself, or a fresh segment
+      // after an intervening commit sealed the previous one).
+      const result = this.#runTransaction(commands, options, {
+        kind: "commit",
+      });
+      if (!result.ok) return result;
+      const entry = this.#past[this.#past.length - 1];
+      if (entry === undefined) {
+        throw new Error("CommandBus: gesture update left no history entry");
+      }
+      this.#pending = { key, firstForward: [...commands], entry };
+      return result;
+    }
+    const result = this.#runTransaction(commands, options, { kind: "commit" });
+    if (!result.ok) {
+      // A failed update seals the pending entry (ADR-0003).
+      this.#sealPending();
+      return result;
+    }
+    const newEntry = this.#past[this.#past.length - 1];
+    if (newEntry === undefined) {
+      throw new Error("CommandBus: gesture update left no history entry");
+    }
+    if (gesturesCompatible(pending.entry, newEntry)) {
+      // Replace the pending entry and the just-committed entry with one
+      // merged gesture entry: the forward replay is the first update
+      // followed by the latest update (both absolute deterministic
+      // intents), the inverse is the first update's inverse (it restores
+      // the exact pre-gesture state), and the metadata keeps the gesture
+      // identity from the first update.
+      const merged: HistoryEntry = {
+        transactionId: pending.entry.transactionId,
+        revisionBefore: pending.entry.revisionBefore,
+        revisionAfter: newEntry.revisionAfter,
+        forward: [...pending.firstForward, ...newEntry.forward],
+        inverse: pending.entry.inverse,
+        source: pending.entry.source,
+        ...(pending.entry.correlationId !== undefined
+          ? { correlationId: pending.entry.correlationId }
+          : {}),
+        ...(pending.entry.label !== undefined
+          ? { label: pending.entry.label }
+          : {}),
+        inverseBytes: pending.entry.inverseBytes,
+        affected: pending.entry.affected,
+        types: pending.entry.types,
+      };
+      const replacedBytes = pending.entry.inverseBytes + newEntry.inverseBytes;
+      this.#past[this.#past.length - 2] = merged;
+      this.#past.pop();
+      this.#inverseBytes += merged.inverseBytes - replacedBytes;
+      this.#pending = { key, firstForward: pending.firstForward, entry: merged };
+    } else {
+      // Incompatible resources or types: the just-committed entry seals
+      // (it stays a normal undoable entry) and becomes the first segment
+      // of a fresh pending gesture.
+      this.#pending = { key, firstForward: [...commands], entry: newEntry };
+    }
+    return result;
+  }
+
+  /**
+   * Gesture cancel rollback (plan S4.10): executes the pending inverse as
+   * one atomic transaction that leaves no history entry behind, restoring
+   * the exact pre-gesture semantic state. On failure the pending entry
+   * seals and remains undoable.
+   */
+  cancelGesture(
+    key: string,
+    options: TransactionOptions,
+  ): TransactionResult {
+    if (this.#activeGestureKey !== key) {
+      return err(
+        new WorkspaceError({
+          family: "conflict",
+          code: "GESTURE_SEALED",
+          message: "The coalescing gesture is not active",
+          context: { key },
+        }),
+      );
+    }
+    const pending = this.#pending;
+    if (pending === undefined) {
+      // Nothing was committed yet: the pre-gesture state already holds.
+      return ok({
+        transactionId: options.transactionId,
+        revisionBefore: this.#store.revision,
+        revisionAfter: this.#store.revision,
+        event: emptyCommittedEvent(this.#store.revision),
+        replayed: false,
+      });
+    }
+    const result = this.#runTransaction(
+      [...pending.entry.inverse].reverse(),
+      options,
+      { kind: "cancel", entry: pending.entry },
+    );
+    if (!result.ok) this.#sealPending();
+    return result;
+  }
+
   #trim(): void {
     while (
       this.#past.length > this.#limits.maxHistoryEntries ||
@@ -547,6 +783,136 @@ export class CommandBus {
       this.#inverseBytes -= dropped.inverseBytes;
     }
   }
+}
+
+/** Live handle to one unsealed coalescing gesture (plan S4.10). */
+class GestureHandleImpl implements GestureHandle {
+  readonly #bus: CommandBus;
+  readonly key: string;
+
+  constructor(bus: CommandBus, key: string) {
+    this.#bus = bus;
+    this.key = key;
+  }
+
+  get active(): boolean {
+    return this.#bus.activeGestureKey() === this.key;
+  }
+
+  update(
+    commands: readonly Command[],
+    options: TransactionOptions,
+  ): TransactionResult {
+    if (!this.active) {
+      return err(
+        new WorkspaceError({
+          family: "conflict",
+          code: "GESTURE_SEALED",
+          message: "The coalescing gesture is not active",
+          context: { key: this.key },
+        }),
+      );
+    }
+    return this.#bus.gestureUpdate(this.key, commands, options);
+  }
+
+  end(): void {
+    if (this.active) this.#bus.sealGesture(this.key);
+  }
+
+  cancel(options: TransactionOptions): TransactionResult {
+    if (!this.active) {
+      return err(
+        new WorkspaceError({
+          family: "conflict",
+          code: "GESTURE_SEALED",
+          message: "The coalescing gesture is not active",
+          context: { key: this.key },
+        }),
+      );
+    }
+    return this.#bus.cancelGesture(this.key, options);
+  }
+}
+
+/** Union of the declared affected resources of executed commands (5.3). */
+function unionAffectedResources(
+  executions: readonly CommandExecution[],
+): DeclaredAffectedResources {
+  const nodeIds = new Set<NodeId>();
+  const materialIds = new Set<MaterialId>();
+  const animationIds = new Set<AnimationId>();
+  const volumeIds = new Set<VolumeId>();
+  for (const execution of executions) {
+    for (const id of execution.declaredAffectedResources.nodeIds) {
+      nodeIds.add(id);
+    }
+    for (const id of execution.declaredAffectedResources.materialIds) {
+      materialIds.add(id);
+    }
+    for (const id of execution.declaredAffectedResources.animationIds) {
+      animationIds.add(id);
+    }
+    for (const id of execution.declaredAffectedResources.volumeIds) {
+      volumeIds.add(id);
+    }
+  }
+  return {
+    nodeIds: [...nodeIds],
+    materialIds: [...materialIds],
+    animationIds: [...animationIds],
+    volumeIds: [...volumeIds],
+  };
+}
+
+/**
+ * True when a gesture update may replace the pending history entry:
+ * identical command types in order and equal declared affected-resource
+ * sets (ADR-0003 "compatible affected resources").
+ */
+function gesturesCompatible(
+  pending: HistoryEntry,
+  candidate: HistoryEntry,
+): boolean {
+  if (pending.types.length !== candidate.types.length) return false;
+  for (let index = 0; index < pending.types.length; index += 1) {
+    if (pending.types[index] !== candidate.types[index]) return false;
+  }
+  return (
+    idSetEqual(pending.affected.nodeIds, candidate.affected.nodeIds) &&
+    idSetEqual(pending.affected.materialIds, candidate.affected.materialIds) &&
+    idSetEqual(
+      pending.affected.animationIds,
+      candidate.affected.animationIds,
+    ) &&
+    idSetEqual(pending.affected.volumeIds, candidate.affected.volumeIds)
+  );
+}
+
+/** Set equality of identifier arrays (duplicate-free, deterministic). */
+function idSetEqual(
+  a: readonly (NodeId | MaterialId | AnimationId | VolumeId)[],
+  b: readonly (NodeId | MaterialId | AnimationId | VolumeId)[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const members = new Set(a);
+  return b.every((id) => members.has(id));
+}
+
+/** Empty commit event for a no-op gesture cancel (no semantic change). */
+function emptyCommittedEvent(revision: number): DocumentCommitted {
+  return {
+    revisionBefore: revision,
+    revisionAfter: revision,
+    transactionId: "transaction:noop" as TransactionId,
+    source: "system",
+    commandIds: [],
+    commandTypes: [],
+    changedNodeIds: [],
+    changedMaterialIds: [],
+    changedAnimationIds: [],
+    changedVolumes: [],
+  };
 }
 
 function toHistoryEntryInfo(entry: HistoryEntry): HistoryEntryInfo {

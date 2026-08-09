@@ -1,6 +1,7 @@
 export {
   CommandBus,
   type CommandBusHooks,
+  type GestureHandle,
   type HistoryEntryInfo,
   type HistorySnapshot,
 } from "./bus.js";
