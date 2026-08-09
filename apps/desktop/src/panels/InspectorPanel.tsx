@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { volumeId, type ComponentId } from "@voxel-maker/shared";
-import { rotationLimitsEqual } from "@voxel-maker/commands";
+import { rotationLimitsEqual, type Command } from "@voxel-maker/commands";
 import type { DocumentSession } from "@voxel-maker/session";
 import {
   buildAddConstraintCommand,
@@ -58,6 +58,13 @@ export interface InspectorPanelProps {
   readonly editor: EditorStore;
   /** Shared panel id sequence (created once by the composition root). */
   readonly ids?: PanelIds;
+  /**
+   * Auto-key augmentation (plan S10.12, ticket #29): when the timeline is
+   * in auto-key mode, transform field edits also write keys into the
+   * selected clip, so "transform changes target base or selected clip"
+   * stays true for every transform edit surface.
+   */
+  readonly transformAugment?: (commands: readonly Command[]) => readonly Command[];
 }
 
 const FIELDS: readonly {
@@ -74,6 +81,7 @@ export function InspectorPanel({
   session,
   editor,
   ids,
+  transformAugment,
 }: InspectorPanelProps): React.JSX.Element {
   const document = useDocument(session);
   const editorState = useEditorStore(editor);
@@ -148,10 +156,16 @@ export function InspectorPanel({
               )
           : []),
       ];
+      // Auto-key (plan S10.12): pivot edits are never animated in v1, so
+      // only the transform field edits can write keys into the clip.
+      const augmented =
+        transformAugment !== undefined && field !== "pivot"
+          ? transformAugment(commands)
+          : commands;
       const result = executeTransaction(
         session,
         panelIds,
-        commands,
+        augmented,
         "Edit transform",
       );
       if (!result.ok) editor.pushNotice("error", result.message);

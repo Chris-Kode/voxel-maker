@@ -14,6 +14,8 @@ import { HierarchyPanel } from "./panels/HierarchyPanel.js";
 import { InspectorPanel } from "./panels/InspectorPanel.js";
 import { createPanelIds } from "./panels/panel-utils.js";
 import { MaterialPanel, usePanelState } from "./materials/MaterialPanel.js";
+import { TimelinePanel } from "./timeline/TimelinePanel.js";
+import { AnimationInspector } from "./timeline/AnimationInspector.js";
 import { DEFAULT_PREVIEW_SIZE } from "@voxel-maker/renderer";
 import { handleCloseRequest } from "./close-request.js";
 import type { FileServiceResult, FileServiceStatus } from "./file-service.js";
@@ -713,9 +715,20 @@ export function App(): React.JSX.Element {
             session={composition.session}
             editor={composition.editor}
             ids={panelIds}
+            transformAugment={(commands) =>
+              composition.timeline.autoKeyCommands(commands)
+            }
+          />
+          <AnimationInspector
+            controller={composition.timeline}
+            editor={composition.editor}
           />
         </aside>
       </main>
+      <TimelinePanel
+        controller={composition.timeline}
+        editor={composition.editor}
+      />
       <footer className="statusbar" aria-live="polite">
         <span>
           {status.documentId === undefined

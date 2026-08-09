@@ -361,15 +361,14 @@ describe("timeline controller", () => {
       value: [0, 0, 0, 1],
     });
     timeline.scrub(1);
-    // Manual mode: no augmentation.
-    expect(
-      timeline.autoKeyCommands([
-        setNodeTransformCommand(commandId("command:timeline:move:0001"), {
-          nodeId: WHEEL,
-          transform: { ...IDENTITY, rotation: [0, 1, 0, 0] },
-        }),
-      ]),
-    ).toEqual([]);
+    // Manual mode: the transaction passes through unchanged.
+    const manualCommands = [
+      setNodeTransformCommand(commandId("command:timeline:move:0001"), {
+        nodeId: WHEEL,
+        transform: { ...IDENTITY, rotation: [0, 1, 0, 0] },
+      }),
+    ];
+    expect(timeline.autoKeyCommands(manualCommands)).toBe(manualCommands);
     timeline.setKeyMode("auto");
     const extra = timeline.autoKeyCommands([
       setNodeTransformCommand(commandId("command:timeline:move:0002"), {
@@ -377,12 +376,34 @@ describe("timeline controller", () => {
         transform: { ...IDENTITY, rotation: [0, 1, 0, 0] },
       }),
     ]);
-    expect(extra).toHaveLength(1);
-    const key = keyPayload(extra[0]);
+    expect(extra).toHaveLength(2);
+    // The transaction keeps its transform command and gains the key.
+    expect(extra[0]?.type).toBe("node.setTransform");
+    const key = keyPayload(extra[1]);
     if (key === undefined) throw new Error("unexpected command list");
     expect(key.time).toBe(1);
     expect(key.property.channel).toBe("rotation");
     expect(key.property.value).toEqual([0, 1, 0, 0]);
+    timeline.dispose();
+  });
+
+  it("derives keyframe values from the track channel and node transform", () => {
+    const session = makeSession();
+    const timeline = controller(session);
+    openFixture(timeline, session);
+    timeline.createClip("spin", 2, "loop");
+    timeline.addTracks([ARM], "rotation");
+    const trackIdValue = state(timeline).tracks[0]?.track.trackId;
+    if (trackIdValue === undefined) throw new Error("missing track");
+    expect(timeline.channelForTrack(trackIdValue)).toBe("rotation");
+    // Omitted property: value comes from the node's base rotation.
+    const error = timeline.setKeyframe(trackIdValue, 0.5);
+    expect(error).toBeUndefined();
+    const keyframe = state(timeline).selectedClip?.tracks[0]?.keyframes[0];
+    expect(keyframe?.property).toEqual({
+      channel: "rotation",
+      value: [0, 0, 0, 1],
+    });
     timeline.dispose();
   });
 

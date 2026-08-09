@@ -159,7 +159,19 @@ export interface TimelineController {
   setInterpolation(trackId: TrackId, interpolation: Interpolation): WorkspaceError | undefined;
 
   // Keyframe editing (S10.11).
-  setKeyframe(trackId: TrackId, time: number, property: TrackProperty): WorkspaceError | undefined;
+  /**
+   * Creates or updates the keyframe parked at `time` on a track. When
+   * `property` is omitted the value is derived from the track's channel
+   * (first keyframe or the channel chosen at track creation) and the
+   * target node's current base transform — the value the user sees.
+   */
+  setKeyframe(
+    trackId: TrackId,
+    time: number,
+    property?: TrackProperty,
+  ): WorkspaceError | undefined;
+  /** The channel a track speaks, or undefined when not yet established. */
+  channelForTrack(trackId: TrackId): TrackChannel | undefined;
   /** Manual key (S10.12): keys selected tracks/nodes at the playhead. */
   keySelection(): WorkspaceError | undefined;
   moveKeyframes(moves: readonly KeyframeMove[]): WorkspaceError | undefined;
@@ -584,7 +596,7 @@ function channelProperty(
   const setKeyframe = (
     trackIdValue: TrackId,
     time: number,
-    property: TrackProperty,
+    property?: TrackProperty,
   ): WorkspaceError | undefined => {
     const clip = stateValue.selectedClip;
     if (clip === undefined) {
@@ -606,6 +618,26 @@ function channelProperty(
         }),
       );
     }
+    let resolved: TrackProperty = property as TrackProperty;
+    if (resolved === undefined) {
+      const channel = channelForTrack(trackIdValue);
+      if (channel === undefined) {
+        return fail(
+          new WorkspaceError({
+            family: "validation",
+            code: "ANIMATION_TRACK_CHANNEL_MISMATCH",
+            message:
+              "This track has no channel yet; add its first keyframe with a property",
+          }),
+        );
+      }
+      const current = session.current;
+      if (current === undefined) return fail(notOpen());
+      resolved = channelProperty(
+        channel,
+        channelValueOf(current.store.getDocument(), track.targetNodeId, channel),
+      );
+    }
     const bounded = boundTime(time);
     const parked = track.keyframes.find((keyframe) => keyframe.time === bounded);
     const keyframeIdValue = parked?.keyframeId ?? nextKeyframeId();
@@ -616,7 +648,7 @@ function channelProperty(
           trackId: trackIdValue,
           keyframeId: keyframeIdValue,
           time: parked?.time ?? bounded,
-          property,
+          property: resolved,
         }),
       ],
       parked === undefined ? "Create keyframe" : "Edit keyframe",
@@ -626,6 +658,14 @@ function channelProperty(
       refresh();
     }
     return error;
+  };
+
+  const channelForTrack = (trackIdValue: TrackId): TrackChannel | undefined => {
+    const track = trackOf(trackIdValue);
+    if (track === undefined) return undefined;
+    return (
+      track.keyframes[0]?.property.channel ?? pendingChannels.get(trackIdValue)
+    );
   };
 
   /**
@@ -660,9 +700,7 @@ function channelProperty(
     const commands: Command[] = [];
     const keyed: KeyframeId[] = [];
     for (const track of targets) {
-      const channel =
-        track.keyframes[0]?.property.channel ??
-        pendingChannels.get(track.trackId);
+      const channel = channelForTrack(track.trackId);
       if (channel === undefined) continue;
       const parked = track.keyframes.find((keyframe) => keyframe.time === time);
       const keyframeIdValue = parked?.keyframeId ?? nextKeyframeId();
@@ -740,20 +778,27 @@ function channelProperty(
     return error;
   };
 
-  /** Auto-key augmentation (S10.12): see buildAutoKeyCommands. */
+  /**
+   * Auto-key augmentation (S10.12): see buildAutoKeyCommands. Returns the
+   * input commands unchanged when auto-key is off or no clip is selected,
+   * so the viewport can always commit the function's result.
+   */
   const autoKeyCommands = (commands: readonly Command[]): readonly Command[] => {
     if (
       !stateValue.open ||
       stateValue.keyMode !== "auto" ||
       stateValue.selectedClip === undefined
     ) {
-      return [];
+      return commands;
     }
-    return buildAutoKeyCommands(commands, {
-      clip: stateValue.selectedClip,
-      time: boundTime(playback.state.time),
-      nextKeyframeId,
-    });
+    return [
+      ...commands,
+      ...buildAutoKeyCommands(commands, {
+        clip: stateValue.selectedClip,
+        time: boundTime(playback.state.time),
+        nextKeyframeId,
+      }),
+    ];
   };
 
   // ---- wiring ----------------------------------------------------------
@@ -863,6 +908,7 @@ function channelProperty(
     removeTrack,
     setInterpolation,
     setKeyframe,
+    channelForTrack,
     keySelection,
     moveKeyframes,
     deleteSelectedKeyframes,
