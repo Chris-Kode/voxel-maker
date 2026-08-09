@@ -92,7 +92,10 @@ function useEditorStore(editor: EditorStore): EditorStoreSnapshot {
 
 export function App(): React.JSX.Element {
   const [composition] = useState(() =>
-    createDesktopComposition(createDefaultPlatform()),
+    createDesktopComposition({
+      ...createDefaultPlatform(),
+      useMeshingWorker: true,
+    }),
   );
   const panel = composition.materialPanel;
   const panelState = usePanelState(panel);

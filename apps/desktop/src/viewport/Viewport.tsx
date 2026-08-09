@@ -45,6 +45,7 @@ export function Viewport({
   readonly selectionMode: SelectionMode;
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const diagnosticsRef = useRef<HTMLDivElement | null>(null);
   const controller = composition.viewport;
   // Read the tool and selection mode at event time so switching mid-
   // session never requires rebinding the listeners; the refs are synced
@@ -269,11 +270,44 @@ export function Viewport({
     };
     window.addEventListener("keydown", onKeyDown);
 
+    // Dev-mode diagnostics overlay (plan S6.14, ticket #23): FPS, draw
+    // calls, triangles, meshing queues/times, and memory estimates are
+    // written straight into the overlay DOM each frame (never through
+    // React state, which would re-render every frame).
     let frame = 0;
+    let lastFrameTime = performance.now();
+    let frameSamples = 0;
+    let frameMsTotal = 0;
+    const updateDiagnostics = (now: number): void => {
+      const overlay = diagnosticsRef.current;
+      if (overlay === null) return;
+      frameSamples += 1;
+      frameMsTotal += now - lastFrameTime;
+      lastFrameTime = now;
+      let fps = 0;
+      if (frameSamples >= 30) {
+        fps = Math.round(1000 / (frameMsTotal / frameSamples));
+        frameSamples = 0;
+        frameMsTotal = 0;
+      }
+      const diagnostics = composition.renderer.diagnostics();
+      overlay.textContent =
+        `${fps > 0 ? `${String(fps)} fps` : "fps"} · ` +
+        `${String(renderer.info.render.calls)} draws · ` +
+        `${String(renderer.info.render.triangles)} tris · ` +
+        `queue ${String(diagnostics.pendingChunks)} ` +
+        `(in-flight ${String(diagnostics.inFlightMeshes)}) · ` +
+        `mesh ${diagnostics.lastMeshMs.toFixed(1)} ms · ` +
+        `${(diagnostics.meshBytes / (1024 * 1024)).toFixed(1)} MiB meshes`;
+    };
     const animate = (): void => {
       frame = requestAnimationFrame(animate);
       controller.applyCamera();
+      // Per-frame meshing step: dispatch and install within the frame
+      // budgets, visible chunks first (plan S6.8, ticket #23).
+      composition.renderer.flush(controller.camera);
       renderer.render(composition.renderer.scene, controller.camera);
+      if (import.meta.env.DEV) updateDiagnostics(performance.now());
     };
     animate();
 
@@ -299,6 +333,13 @@ export function Viewport({
       role="img"
       aria-label="3D viewport showing the open voxel document"
     >
+      {import.meta.env.DEV ? (
+        <div
+          ref={diagnosticsRef}
+          className="viewport-diagnostics"
+          aria-hidden="true"
+        />
+      ) : null}
       <div className="viewport-hint" aria-hidden="true">
         Select: left-drag orbit · right-drag pan · wheel zoom · click select
         (Shift add · Ctrl toggle · Esc clear) · Pencil/Erase/Paint: drag to
