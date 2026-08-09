@@ -1,7 +1,9 @@
 import type {
   AtomicWriteResult,
   ProjectStoragePort,
+  RecoveryJournalPort,
 } from "@voxel-maker/storage";
+import { journalPathFor } from "@voxel-maker/storage";
 import type { FilePicker } from "../composition.js";
 
 /**
@@ -11,7 +13,9 @@ import type { FilePicker } from "../composition.js";
  * are testable in a browser without native capabilities; the Tauri adapter
  * is the product path.
  */
-export class BrowserProjectStorage implements ProjectStoragePort {
+export class BrowserProjectStorage
+  implements ProjectStoragePort, RecoveryJournalPort
+{
   readonly #files = new Map<string, Uint8Array>();
 
   ingest(name: string, bytes: Uint8Array): void {
@@ -55,6 +59,33 @@ export class BrowserProjectStorage implements ProjectStoragePort {
     return Promise.resolve(
       bytes === undefined ? undefined : Uint8Array.from(bytes),
     );
+  }
+
+  readJournal(path: string): Promise<Uint8Array | undefined> {
+    const bytes = this.#files.get(journalPathFor(path));
+    return Promise.resolve(
+      bytes === undefined ? undefined : Uint8Array.from(bytes),
+    );
+  }
+
+  appendJournal(path: string, bytes: Uint8Array): Promise<void> {
+    const journalPath = journalPathFor(path);
+    const previous = this.#files.get(journalPath);
+    const next = new Uint8Array((previous?.byteLength ?? 0) + bytes.byteLength);
+    if (previous !== undefined) next.set(previous, 0);
+    next.set(bytes, previous?.byteLength ?? 0);
+    this.#files.set(journalPath, next);
+    return Promise.resolve();
+  }
+
+  replaceJournal(path: string, bytes: Uint8Array): Promise<void> {
+    this.#files.set(journalPathFor(path), Uint8Array.from(bytes));
+    return Promise.resolve();
+  }
+
+  removeJournal(path: string): Promise<void> {
+    this.#files.delete(journalPathFor(path));
+    return Promise.resolve();
   }
 }
 

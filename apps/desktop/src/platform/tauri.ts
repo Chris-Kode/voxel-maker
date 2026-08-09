@@ -6,18 +6,30 @@ import {
 import type {
   AtomicWriteResult,
   ProjectStoragePort,
+  RecoveryJournalPort,
 } from "@voxel-maker/storage";
 import type { FilePicker } from "../composition.js";
+import {
+  parseRecentRecord,
+  type RecentProjectEntry,
+  type RecentProjectsPort,
+} from "../recent-projects.js";
+
+/** Bounded recent list size the Rust side enforces as well. */
+const MAX_RECENT = 10;
 
 /**
- * Tauri storage adapter (plan S6.18 seam, minimal for ticket #15): reads,
- * atomic writes, existence checks, removal, and backup reads through the
- * shell's own allowlisted commands (`src-tauri`). The Rust side validates
- * paths and performs the same temp-write/backup/rename order as the Node
- * adapter; cancellation and fault injection arrive with the project
- * lifecycle ticket (#22), so `signal`/`faults` are ignored here.
+ * Tauri storage adapter (plan S6.18 seam, tickets #15/#22): reads, atomic
+ * writes, existence checks, removal, backup reads, and the adjacent
+ * recovery journal through the shell's own allowlisted commands
+ * (`src-tauri`). The Rust side validates paths and performs the same
+ * temp-write/backup/rename order as the Node adapter; cancellation and
+ * fault injection arrive with the project lifecycle ticket (#22), so
+ * `signal`/`faults` are ignored here.
  */
-export class TauriProjectStorage implements ProjectStoragePort {
+export class TauriProjectStorage
+  implements ProjectStoragePort, RecoveryJournalPort
+{
   async readProject(path: string): Promise<Uint8Array> {
     const bytes = await invoke<ArrayBuffer>("read_project_bytes", { path });
     return new Uint8Array(bytes);
@@ -46,6 +58,67 @@ export class TauriProjectStorage implements ProjectStoragePort {
       path,
     });
     return bytes === null ? undefined : new Uint8Array(bytes);
+  }
+
+  async readJournal(path: string): Promise<Uint8Array | undefined> {
+    const bytes = await invoke<ArrayBuffer | null>("read_journal_bytes", {
+      path,
+    });
+    return bytes === null ? undefined : new Uint8Array(bytes);
+  }
+
+  async appendJournal(path: string, bytes: Uint8Array): Promise<void> {
+    await invoke("append_journal_bytes", { path, bytes });
+  }
+
+  async replaceJournal(path: string, bytes: Uint8Array): Promise<void> {
+    await invoke("replace_journal_bytes", { path, bytes });
+  }
+
+  async removeJournal(path: string): Promise<void> {
+    await invoke("remove_journal", { path });
+  }
+}
+
+/**
+ * Tauri recent-project store: a bounded JSON file in the app config
+ * directory through the shell's own commands (scoped native storage). The
+ * Rust side validates the JSON shape and enforces the same bound.
+ */
+export class TauriRecentProjects implements RecentProjectsPort {
+  async list(): Promise<readonly RecentProjectEntry[]> {
+    const raw = await invoke<string | null>("read_recent_projects");
+    return raw === null ? [] : parseRecentJson(raw);
+  }
+
+  async record(entry: RecentProjectEntry): Promise<void> {
+    const entries = await this.list();
+    const rest = entries.filter((existing) => existing.path !== entry.path);
+    const next = [entry, ...rest].slice(0, MAX_RECENT);
+    await invoke("write_recent_projects", {
+      json: JSON.stringify(next),
+    });
+  }
+
+  async remove(path: string): Promise<void> {
+    const entries = await this.list();
+    const next = entries.filter((existing) => existing.path !== path);
+    await invoke("write_recent_projects", {
+      json: JSON.stringify(next),
+    });
+  }
+}
+
+/** Parses the stored JSON; malformed content yields an empty list. */
+function parseRecentJson(raw: string): readonly RecentProjectEntry[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(parseRecentRecord)
+      .filter((entry): entry is RecentProjectEntry => entry !== undefined);
+  } catch {
+    return [];
   }
 }
 

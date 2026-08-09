@@ -10,10 +10,10 @@ import type { DesktopComposition } from "../composition.js";
 
 /**
  * Three.js viewport (plan S6.1/S6.10-S6.13 ticket #16, S7.3-S7.7/S7.19
- * tickets #17/#18): owns the WebGL renderer and forwards pointer/keyboard
- * input to the composition's viewport controller. All camera, picking,
- * overlay, and tool behavior lives in the controller and its pure
- * modules; this component only binds DOM events and renders.
+ * tickets #17/#18/#19): owns the WebGL renderer and forwards
+ * pointer/keyboard input to the composition's viewport controller. All
+ * camera, picking, overlay, and tool behavior lives in the controller and
+ * its pure modules; this component only binds DOM events and renders.
  *
  * Gestures: with the select tool, left-drag orbits (node/voxel modes) or
  * rubber-bands a region (region mode); right/middle-drag pans; wheel
@@ -22,12 +22,16 @@ import type { DesktopComposition } from "../composition.js";
  * clears it. With the pencil/erase/paint/box/sphere/cylinder tools, a
  * primary-button gesture becomes a stroke or a shape drag: down starts
  * it, moves update the transient preview, up commits one labeled history
- * entry, and a lost pointer cancels it. The eyedropper samples the
- * material under a click. Keys: 1-6 standard views, F focus, P
- * perspective/orthographic toggle, G/X/B/K overlay toggles, Escape clears
- * the selection. See docs/viewport/overlays-v1.md,
- * docs/editor/stroke-tools-v1.md, and
- * docs/editor/selection-and-shape-tools-v1.md.
+ * entry, and a lost pointer cancels it. With the transform tool, a
+ * move/copy drag previews the exact destination bounds and commits one
+ * labeled transaction; rotate/mirror/delete are button-driven
+ * preview-and-apply flows. The eyedropper samples the material under a
+ * click. Keys: 1-6 standard views, F focus, P perspective/orthographic
+ * toggle, G/X/B/K overlay toggles, Escape cancels a gesture or a pending
+ * transform preview before clearing the selection. See
+ * docs/viewport/overlays-v1.md, docs/editor/stroke-tools-v1.md,
+ * docs/editor/selection-and-shape-tools-v1.md, and
+ * docs/editor/transform-tools-v1.md.
  */
 export function Viewport({
   composition,
@@ -41,6 +45,7 @@ export function Viewport({
   readonly selectionMode: SelectionMode;
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const diagnosticsRef = useRef<HTMLDivElement | null>(null);
   const controller = composition.viewport;
   // Read the tool and selection mode at event time so switching mid-
   // session never requires rebinding the listeners; the refs are synced
@@ -278,11 +283,16 @@ export function Viewport({
           break;
         case "Escape":
           // Cancel any in-progress gesture (gizmo drag, region drag,
-          // stroke, shape) before clearing, so a late pointer-up cannot
-          // commit it.
-          if (controller.transformTool.active) controller.gizmoPointerCancel();
+          // stroke, shape, transform drag) first, so a late pointer-up
+          // cannot commit it; then cancel a pending transform preview
+          // (rotate/mirror/delete) without touching the selection; only
+          // a bare Escape clears the selection.
+          if (controller.transformTool.active)
+            controller.gizmoPointerCancel();
           if (controller.toolActive) controller.toolPointerCancel();
-          controller.clearSelection();
+          else if (controller.transformApplyPending)
+            controller.transformCancel();
+          else controller.clearSelection();
           break;
         default:
           handled = false;
@@ -291,11 +301,44 @@ export function Viewport({
     };
     window.addEventListener("keydown", onKeyDown);
 
+    // Dev-mode diagnostics overlay (plan S6.14, ticket #23): FPS, draw
+    // calls, triangles, meshing queues/times, and memory estimates are
+    // written straight into the overlay DOM each frame (never through
+    // React state, which would re-render every frame).
     let frame = 0;
+    let lastFrameTime = performance.now();
+    let frameSamples = 0;
+    let frameMsTotal = 0;
+    const updateDiagnostics = (now: number): void => {
+      const overlay = diagnosticsRef.current;
+      if (overlay === null) return;
+      frameSamples += 1;
+      frameMsTotal += now - lastFrameTime;
+      lastFrameTime = now;
+      let fps = 0;
+      if (frameSamples >= 30) {
+        fps = Math.round(1000 / (frameMsTotal / frameSamples));
+        frameSamples = 0;
+        frameMsTotal = 0;
+      }
+      const diagnostics = composition.renderer.diagnostics();
+      overlay.textContent =
+        `${fps > 0 ? `${String(fps)} fps` : "fps"} · ` +
+        `${String(renderer.info.render.calls)} draws · ` +
+        `${String(renderer.info.render.triangles)} tris · ` +
+        `queue ${String(diagnostics.pendingChunks)} ` +
+        `(in-flight ${String(diagnostics.inFlightMeshes)}) · ` +
+        `mesh ${diagnostics.lastMeshMs.toFixed(1)} ms · ` +
+        `${(diagnostics.meshBytes / (1024 * 1024)).toFixed(1)} MiB meshes`;
+    };
     const animate = (): void => {
       frame = requestAnimationFrame(animate);
       controller.applyCamera();
+      // Per-frame meshing step: dispatch and install within the frame
+      // budgets, visible chunks first (plan S6.8, ticket #23).
+      composition.renderer.flush(controller.camera);
       renderer.render(composition.renderer.scene, controller.camera);
+      if (import.meta.env.DEV) updateDiagnostics(performance.now());
     };
     animate();
 
@@ -321,11 +364,19 @@ export function Viewport({
       role="img"
       aria-label="3D viewport showing the open voxel document"
     >
+      {import.meta.env.DEV ? (
+        <div
+          ref={diagnosticsRef}
+          className="viewport-diagnostics"
+          aria-hidden="true"
+        />
+      ) : null}
       <div className="viewport-hint" aria-hidden="true">
         Select: left-drag orbit · right-drag pan · wheel zoom · click select
         (Shift add · Ctrl toggle · Esc clear) · Pencil/Erase/Paint: drag to
-        stroke · Box/Sphere/Cylinder: drag a shape · Eyedropper: sample · 1-6
-        views · F focus · P mode · G/X/B/K overlays
+        stroke · Box/Sphere/Cylinder: drag a shape · Transform: drag to move/
+        copy, preview rotate/mirror/delete · Eyedropper: sample · 1-6 views · F
+        focus · P mode · G/X/B/K overlays
       </div>
     </div>
   );

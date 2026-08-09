@@ -226,6 +226,60 @@ describe("DocumentSession lifecycle coordinator", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("applies bus hooks to every fresh bus so recovery wiring can journal", () => {
+    const records: Array<{ documentId: string; revisionAfter: number }> = [];
+    const session = createDocumentSession({
+      registerCommands: [registerVoxelCommands],
+      busHooks: {
+        onCommitted(record) {
+          records.push({
+            documentId: session.current?.documentId ?? "none",
+            revisionAfter: record.revisionAfter,
+          });
+        },
+      },
+    });
+    session.open({ document: createFixtureDocument(9) });
+    const result = session.current?.bus.execute(
+      setVoxelCommand(commandId("command:session:hook"), {
+        volumeId: VOLUME,
+        coordinate: [1, 1, 1],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:hook"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(result?.ok).toBe(true);
+    expect(records).toEqual([
+      { documentId: "document:session:0009", revisionAfter: 1 },
+    ]);
+
+    // Replaced documents get a fresh bus that still carries the hooks, so
+    // the composition root can rebind journal wiring per install.
+    session.replace({ document: createFixtureDocument(10) });
+    const result2 = session.current?.bus.execute(
+      setVoxelCommand(commandId("command:session:hook-2"), {
+        volumeId: VOLUME,
+        coordinate: [2, 2, 2],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:hook-2"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(result2?.ok).toBe(true);
+    expect(records).toHaveLength(2);
+    expect(records[1]).toEqual({
+      documentId: "document:session:0010",
+      revisionAfter: 1,
+    });
+  });
+
   it("carries a caller-supplied source on the event", () => {
     const session = createSession();
     const events = collectEvents(session);

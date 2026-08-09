@@ -24,6 +24,7 @@ import {
   type DesktopComposition,
   type FilePicker,
 } from "../composition.js";
+import { autoConfirmPrompts, requireResult } from "../test-prompts.js";
 import type { ViewportController } from "./controller.js";
 
 /**
@@ -167,10 +168,15 @@ const createFakePicker = (): FilePicker => ({
   },
 });
 
-function openFixture(composition: DesktopComposition, filled = true): void {
-  const result = composition.fileService.openLoadedProject(
-    "fixture.vxl",
-    buildFixtureProject(filled),
+async function openFixture(
+  composition: DesktopComposition,
+  filled = true,
+): Promise<void> {
+  const result = requireResult(
+    await composition.fileService.openLoadedProject(
+      "fixture.vxl",
+      buildFixtureProject(filled),
+    ),
   );
   if (!result.ok) {
     const error = result.error;
@@ -220,12 +226,13 @@ function scanPick(
 }
 
 describe("desktop selection workflows", () => {
-  it("selects, add-selects, toggles, and clears through the controller", () => {
+  it("selects, add-selects, toggles, and clears through the controller", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     const viewport = composition.viewport;
     const a = scanPick(composition, (hit) => hit.nodeId === CHILD);
@@ -254,12 +261,13 @@ describe("desktop selection workflows", () => {
     composition.dispose();
   });
 
-  it("prunes selection references after the selected node is deleted", () => {
+  it("prunes selection references after the selected node is deleted", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     const a = scanPick(composition, (hit) => hit.nodeId === CHILD);
     if (a === undefined) throw new Error("box A must be pickable");
@@ -285,12 +293,13 @@ describe("desktop selection workflows", () => {
     composition.dispose();
   });
 
-  it("selects a region by dragging in region mode and clears on Escape", () => {
+  it("selects a region by dragging in region mode and clears on Escape", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setSelectionMode("region");
     const viewport = composition.viewport;
@@ -342,12 +351,13 @@ describe("desktop selection workflows", () => {
 });
 
 describe("desktop tool workflows", () => {
-  it("paints only occupied voxels as one labeled, undoable transaction", () => {
+  it("paints only occupied voxels as one labeled, undoable transaction", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveMaterial(REPLACEMENT);
     composition.editor.setActiveTool("paint");
@@ -395,12 +405,13 @@ describe("desktop tool workflows", () => {
     composition.dispose();
   });
 
-  it("samples the material under the pointer with the eyedropper", () => {
+  it("samples the material under the pointer with the eyedropper", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("eyedropper");
     const viewport = composition.viewport;
@@ -416,12 +427,13 @@ describe("desktop tool workflows", () => {
     composition.dispose();
   });
 
-  it("fills a box drag as one labeled, undoable transaction", () => {
+  it("fills a box drag as one labeled, undoable transaction", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("box");
     const viewport = composition.viewport;
@@ -458,12 +470,13 @@ describe("desktop tool workflows", () => {
     composition.dispose();
   });
 
-  it("fills sphere and cylinder drags as one transaction each", () => {
+  it("fills sphere and cylinder drags as one transaction each", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveMaterial(REPLACEMENT);
     const viewport = composition.viewport;
@@ -496,13 +509,14 @@ describe("desktop tool workflows", () => {
     composition.dispose();
   });
 
-  it("rejects an oversized shape atomically through the composition", () => {
+  it("rejects an oversized shape atomically through the composition", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
       gestureVoxelLimit: 4,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("box");
     const viewport = composition.viewport;
@@ -546,8 +560,9 @@ describe("runtime state serialization exclusion", () => {
     const composition = createDesktopComposition({
       storage,
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     // Leave distinctive runtime state behind.
     composition.editor.setSelection([
@@ -557,9 +572,11 @@ describe("runtime state serialization exclusion", () => {
     composition.editor.setSelectionMode("region");
     composition.editor.setActiveTool("sphere");
     composition.editor.setActiveMaterial(REPLACEMENT);
-    const saved = await composition.fileService.saveProject();
-    expect(saved?.ok).toBe(true);
-    if (saved?.path === undefined) throw new Error("save produced no path");
+    // Save As writes real bytes (a same-path save of an unchanged opened
+    // project is the documented unchanged short-circuit and writes nothing).
+    const saved = requireResult(await composition.fileService.saveProjectAs());
+    expect(saved.ok).toBe(true);
+    if (saved.path === undefined) throw new Error("save produced no path");
     const bytes = await storage.readProject(saved.path);
     const text = new TextDecoder().decode(bytes);
     // Runtime-only EditorStore state must never leak into the manifest
@@ -575,8 +592,11 @@ describe("runtime state serialization exclusion", () => {
     const fresh = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    const reopened = fresh.fileService.openLoadedProject("fixture.vxl", bytes);
+    const reopened = requireResult(
+      await fresh.fileService.openLoadedProject("fixture.vxl", bytes),
+    );
     expect(reopened.ok).toBe(true);
     expect(fresh.editor.selection).toEqual([]);
     expect(fresh.editor.selectionMode).toBe("node");

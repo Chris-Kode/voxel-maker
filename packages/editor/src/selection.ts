@@ -9,6 +9,7 @@ import {
   worldTransformMatrix,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import type { NodeId, VolumeId } from "@voxel-maker/shared";
 import type { VoxelDocument } from "@voxel-maker/model";
 import type { SelectionEntry, ToolModifiers } from "./types.js";
 
@@ -132,6 +133,69 @@ export interface SelectionWorldBounds {
 }
 
 /**
+ * One per-volume region of a selection entry (plan S7.19, ticket #19).
+ * Node entries carry their node id so callers can use the node's own
+ * world matrix; voxel and region entries leave it undefined (their
+ * owning volume resolves the matrix).
+ */
+export interface SelectionVolumeRegion {
+  /** The selected node, for node entries; undefined otherwise. */
+  readonly nodeId: NodeId | undefined;
+  readonly volumeId: VolumeId;
+  /** Half-open volume-local region. */
+  readonly region: IntAabb;
+}
+
+/**
+ * Expands a mixed selection into per-volume regions (plan S7.2/S7.19):
+ * node entries contribute the occupied-voxel bounds of each of their
+ * voxel volumes (empty volumes are skipped), voxel entries contribute
+ * their unit region, and region entries contribute themselves. Equal
+ * volume/region pairs deduplicate and the selection order is preserved.
+ * Undefined when no region is displayable.
+ */
+export function selectionVolumeRegions(
+  store: DocumentStoreRead,
+  selection: readonly SelectionEntry[],
+): SelectionVolumeRegion[] | undefined {
+  const document = store.getDocument();
+  const seen = new Set<string>();
+  const regions: SelectionVolumeRegion[] = [];
+  const push = (
+    nodeId: NodeId | undefined,
+    volumeId: VolumeId,
+    region: IntAabb,
+  ): void => {
+    const key = `${String(volumeId)}:${String(region.min[0])},${String(region.min[1])},${String(region.min[2])}..${String(region.max[0])},${String(region.max[1])},${String(region.max[2])}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    regions.push({ nodeId, volumeId, region });
+  };
+  for (const entry of selection) {
+    if (entry.kind === "node") {
+      const node = document.nodes[entry.nodeId];
+      if (node === undefined) continue;
+      for (const component of node.components) {
+        if (component.kind !== "voxel") continue;
+        const bounds = store.getVolume(component.volumeId)?.occupiedBounds();
+        if (bounds === undefined) continue;
+        push(entry.nodeId, component.volumeId, bounds);
+      }
+      continue;
+    }
+    if (entry.kind === "voxel") {
+      push(undefined, entry.volumeId, {
+        min: [entry.voxel[0], entry.voxel[1], entry.voxel[2]],
+        max: [entry.voxel[0] + 1, entry.voxel[1] + 1, entry.voxel[2] + 1],
+      });
+      continue;
+    }
+    push(undefined, entry.volumeId, entry.region);
+  }
+  return regions.length === 0 ? undefined : regions;
+}
+
+/**
  * Union world bounds of a mixed selection (plan S7.2 "region bounds
  * display"): node entries contribute the occupied voxel bounds of their
  * voxel volumes, voxel and region entries contribute their volume-local
@@ -143,29 +207,14 @@ export function selectionWorldBounds(
   selection: readonly SelectionEntry[],
 ): SelectionWorldBounds | undefined {
   const document = store.getDocument();
+  const regions = selectionVolumeRegions(store, selection);
+  if (regions === undefined) return undefined;
   let bounds: SelectionWorldBounds | undefined;
-  for (const entry of selection) {
-    if (entry.kind === "node") {
-      const node = document.nodes[entry.nodeId];
-      if (node === undefined) continue;
-      const matrix = worldTransformMatrix(document, entry.nodeId);
-      for (const component of node.components) {
-        if (component.kind !== "voxel") continue;
-        const local = store.getVolume(component.volumeId)?.occupiedBounds();
-        if (local === undefined) continue;
-        const world = transformAabb(matrix, local);
-        bounds = bounds === undefined ? world : unionWorldBounds(bounds, world);
-      }
-      continue;
-    }
-    const local: IntAabb =
-      entry.kind === "voxel"
-        ? {
-            min: entry.voxel,
-            max: [entry.voxel[0] + 1, entry.voxel[1] + 1, entry.voxel[2] + 1],
-          }
-        : entry.region;
-    const world = volumeLocalWorldBounds(store, entry.volumeId, local);
+  for (const { nodeId, volumeId, region } of regions) {
+    const world =
+      nodeId === undefined
+        ? volumeLocalWorldBounds(store, volumeId, region)
+        : transformAabb(worldTransformMatrix(document, nodeId), region);
     if (world === undefined) continue;
     bounds = bounds === undefined ? world : unionWorldBounds(bounds, world);
   }

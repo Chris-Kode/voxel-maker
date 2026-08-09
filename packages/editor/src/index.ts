@@ -14,6 +14,12 @@ export {
   type EditorStoreSnapshot,
 } from "./runtime.js";
 export {
+  countMaterialUsage,
+  defaultNewMaterialPayload,
+  materialUpdateChanges,
+  type MaterialFieldChanges,
+} from "./materials-panel.js";
+export {
   createStrokeTool,
   type StrokeTool,
   type StrokeToolOptions,
@@ -71,17 +77,25 @@ export {
   DEFAULT_ROTATE_SNAP,
   DEFAULT_SCALE_SNAP,
   DEFAULT_TRANSLATE_SNAP,
-  createTransformTool,
+  createNodeTransformTool,
   transformTargets,
   type CameraRay,
   type GestureHost,
   type GizmoAxis,
   type GizmoHandle,
+  type NodeTransformTool,
+  type NodeTransformToolHost,
   type TransformTargets,
-  type TransformTool,
-  type TransformToolHost,
   type TransformToolMode,
   type TransformSpace,
+} from "./node-transform-tool.js";
+export {
+  createTransformTool,
+  selectionRegions,
+  type SelectionRegion,
+  type TransformParams,
+  type TransformTool,
+  type TransformToolOptions,
 } from "./transform-tool.js";
 export {
   addSelectionEntry,
@@ -106,4 +120,7 @@ export {
   type ToolHost,
   type ToolModifiers,
   type ToolPick,
+  type TransformEntryPreview,
+  type TransformMode,
+  type TransformPreview,
 } from "./types.js";

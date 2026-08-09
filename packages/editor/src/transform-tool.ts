@@ -1,804 +1,956 @@
+import { WorkspaceError, type VolumeId } from "@voxel-maker/shared";
+import type { IntAabb, Vec3i } from "@voxel-maker/math";
+import type { DocumentStoreRead } from "@voxel-maker/document";
+import type { Command } from "@voxel-maker/commands";
 import {
-  WorkspaceError,
-  type CommandId,
-  type NodeId,
-} from "@voxel-maker/shared";
+  copyRegionCommand,
+  deleteRegionCommand,
+  mirrorRegionCommand,
+  rotateRegionCommand,
+  translateRegionCommand,
+} from "@voxel-maker/commands";
 import {
-  canonicalTransform,
-  decomposeMatrix,
-  invertMatrix,
-  multiplyMatrices,
-  quaternionConjugate,
-  quaternionFromAxisAngle,
-  quaternionMultiply,
-  rotateVector,
-  transformToMatrix,
-  transformsEqual,
-  type Mat4,
-  type Transform,
-  type Vec3,
-} from "@voxel-maker/math";
-import type { SelectionWorldBounds } from "./selection.js";
-import type { SelectionEntry } from "./types.js";
+  CHUNK_EDGE,
+  canRotateExactly,
+  mirrorCoordinate,
+  rotateRegionPlan,
+  translateAabb,
+  type QuarterTurns,
+  type ShapeAxis,
+  type VoxelVolumeLimits,
+  type VoxelVolumeReadView,
+} from "@voxel-maker/voxel";
+import type { EditorStore } from "./runtime.js";
+import { selectionVolumeRegions } from "./selection.js";
 import {
-  worldTransformMatrix,
-  type DocumentStoreRead,
-} from "@voxel-maker/document";
-import { setNodeTransformCommand, type Command } from "@voxel-maker/commands";
-import type { ToolActionResult } from "./types.js";
+  outOfBoundsError,
+  sessionNotOpen,
+  tooManyOccupiedError,
+  tooManyVoxelsError,
+} from "./tool-errors.js";
+import type {
+  SelectionEntry,
+  ToolActionResult,
+  ToolHost,
+  ToolModifiers,
+  TransformEntryPreview,
+  TransformMode,
+  TransformPreview,
+} from "./types.js";
 
 /**
- * Headless transform gizmo tool (plan S7.8, ticket #20): move/rotate/scale
- * drags over the runtime node selection that commit coalesced
- * `node.setTransform` commands through one gesture, so a whole drag
- * produces exactly one history entry and pointer cancellation restores the
- * exact pre-gesture transforms. Local/world modes, snapping, and the
- * per-axis drag semantics are explicit tool state, never inferred from UI
- * state inside handlers (ARCHITECTURE.md "Editor interaction").
+ * Transform tool (plan S7.19, ticket #19): copy, delete, move, rotate,
+ * and mirror the selected geometry through the existing region commands.
  *
- * The tool is deterministic: every 3D input (camera ray, camera forward,
- * gizmo center) is injected by the host, so Node tests drive the full drag
- * math with fixed rays. Handle picking is a viewport concern (projected
- * hit testing against the rendered gizmo) and stays in the desktop layer;
- * the tool consumes the picked handle.
+ * A transform operates on the per-volume regions of the runtime
+ * selection (`selectionRegions`): node entries contribute the occupied
+ * bounds of each of their voxel volumes, voxel entries their unit
+ * region, and region entries themselves. Every operation previews the
+ * exact affected bounds and the collision behavior (v1 `overwrite`
+ * semantics, docs/commands/voxel-regions.md) before any commit:
  *
- * Drag semantics:
+ * - **Move / copy** are drag gestures: pointer down pins the selection
+ *   regions and the anchor voxel, moves update the destination preview
+ *   (translated AABBs plus the exact overwritten/removed counts), and
+ *   pointer up commits one labeled transaction of `translateRegion` /
+ *   `copyRegion` commands. A zero delta or an empty selection commits
+ *   nothing.
+ * - **Rotate / mirror / delete** preview on button press and apply on
+ *   confirmation: `previewRotate` cycles the exact 90-degree steps
+ *   around an axis (1, 2, 3, then back to 1), `previewMirror` and
+ *   `previewDelete` preview their single step, and `applyPending`
+ *   commits exactly the previewed operation as one labeled transaction
+ *   of `rotateRegion` / `mirrorRegion` / `deleteRegion` commands.
+ *   `cancelPending` and Escape discard the preview with zero document,
+ *   revision, history, autosave, or renderer side effect.
  *
- * - **Translate** (world/local): the pointer ray intersects a plane through
- *   the gizmo center whose normal is perpendicular to the drag axis and the
- *   camera forward; the signed distance along the axis between the start
- *   and current intersections is applied to each target node. World mode
- *   moves every node by the world-space delta; local mode applies the delta
- *   along each node's own rotated axis.
- * - **Rotate** (world): each node's whole world placement rotates around
- *   the shared gizmo center; the resulting local transform is resolved with
- *   `resolveLocalTransform` (ADR-0001 derived-transform policy). **Rotate**
- *   (local): the node's local rotation is pre-multiplied by the delta
- *   around its own local axis.
- * - **Scale** (local): the chosen local scale component multiplies by the
- *   drag factor. **Scale** (world): the world axis is expressed in the
- *   node's local frame and each scale component multiplies by its
- *   projection, so an axis-aligned node scales on the matching axis and a
- *   rotated node scales along the world axis.
- *
- * Snapping rounds the accumulated value (translate distance, rotation
- * angle, scale factor) to explicit increments; every produced transform is
- * canonicalized (finite, strictly positive scale, normalized rotation), so
- * a drag can never install an invalid transform.
+ * Preflight is exact and bounded (ADR-0009): destinations must stay in
+ * the volume coordinate domain (negative coordinates included), the
+ * total region volume must fit the per-gesture voxel budget, exact
+ * 90-degree rotations must satisfy the lattice parity constraint, and
+ * the post-operation occupied count must fit the volume limit. A failed
+ * preflight cancels the gesture or the pending preview atomically; the
+ * commit itself is atomic and the region commands revalidate everything.
+ * The tool never mutates semantic state: it reads the immutable store,
+ * previews into the runtime editor store, and hands commands to the
+ * host.
  */
 
-/** Gizmo interaction mode (plan S7.8). */
-export type TransformToolMode = "translate" | "rotate" | "scale";
-
-/** Explicit transform space (plan S7.8 "explicit local and world modes"). */
-export type TransformSpace = "local" | "world";
-
-/** The three gizmo axes (0 = X, 1 = Y, 2 = Z). */
-export type GizmoAxis = 0 | 1 | 2;
-
-/** One pickable gizmo handle. */
-export interface GizmoHandle {
-  readonly mode: TransformToolMode;
-  readonly axis: GizmoAxis;
+export interface TransformToolOptions {
+  readonly host: ToolHost;
+  /** Runtime store that owns the selection, the mode, and the preview. */
+  readonly editor: EditorStore;
 }
 
-/** A camera ray at viewport coordinates (desktop injects it). */
-export interface CameraRay {
-  readonly origin: Vec3;
-  /** Normalized direction. */
-  readonly direction: Vec3;
-}
-
-/** Services injected into the transform tool by the composition root. */
-export interface TransformToolHost {
-  /** The authoritative read surface of the open document. */
-  readonly store: DocumentStoreRead | undefined;
-  /** The runtime selection; node entries are the transform targets. */
-  readonly selection: readonly SelectionEntry[];
-  /** Camera forward (from the camera toward the scene), normalized. */
-  cameraForward(): Vec3;
-  /** Camera ray at viewport-relative coordinates, or undefined. */
-  ray(clientX: number, clientY: number): CameraRay | undefined;
-  /** Supplies a fresh command id for the next drag command. */
-  nextCommandId(): CommandId;
-  /**
-   * Opens one coalescing gesture on the command bus; undefined when no
-   * document is open. The returned host executes labeled transactions and
-   * presents the whole drag as one history entry (plan S4.10).
-   */
-  beginGesture(): GestureHost | undefined;
-  /** Surfaces a drag failure as a runtime notice. */
-  pushNotice(level: "info" | "warning" | "error", message: string): void;
-}
-
-/** Coalesced-commit surface of one drag (plan S4.10). */
-export interface GestureHost {
-  /**
-   * Executes one atomic labeled transaction; returns the error, or
-   * undefined on success. Never partially applies a drag.
-   */
-  update(
-    commands: readonly Command[],
-    label: string,
-  ): WorkspaceError | undefined;
-  /** Seals the drag as one history entry. */
-  end(): void;
-  /** Rolls the document back to the exact pre-drag transforms. */
-  cancel(): WorkspaceError | undefined;
-}
-
-/** The transform targets of the current runtime node selection. */
-export interface TransformTargets {
-  /** Selected node ids, in selection order, pruned of deleted nodes. */
-  readonly nodeIds: readonly NodeId[];
-  /** World-space gizmo center: the center of the union world bounds. */
-  readonly center: Vec3;
-  /** Half of the union bounds diagonal; the scale-drag reference length. */
-  readonly radius: number;
-}
-
-const AXES: readonly Vec3[] = [
-  [1, 0, 0],
-  [0, 1, 0],
-  [0, 0, 1],
-];
-
-/** Default snapping increments (plan S7.8; UI may override). */
-export const DEFAULT_TRANSLATE_SNAP = 0.25;
-export const DEFAULT_ROTATE_SNAP = Math.PI / 12;
-export const DEFAULT_SCALE_SNAP = 0.25;
-
-/** Smallest scale factor a scale drag may produce (keeps scale positive). */
-const MIN_SCALE_FACTOR = 0.01;
-
-const dot = (a: Vec3, b: Vec3): number =>
-  a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-
-const cross = (a: Vec3, b: Vec3): Vec3 => [
-  a[1] * b[2] - a[2] * b[1],
-  a[2] * b[0] - a[0] * b[2],
-  a[0] * b[1] - a[1] * b[0],
-];
-
-const subtract = (a: Vec3, b: Vec3): Vec3 => [
-  a[0] - b[0],
-  a[1] - b[1],
-  a[2] - b[2],
-];
-
-const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-
-const scale = (a: Vec3, factor: number): Vec3 => [
-  a[0] * factor,
-  a[1] * factor,
-  a[2] * factor,
-];
-
-function normalize(value: Vec3): Vec3 | undefined {
-  const length = Math.hypot(value[0], value[1], value[2]);
-  if (!(length > 1e-12) || !Number.isFinite(length)) return undefined;
-  return [value[0] / length, value[1] / length, value[2] / length];
-}
-
-/** Ray/plane intersection; undefined when parallel or behind the origin. */
-function intersectPlane(
-  ray: CameraRay,
-  point: Vec3,
-  normal: Vec3,
-): Vec3 | undefined {
-  const denominator = dot(ray.direction, normal);
-  if (Math.abs(denominator) < 1e-9) return undefined;
-  const distance = dot(subtract(point, ray.origin), normal) / denominator;
-  if (distance < 0) return undefined;
-  return add(ray.origin, scale(ray.direction, distance));
-}
-
-const snapValue = (value: number, increment: number): number =>
-  Math.round(value / increment) * increment;
-
-/**
- * Union world bounds of the node entries of a selection (plan S7.2); the
- * gizmo center and scale reference derive from it.
- */
-function nodeSelectionBounds(
-  store: DocumentStoreRead,
-  selection: readonly SelectionEntry[],
-): SelectionWorldBounds | undefined {
-  const document = store.getDocument();
-  let bounds: SelectionWorldBounds | undefined;
-  for (const entry of selection) {
-    if (entry.kind !== "node") continue;
-    const node = document.nodes[entry.nodeId];
-    if (node === undefined) continue;
-    const matrix = worldTransformMatrix(document, entry.nodeId);
-    let local: SelectionWorldBounds | undefined;
-    for (const component of node.components) {
-      if (component.kind !== "voxel") continue;
-      const occupied = store.getVolume(component.volumeId)?.occupiedBounds();
-      if (occupied === undefined) continue;
-      local = transformLocalBounds(matrix, occupied, local);
-    }
-    // A node without voxels still participates: use its world origin.
-    const resolved: SelectionWorldBounds =
-      local ??
-      (() => {
-        const origin = applyMatrixPoint(matrix, [0, 0, 0]);
-        return { min: origin, max: origin };
-      })();
-    bounds = bounds === undefined ? resolved : unionBounds(bounds, resolved);
-  }
-  return bounds;
-}
-
-function applyMatrixPoint(matrix: Mat4, point: Vec3): Vec3 {
-  return [
-    matrix[0] * point[0] +
-      matrix[1] * point[1] +
-      matrix[2] * point[2] +
-      matrix[3],
-    matrix[4] * point[0] +
-      matrix[5] * point[1] +
-      matrix[6] * point[2] +
-      matrix[7],
-    matrix[8] * point[0] +
-      matrix[9] * point[1] +
-      matrix[10] * point[2] +
-      matrix[11],
-  ];
-}
-
-function transformLocalBounds(
-  matrix: Mat4,
-  bounds: { readonly min: Vec3; readonly max: Vec3 },
-  into: SelectionWorldBounds | undefined,
-): SelectionWorldBounds {
-  const first = applyMatrixPoint(matrix, [
-    bounds.min[0],
-    bounds.min[1],
-    bounds.min[2],
-  ]);
-  let result: SelectionWorldBounds = into ?? { min: first, max: first };
-  for (let x = 0; x < 2; x += 1) {
-    for (let y = 0; y < 2; y += 1) {
-      for (let z = 0; z < 2; z += 1) {
-        if (x === 0 && y === 0 && z === 0) continue;
-        const corner: Vec3 = applyMatrixPoint(matrix, [
-          x === 0 ? bounds.min[0] : bounds.max[0],
-          y === 0 ? bounds.min[1] : bounds.max[1],
-          z === 0 ? bounds.min[2] : bounds.max[2],
-        ]);
-        result = {
-          min: [
-            Math.min(result.min[0], corner[0]),
-            Math.min(result.min[1], corner[1]),
-            Math.min(result.min[2], corner[2]),
-          ],
-          max: [
-            Math.max(result.max[0], corner[0]),
-            Math.max(result.max[1], corner[1]),
-            Math.max(result.max[2], corner[2]),
-          ],
-        };
-      }
-    }
-  }
-  return result;
-}
-
-const unionBounds = (
-  a: SelectionWorldBounds,
-  b: SelectionWorldBounds,
-): SelectionWorldBounds => ({
-  min: [
-    Math.min(a.min[0], b.min[0]),
-    Math.min(a.min[1], b.min[1]),
-    Math.min(a.min[2], b.min[2]),
-  ],
-  max: [
-    Math.max(a.max[0], b.max[0]),
-    Math.max(a.max[1], b.max[1]),
-    Math.max(a.max[2], b.max[2]),
-  ],
-});
-
-/**
- * Resolves the transform targets of the current node selection: pruned
- * node ids, the union world-bounds center, and half its diagonal.
- * Undefined when the selection contains no live node entries.
- */
-export function transformTargets(
-  store: DocumentStoreRead,
-  selection: readonly SelectionEntry[],
-): TransformTargets | undefined {
-  const bounds = nodeSelectionBounds(store, selection);
-  if (bounds === undefined) return undefined;
-  const center: Vec3 = [
-    (bounds.min[0] + bounds.max[0]) / 2,
-    (bounds.min[1] + bounds.max[1]) / 2,
-    (bounds.min[2] + bounds.max[2]) / 2,
-  ];
-  const diagonal = Math.hypot(
-    bounds.max[0] - bounds.min[0],
-    bounds.max[1] - bounds.min[1],
-    bounds.max[2] - bounds.min[2],
-  );
-  return {
-    nodeIds: selection
-      .filter(
-        (entry): entry is Extract<SelectionEntry, { readonly kind: "node" }> =>
-          entry.kind === "node" &&
-          store.getDocument().nodes[entry.nodeId] !== undefined,
-      )
-      .map((entry) => entry.nodeId),
-    center,
-    radius: Math.max(diagonal / 2, 1),
-  };
-}
-
-/** One in-progress drag. */
-interface DragState {
-  readonly handle: GizmoHandle;
-  readonly targets: TransformTargets;
-  /** Local transforms captured at pointer-down (the rollback baseline). */
-  readonly baseline: ReadonlyMap<NodeId, Transform>;
-  /** World matrix of each target's parent at pointer-down. */
-  readonly parentWorld: ReadonlyMap<NodeId, Mat4>;
-  readonly startPoint: Vec3;
-  readonly planeNormal: Vec3;
-  /** The world-space drag axis (first node's axis in local mode). */
-  readonly axis: Vec3;
-  /** Space and snapping pinned at pointer-down (plan S7.8). */
-  readonly space: TransformSpace;
-  readonly snapping: boolean;
-  readonly gesture: GestureHost;
-  /** True after a failed update; further moves are no-ops. */
-  failed: boolean;
-}
-
-/** Headless transform gizmo tool (plan S7.8). */
 export interface TransformTool {
   readonly id: "transform";
-  readonly mode: TransformToolMode;
-  readonly space: TransformSpace;
-  /** Snapping toggles and increments (explicit tool state). */
-  readonly snapping: boolean;
-  readonly translateSnap: number;
-  readonly rotateSnap: number;
-  readonly scaleSnap: number;
-  /** True while a gizmo drag is in progress. */
+  /** True while a move/copy drag is in progress. */
   readonly active: boolean;
-  /** The handle being dragged, when active. */
-  readonly handle: GizmoHandle | undefined;
-  setMode(mode: TransformToolMode): void;
-  setSpace(space: TransformSpace): void;
-  setSnapping(enabled: boolean): void;
-  setTranslateSnap(increment: number): void;
-  setRotateSnap(increment: number): void;
-  setScaleSnap(increment: number): void;
+  readonly draft: undefined;
   pointerDown(
-    handle: GizmoHandle,
     clientX: number,
     clientY: number,
+    modifiers?: ToolModifiers,
   ): ToolActionResult;
   pointerMove(clientX: number, clientY: number): ToolActionResult;
   pointerUp(): ToolActionResult;
   pointerCancel(): void;
-  /** Discards any in-progress drag (lifecycle replacement, tests). */
+  /** Discards any in-progress gesture and pending preview. */
   reset(): void;
+  /**
+   * Rotate mode: previews the next exact 90-degree step around `axis`
+   * (1, 2, 3 turns, cycling back to 1; a different axis restarts at 1).
+   */
+  previewRotate(axis: ShapeAxis): ToolActionResult;
+  /** Mirror mode: previews the mirror across the plane perpendicular to `axis`. */
+  previewMirror(axis: ShapeAxis): ToolActionResult;
+  /** Delete mode: previews removing the selected geometry. */
+  previewDelete(): ToolActionResult;
+  /** Applies the pending rotate/mirror/delete preview as one labeled transaction. */
+  applyPending(): ToolActionResult;
+  /** Cancels the pending preview; no document, revision, or history side effect. */
+  cancelPending(): void;
 }
 
-const MISSING_RAY: WorkspaceError = new WorkspaceError({
-  family: "validation",
-  code: "NO_POINTER_RAY",
-  message: "The pointer is outside the viewport",
+/** One per-volume region a transform operation reads or writes. */
+export interface SelectionRegion {
+  readonly volumeId: VolumeId;
+  /** Half-open source region. */
+  readonly region: IntAabb;
+}
+
+/** Transaction labels, one per operation (plan S7.19). */
+const LABELS: Readonly<Record<TransformMode, string>> = {
+  move: "Move selection",
+  copy: "Copy selection",
+  rotate: "Rotate selection",
+  mirror: "Mirror selection",
+  delete: "Delete selection",
+} as const;
+
+/** Half-open coordinate domain of a volume (ADR-0009). */
+const coordinateDomain = (maxCoordinate: number): IntAabb => ({
+  min: [-maxCoordinate, -maxCoordinate, -maxCoordinate],
+  max: [maxCoordinate + 1, maxCoordinate + 1, maxCoordinate + 1],
 });
 
-class TransformToolImpl implements TransformTool {
-  readonly id = "transform" as const;
-  readonly #host: TransformToolHost;
-  #mode: TransformToolMode = "translate";
-  #space: TransformSpace = "world";
-  #snapping = true;
-  #translateSnap = DEFAULT_TRANSLATE_SNAP;
-  #rotateSnap = DEFAULT_ROTATE_SNAP;
-  #scaleSnap = DEFAULT_SCALE_SNAP;
-  #drag: DragState | undefined;
-
-  constructor(host: TransformToolHost) {
-    this.#host = host;
-  }
-
-  get mode(): TransformToolMode {
-    return this.#mode;
-  }
-
-  get space(): TransformSpace {
-    return this.#space;
-  }
-
-  get snapping(): boolean {
-    return this.#snapping;
-  }
-
-  get translateSnap(): number {
-    return this.#translateSnap;
-  }
-
-  get rotateSnap(): number {
-    return this.#rotateSnap;
-  }
-
-  get scaleSnap(): number {
-    return this.#scaleSnap;
-  }
-
-  get active(): boolean {
-    return this.#drag !== undefined;
-  }
-
-  get handle(): GizmoHandle | undefined {
-    return this.#drag?.handle;
-  }
-
-  setMode(mode: TransformToolMode): void {
-    this.#mode = mode;
-  }
-
-  setSpace(space: TransformSpace): void {
-    this.#space = space;
-  }
-
-  setSnapping(enabled: boolean): void {
-    this.#snapping = enabled;
-  }
-
-  setTranslateSnap(increment: number): void {
-    if (Number.isFinite(increment) && increment > 0) {
-      this.#translateSnap = increment;
+/** True when a half-open region fits the volume coordinate domain. */
+function regionInDomain(region: IntAabb, limits: VoxelVolumeLimits): boolean {
+  const domain = coordinateDomain(limits.maxCoordinate);
+  for (let axis = 0; axis < 3; axis += 1) {
+    if ((region.min[axis] as number) < (domain.min[axis] as number)) {
+      return false;
+    }
+    if ((region.max[axis] as number) > (domain.max[axis] as number)) {
+      return false;
     }
   }
-
-  setRotateSnap(increment: number): void {
-    if (Number.isFinite(increment) && increment > 0) {
-      this.#rotateSnap = increment;
-    }
-  }
-
-  setScaleSnap(increment: number): void {
-    if (Number.isFinite(increment) && increment > 0) {
-      this.#scaleSnap = increment;
-    }
-  }
-
-  pointerDown(
-    handle: GizmoHandle,
-    clientX: number,
-    clientY: number,
-  ): ToolActionResult {
-    if (this.#drag !== undefined) return { ok: true };
-    const store = this.#host.store;
-    if (store === undefined) return { ok: true };
-    const targets = transformTargets(store, this.#host.selection);
-    if (targets === undefined) return { ok: true };
-    const ray = this.#host.ray(clientX, clientY);
-    if (ray === undefined) return { ok: false, error: MISSING_RAY };
-    const axis = this.#dragAxis(store, targets, handle.axis);
-    // Translate/scale drag on the plane that contains the axis and faces
-    // the camera; rotate drags move on the plane perpendicular to the
-    // axis (the angle is measured around the axis).
-    let planeNormal =
-      handle.mode === "rotate" ? axis : this.#dragPlaneNormal(axis);
-    let startPoint = intersectPlane(ray, targets.center, planeNormal);
-    if (startPoint === undefined) {
-      // Degenerate: the pointer ray is parallel to the drag plane (for
-      // example the front view at the gizmo's height). Fall back to the
-      // plane facing the camera through the gizmo center.
-      planeNormal = this.#host.cameraForward();
-      startPoint = intersectPlane(ray, targets.center, planeNormal);
-    }
-    if (startPoint === undefined) return { ok: true };
-    const gesture = this.#host.beginGesture();
-    if (gesture === undefined) return { ok: true };
-    this.#drag = {
-      handle,
-      targets,
-      baseline: this.#baselineTransforms(store, targets.nodeIds),
-      parentWorld: this.#parentWorlds(store, targets.nodeIds),
-      startPoint,
-      planeNormal,
-      axis,
-      space: this.#space,
-      snapping: this.#snapping,
-      gesture,
-      failed: false,
-    };
-    return { ok: true };
-  }
-
-  pointerMove(clientX: number, clientY: number): ToolActionResult {
-    const drag = this.#drag;
-    if (drag === undefined || drag.failed) return { ok: true };
-    const store = this.#host.store;
-    if (store === undefined) return { ok: true };
-    const ray = this.#host.ray(clientX, clientY);
-    if (ray === undefined) return { ok: false, error: MISSING_RAY };
-    const point = intersectPlane(ray, drag.targets.center, drag.planeNormal);
-    if (point === undefined) return { ok: true };
-
-    const commands = this.#buildCommands(store, drag, point);
-    if (commands.length === 0) return { ok: true };
-    const error = drag.gesture.update(commands, this.#label(drag.handle.mode));
-    if (error !== undefined) {
-      drag.failed = true;
-      this.#host.pushNotice("error", error.message);
-      return { ok: false, error };
-    }
-    return { ok: true };
-  }
-
-  pointerUp(): ToolActionResult {
-    const drag = this.#drag;
-    if (drag === undefined) return { ok: true };
-    this.#drag = undefined;
-    drag.gesture.end();
-    return { ok: true };
-  }
-
-  pointerCancel(): void {
-    const drag = this.#drag;
-    if (drag === undefined) return;
-    this.#drag = undefined;
-    const error = drag.gesture.cancel();
-    if (error !== undefined) {
-      this.#host.pushNotice("error", error.message);
-    }
-  }
-
-  reset(): void {
-    this.#drag = undefined;
-  }
-
-  #label(mode: TransformToolMode): string {
-    switch (mode) {
-      case "translate":
-        return "Move";
-      case "rotate":
-        return "Rotate";
-      case "scale":
-        return "Scale";
-    }
-  }
-
-  /** World-space unit drag axis for the given gizmo axis and space. */
-  #dragAxis(
-    store: DocumentStoreRead,
-    targets: TransformTargets,
-    axis: GizmoAxis,
-  ): Vec3 {
-    const worldAxis = AXES[axis] as Vec3;
-    if (this.#space === "world" || targets.nodeIds.length === 0) {
-      return worldAxis;
-    }
-    const node = store.getDocument().nodes[targets.nodeIds[0] as NodeId];
-    if (node === undefined) return worldAxis;
-    return rotateVector(node.transform.rotation, worldAxis);
-  }
-
-  /** Drag plane normal: perpendicular to the axis, facing the camera. */
-  #dragPlaneNormal(axis: Vec3): Vec3 {
-    const forward = this.#host.cameraForward();
-    const fallback = normalize(cross(axis, [0, 1, 0])) ??
-      normalize(cross(axis, [1, 0, 0])) ?? [1, 0, 0];
-    return normalize(cross(forward, axis)) ?? fallback;
-  }
-
-  #baselineTransforms(
-    store: DocumentStoreRead,
-    nodeIds: readonly NodeId[],
-  ): ReadonlyMap<NodeId, Transform> {
-    const document = store.getDocument();
-    return new Map(
-      nodeIds
-        .map((id) => document.nodes[id])
-        .filter((node) => node !== undefined)
-        .map((node) => [node.nodeId, node.transform] as const),
-    );
-  }
-
-  #parentWorlds(
-    store: DocumentStoreRead,
-    nodeIds: readonly NodeId[],
-  ): ReadonlyMap<NodeId, Mat4> {
-    const document = store.getDocument();
-    const map = new Map<NodeId, Mat4>();
-    for (const id of nodeIds) {
-      const node = document.nodes[id];
-      if (node === undefined || node.parentId === null) continue;
-      map.set(id, worldTransformMatrix(document, node.parentId));
-    }
-    return map;
-  }
-
-  /** Builds the absolute setTransform commands for one drag update. */
-  #buildCommands(
-    store: DocumentStoreRead,
-    drag: DragState,
-    point: Vec3,
-  ): readonly Command[] {
-    const commands: Command[] = [];
-    const document = store.getDocument();
-    for (const nodeId of drag.targets.nodeIds) {
-      const node = document.nodes[nodeId];
-      const baseline = drag.baseline.get(nodeId);
-      if (node === undefined || baseline === undefined) continue;
-      const next = this.#nextTransform(
-        store,
-        drag,
-        nodeId,
-        node.transform,
-        baseline,
-        point,
-      );
-      if (next === undefined) continue;
-      // Skip no-op updates so tiny drags never create empty transactions.
-      const transform = canonicalTransform(next);
-      if (transformsEqual(transform, node.transform)) continue;
-      commands.push(
-        setNodeTransformCommand(this.#host.nextCommandId(), {
-          nodeId,
-          transform,
-        }),
-      );
-    }
-    return commands;
-  }
-
-  /** Computes the next canonicalizable local transform of one node. */
-  #nextTransform(
-    store: DocumentStoreRead,
-    drag: DragState,
-    nodeId: NodeId,
-    current: Transform,
-    baseline: Transform,
-    point: Vec3,
-  ): Transform | undefined {
-    switch (drag.handle.mode) {
-      case "translate": {
-        const delta = dot(subtract(point, drag.startPoint), drag.axis);
-        const amount = drag.snapping
-          ? snapValue(delta, this.#translateSnap)
-          : delta;
-        if (amount === 0) return current;
-        const direction =
-          drag.space === "world"
-            ? drag.axis
-            : rotateVector(baseline.rotation, AXES[drag.handle.axis] as Vec3);
-        return {
-          translation: [
-            baseline.translation[0] + direction[0] * amount,
-            baseline.translation[1] + direction[1] * amount,
-            baseline.translation[2] + direction[2] * amount,
-          ],
-          pivot: baseline.pivot,
-          rotation: baseline.rotation,
-          scale: baseline.scale,
-        };
-      }
-      case "rotate": {
-        const d0 = normalize(subtract(drag.startPoint, drag.targets.center));
-        const d1 = normalize(subtract(point, drag.targets.center));
-        if (d0 === undefined || d1 === undefined) return undefined;
-        const angle = Math.atan2(dot(cross(d0, d1), drag.axis), dot(d0, d1));
-        const amount = drag.snapping
-          ? snapValue(angle, this.#rotateSnap)
-          : angle;
-        if (Math.abs(amount) < 1e-12) return current;
-        if (drag.space === "world") {
-          // W' = T(center) R T(-center) W(baseline), then resolve the
-          // local transform under the baseline parent world (ADR-0001).
-          const world = transformToMatrix(baseline);
-          const parentWorld = drag.parentWorld.get(nodeId) ?? identityMatrix();
-          const rotatedWorld = rotateWorldMatrix(
-            world,
-            drag.targets.center,
-            drag.axis,
-            amount,
-          );
-          const local = decomposeMatrix(
-            multiplyMatrices(invertMatrix(parentWorld), rotatedWorld),
-            baseline.pivot,
-          );
-          return {
-            translation: local.translation,
-            pivot: baseline.pivot,
-            rotation: local.rotation,
-            scale: local.scale,
-          };
-        }
-        const delta = quaternionFromAxisAngle(
-          AXES[drag.handle.axis] as Vec3,
-          amount,
-        );
-        return {
-          translation: baseline.translation,
-          pivot: baseline.pivot,
-          rotation: quaternionMultiply(delta, baseline.rotation),
-          scale: baseline.scale,
-        };
-      }
-      case "scale": {
-        const delta = dot(subtract(point, drag.startPoint), drag.axis);
-        const raw = 1 + delta / drag.targets.radius;
-        const snapped = drag.snapping
-          ? 1 + snapValue(raw - 1, this.#scaleSnap)
-          : raw;
-        const factor = Math.max(snapped, MIN_SCALE_FACTOR);
-        if (Math.abs(factor - 1) < 1e-12) return current;
-        if (drag.space === "local") {
-          const next: [number, number, number] = [...baseline.scale];
-          next[drag.handle.axis] = next[drag.handle.axis] * factor;
-          return {
-            translation: baseline.translation,
-            pivot: baseline.pivot,
-            rotation: baseline.rotation,
-            scale: next,
-          };
-        }
-        // World mode: scale along the world axis expressed in the node's
-        // local frame (scale drags never change the rotation, so the
-        // baseline rotation is the current one).
-        const localAxis = rotateVector(
-          quaternionConjugate(baseline.rotation),
-          drag.axis,
-        );
-        return {
-          translation: baseline.translation,
-          pivot: baseline.pivot,
-          rotation: baseline.rotation,
-          scale: [
-            baseline.scale[0] * (1 + (factor - 1) * Math.abs(localAxis[0])),
-            baseline.scale[1] * (1 + (factor - 1) * Math.abs(localAxis[1])),
-            baseline.scale[2] * (1 + (factor - 1) * Math.abs(localAxis[2])),
-          ],
-        };
-      }
-    }
-  }
+  return true;
 }
 
-function identityMatrix(): Mat4 {
-  return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-}
-
-/** World matrix rotated around `center` by `angle` about `axis`. */
-function rotateWorldMatrix(
-  world: Mat4,
-  center: Vec3,
-  axis: Vec3,
-  angle: number,
-): Mat4 {
-  // T(center) * R(axis, angle) * T(-center) * world. The right factor is
-  // the pure back-translation, NOT the inverse of the rotation matrix
-  // (that would cancel the rotation).
-  const rotationMatrix = transformToMatrix({
-    translation: center,
-    pivot: [0, 0, 0],
-    rotation: quaternionFromAxisAngle(axis, angle),
-    scale: [1, 1, 1],
-  });
-  const translateBack = transformToMatrix({
-    translation: scale(center, -1),
-    pivot: [0, 0, 0],
-    rotation: [0, 0, 0, 1],
-    scale: [1, 1, 1],
-  });
-  return multiplyMatrices(
-    multiplyMatrices(rotationMatrix, translateBack),
-    world,
+/** Number of voxels in a half-open region (exact integer product). */
+function regionVolume(region: IntAabb): number {
+  return (
+    (region.max[0] - region.min[0]) *
+    (region.max[1] - region.min[1]) *
+    (region.max[2] - region.min[2])
   );
 }
 
-/** Creates the transform gizmo tool for one composition. */
-export function createTransformTool(host: TransformToolHost): TransformTool {
-  return new TransformToolImpl(host);
+/** Stable "x,y,z" key of a voxel coordinate. */
+const voxelKey = (coordinate: Vec3i): string =>
+  `${String(coordinate[0])},${String(coordinate[1])},${String(coordinate[2])}`;
+
+const parseKey = (key: string): Vec3i => {
+  const [x, y, z] = key.split(",");
+  return [Number(x), Number(y), Number(z)];
+};
+
+/** Adds an integer delta to a voxel coordinate. */
+const addDelta = (coordinate: Vec3i, delta: Vec3i): Vec3i => [
+  coordinate[0] + delta[0],
+  coordinate[1] + delta[1],
+  coordinate[2] + delta[2],
+];
+
+/** True when the delta is exactly zero on every axis. */
+const isZeroDelta = (delta: Vec3i): boolean =>
+  delta[0] === 0 && delta[1] === 0 && delta[2] === 0;
+
+/**
+ * Expands a mixed selection into per-volume regions the region commands
+ * can act on (plan S7.19): node entries contribute the occupied-voxel
+ * bounds of each of their voxel volumes (empty volumes are skipped),
+ * voxel entries contribute their unit region, and region entries
+ * contribute themselves. Equal volume/region pairs deduplicate and the
+ * selection order is preserved. Undefined when no region is displayable.
+ * The node identity is dropped: transforms are volume-local and never
+ * touch node transforms (ticket #20).
+ */
+export function selectionRegions(
+  store: DocumentStoreRead,
+  selection: readonly SelectionEntry[],
+): SelectionRegion[] | undefined {
+  const regions = selectionVolumeRegions(store, selection);
+  if (regions === undefined) return undefined;
+  return regions.map(({ volumeId, region }) => ({ volumeId, region }));
+}
+
+/** Frozen operation parameters of one transform preview. */
+export type TransformParams =
+  | { readonly operation: "move"; readonly delta: Vec3i }
+  | { readonly operation: "copy"; readonly delta: Vec3i }
+  | {
+      readonly operation: "rotate";
+      readonly axis: ShapeAxis;
+      readonly quarterTurns: QuarterTurns;
+    }
+  | { readonly operation: "mirror"; readonly axis: ShapeAxis }
+  | { readonly operation: "delete" };
+
+/** Per-volume occupied key sets of one preview. */
+interface VolumeKeys {
+  readonly srcKeys: Set<string>;
+  readonly destKeys: Set<string>;
+  readonly mappedKeys: Set<string>;
+}
+
+/** Computed preview plus the exact per-volume net occupied change. */
+interface ComputedTransform {
+  readonly preview: TransformPreview;
+  /** Exact net occupied change per volume (additions minus removals). */
+  readonly netByVolume: ReadonlyMap<VolumeId, number>;
+}
+
+/**
+ * Computes the exact preview of one transform operation (plan S7.19):
+ * per-entry affected bounds and the union overwritten/removed/moved
+ * counts, plus the exact per-volume net occupied change for the
+ * ADR-0009 limit preflight. Every count is read through the
+ * authoritative store. Collision behavior is the v1 overwrite mode:
+ * an occupied destination voxel is "overwritten" exactly when it
+ * receives mapped content and is not part of the operation's own source
+ * content.
+ */
+function computePreview(
+  store: DocumentStoreRead,
+  regions: readonly SelectionRegion[],
+  params: TransformParams,
+  maxGestureVoxels: number,
+): ComputedTransform {
+  const entries: TransformEntryPreview[] = [];
+  const byVolume = new Map<VolumeId, VolumeKeys>();
+  for (const { volumeId, region } of regions) {
+    const view = store.getVolume(volumeId);
+    if (view === undefined) continue;
+    const destination = destinationFor(region, params);
+    if (!regionInDomain(destination, view.limits)) {
+      throw outOfBoundsError(volumeId, destination, "destination");
+    }
+    const volume = volumeOf(byVolume, volumeId);
+    collectOccupied(volume.srcKeys, view, region, maxGestureVoxels);
+    collectOccupied(volume.destKeys, view, destination, maxGestureVoxels);
+    entries.push({ volumeId, source: region, destination });
+  }
+  // The union preview is executable only when the same-volume commands
+  // can be ordered without interference; reject cycles atomically so the
+  // commit can never diverge from the preview. The preview carries the
+  // ordered entries so the commit replays exactly what was previewed.
+  const ordered = validatedEntries(entries, params.operation);
+  for (const { volumeId, region } of regions) {
+    const volume = byVolume.get(volumeId);
+    if (volume === undefined) continue;
+    for (const key of volume.srcKeys) {
+      const mapped = mapKey(key, region, params);
+      if (mapped !== undefined) volume.mappedKeys.add(mapped);
+    }
+  }
+  let movedVoxels = 0;
+  let overwrittenVoxels = 0;
+  let removedVoxels = 0;
+  const netByVolume = new Map<VolumeId, number>();
+  for (const [volumeId, volume] of byVolume) {
+    movedVoxels += volume.srcKeys.size;
+    const additions = countDifference(volume.mappedKeys, volume.destKeys);
+    const removals =
+      params.operation === "copy"
+        ? 0
+        : params.operation === "delete"
+          ? volume.srcKeys.size
+          : countDifference(volume.srcKeys, volume.mappedKeys);
+    netByVolume.set(volumeId, additions - removals);
+    overwrittenVoxels += countOverwritten(
+      volume.destKeys,
+      volume.srcKeys,
+      volume.mappedKeys,
+    );
+    removedVoxels += removals;
+  }
+  return {
+    preview: buildPreview(params, ordered, {
+      movedVoxels,
+      overwrittenVoxels,
+      removedVoxels,
+    }),
+    netByVolume,
+  };
+}
+
+/** Builds the fully typed preview for the operation parameters. */
+function buildPreview(
+  params: TransformParams,
+  entries: readonly TransformEntryPreview[],
+  counts: {
+    readonly movedVoxels: number;
+    readonly overwrittenVoxels: number;
+    readonly removedVoxels: number;
+  },
+): TransformPreview {
+  switch (params.operation) {
+    case "move":
+      return {
+        operation: "move",
+        entries,
+        delta: params.delta,
+        ...counts,
+      };
+    case "copy":
+      return {
+        operation: "copy",
+        entries,
+        delta: params.delta,
+        ...counts,
+      };
+    case "rotate":
+      return {
+        operation: "rotate",
+        entries,
+        axis: params.axis,
+        quarterTurns: params.quarterTurns,
+        ...counts,
+      };
+    case "mirror":
+      return {
+        operation: "mirror",
+        entries,
+        axis: params.axis,
+        ...counts,
+      };
+    case "delete":
+      return {
+        operation: "delete",
+        entries,
+        ...counts,
+      };
+  }
+}
+
+/** Exact destination AABB of one region under the operation. */
+function destinationFor(region: IntAabb, params: TransformParams): IntAabb {
+  switch (params.operation) {
+    case "move":
+    case "copy":
+      return translateAabb(region, params.delta);
+    case "rotate":
+      // Throws INVALID_ROTATION_REGION for parity-mismatched regions.
+      return rotateRegionPlan(region, params.axis, params.quarterTurns)
+        .destination;
+    case "mirror":
+      return region;
+    case "delete":
+      return region;
+  }
+}
+
+/** Maps one source voxel key to its destination key under the operation. */
+function mapKey(
+  key: string,
+  region: IntAabb,
+  params: TransformParams,
+): string | undefined {
+  const coordinate = parseKey(key);
+  switch (params.operation) {
+    case "move":
+    case "copy":
+      return voxelKey(addDelta(coordinate, params.delta));
+    case "rotate": {
+      const plan = rotateRegionPlan(region, params.axis, params.quarterTurns);
+      return voxelKey(plan.map(coordinate));
+    }
+    case "mirror":
+      return voxelKey(mirrorCoordinate(region, params.axis, coordinate));
+    case "delete":
+      return undefined;
+  }
+}
+
+function volumeOf(
+  byVolume: Map<VolumeId, VolumeKeys>,
+  volumeId: VolumeId,
+): VolumeKeys {
+  let volume = byVolume.get(volumeId);
+  if (volume === undefined) {
+    volume = {
+      srcKeys: new Set(),
+      destKeys: new Set(),
+      mappedKeys: new Set(),
+    };
+    byVolume.set(volumeId, volume);
+  }
+  return volume;
+}
+
+/**
+ * Collects the occupied voxel keys of a half-open region through the
+ * immutable read view, scanning chunk-wise so empty regions and chunks
+ * are cheap (the per-gesture budget, enforced by the caller over the
+ * region volumes, bounds every scan).
+ */
+function collectOccupied(
+  keys: Set<string>,
+  view: VoxelVolumeReadView,
+  region: IntAabb,
+  maxGestureVoxels: number,
+): void {
+  if (regionVolume(region) > maxGestureVoxels) {
+    throw tooManyVoxelsError(regionVolume(region), maxGestureVoxels);
+  }
+  const minChunk = [
+    Math.floor(region.min[0] / CHUNK_EDGE),
+    Math.floor(region.min[1] / CHUNK_EDGE),
+    Math.floor(region.min[2] / CHUNK_EDGE),
+  ];
+  const maxChunk = [
+    Math.ceil(region.max[0] / CHUNK_EDGE) - 1,
+    Math.ceil(region.max[1] / CHUNK_EDGE) - 1,
+    Math.ceil(region.max[2] / CHUNK_EDGE) - 1,
+  ];
+  for (let cz = minChunk[2] as number; cz <= (maxChunk[2] as number); cz += 1) {
+    for (
+      let cy = minChunk[1] as number;
+      cy <= (maxChunk[1] as number);
+      cy += 1
+    ) {
+      for (
+        let cx = minChunk[0] as number;
+        cx <= (maxChunk[0] as number);
+        cx += 1
+      ) {
+        const chunk = view.getChunk([cx, cy, cz]);
+        if (chunk === undefined) continue;
+        const localMin = [
+          Math.max(region.min[0] - cx * CHUNK_EDGE, 0),
+          Math.max(region.min[1] - cy * CHUNK_EDGE, 0),
+          Math.max(region.min[2] - cz * CHUNK_EDGE, 0),
+        ];
+        const localMax = [
+          Math.min(region.max[0] - cx * CHUNK_EDGE, CHUNK_EDGE),
+          Math.min(region.max[1] - cy * CHUNK_EDGE, CHUNK_EDGE),
+          Math.min(region.max[2] - cz * CHUNK_EDGE, CHUNK_EDGE),
+        ];
+        for (
+          let z = localMin[2] as number;
+          z < (localMax[2] as number);
+          z += 1
+        ) {
+          for (
+            let y = localMin[1] as number;
+            y < (localMax[1] as number);
+            y += 1
+          ) {
+            const base = CHUNK_EDGE * (y + CHUNK_EDGE * z);
+            for (
+              let x = localMin[0] as number;
+              x < (localMax[0] as number);
+              x += 1
+            ) {
+              const value = chunk[base + x];
+              if (value === undefined || value === 0) continue;
+              keys.add(
+                `${String(cx * CHUNK_EDGE + x)},${String(cy * CHUNK_EDGE + y)},${String(cz * CHUNK_EDGE + z)}`,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/** |a \\ b| for key sets. */
+function countDifference(a: Set<string>, b: Set<string>): number {
+  let count = 0;
+  for (const key of a) {
+    if (!b.has(key)) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Occupied destination voxels the operation overwrites: mapped positions
+ * that are occupied before the operation and are not part of the
+ * operation's own source content.
+ */
+function countOverwritten(
+  destKeys: Set<string>,
+  srcKeys: Set<string>,
+  mappedKeys: Set<string>,
+): number {
+  let count = 0;
+  for (const key of mappedKeys) {
+    if (destKeys.has(key) && !srcKeys.has(key)) count += 1;
+  }
+  return count;
+}
+
+/** True when two half-open regions intersect. */
+function regionsIntersect(a: IntAabb, b: IntAabb): boolean {
+  for (let axis = 0; axis < 3; axis += 1) {
+    if (
+      (a.max[axis] as number) <= (b.min[axis] as number) ||
+      (b.max[axis] as number) <= (a.min[axis] as number)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Same-volume command interference: `before` must run before `after`
+ * exactly when `before`'s footprint (source plus destination, or just
+ * the destination for copies, which never clear) intersects `after`'s
+ * source. Sequential region commands snapshot their source at execution
+ * time, so an earlier command must never touch a later command's source;
+ * otherwise the commit would diverge from the union preview (the
+ * reviewer-verified invariant of ticket #19).
+ */
+function footprintOf(
+  entry: TransformEntryPreview,
+  operation: TransformMode,
+): IntAabb {
+  if (operation === "copy") return entry.destination;
+  return unionAabb(entry.source, entry.destination);
+}
+
+function unionAabb(a: IntAabb, b: IntAabb): IntAabb {
+  return {
+    min: [
+      Math.min(a.min[0], b.min[0]),
+      Math.min(a.min[1], b.min[1]),
+      Math.min(a.min[2], b.min[2]),
+    ],
+    max: [
+      Math.max(a.max[0], b.max[0]),
+      Math.max(a.max[1], b.max[1]),
+      Math.max(a.max[2], b.max[2]),
+    ],
+  };
+}
+
+/** Stable error for selection regions that cannot be transformed exactly. */
+const conflictingRegionsError = (): WorkspaceError =>
+  new WorkspaceError({
+    family: "validation",
+    code: "CONFLICTING_SELECTION_REGIONS",
+    message:
+      "Selected regions overlap in a way that cannot be transformed exactly; use one region selection instead",
+  });
+
+/**
+ * Orders same-volume entries so that no earlier command's footprint
+ * touches a later command's source (Kahn's algorithm over the pairwise
+ * interference graph). The preview computes the union semantics, so the
+ * commit must execute the commands in an order that realizes it exactly;
+ * a cycle (mutually interfering entries) cannot be ordered and is
+ * rejected atomically with `CONFLICTING_SELECTION_REGIONS`. Delete never
+ * interferes (clears are idempotent unions) and stays in selection order.
+ */
+function orderedEntries(
+  entries: readonly TransformEntryPreview[],
+  operation: TransformMode,
+): readonly TransformEntryPreview[] {
+  if (operation === "delete" || entries.length < 2) return entries;
+  const byVolume = new Map<VolumeId, TransformEntryPreview[]>();
+  for (const entry of entries) {
+    const group = byVolume.get(entry.volumeId);
+    if (group === undefined) {
+      byVolume.set(entry.volumeId, [entry]);
+    } else {
+      group.push(entry);
+    }
+  }
+  let ordered: TransformEntryPreview[] = [];
+  for (const group of byVolume.values()) {
+    if (group.length < 2) {
+      ordered = ordered.concat(group);
+      continue;
+    }
+    const successors = new Map<
+      TransformEntryPreview,
+      TransformEntryPreview[]
+    >();
+    const indegree = new Map<TransformEntryPreview, number>();
+    for (const candidate of group) {
+      successors.set(candidate, []);
+      indegree.set(candidate, 0);
+    }
+    for (const before of group) {
+      const footprint = footprintOf(before, operation);
+      for (const after of group) {
+        if (before === after) continue;
+        if (regionsIntersect(footprint, after.source)) {
+          // `before` would corrupt `after`'s source, so `after` must run
+          // first: edge after -> before.
+          successors.get(after)?.push(before);
+          indegree.set(before, (indegree.get(before) ?? 0) + 1);
+        }
+      }
+    }
+    const ready = group.filter((entry) => (indegree.get(entry) ?? 0) === 0);
+    const queue = [...ready];
+    const result: TransformEntryPreview[] = [];
+    while (queue.length > 0) {
+      const next = queue.shift();
+      if (next === undefined) break;
+      result.push(next);
+      for (const successor of successors.get(next) ?? []) {
+        const remaining = (indegree.get(successor) ?? 0) - 1;
+        indegree.set(successor, remaining);
+        if (remaining === 0) queue.push(successor);
+      }
+    }
+    if (result.length !== group.length) throw conflictingRegionsError();
+    ordered = ordered.concat(result);
+  }
+  return ordered;
+}
+
+/** Orders the preview entries and validates that the operation is executable. */
+function validatedEntries(
+  entries: readonly TransformEntryPreview[],
+  operation: TransformMode,
+): readonly TransformEntryPreview[] {
+  return orderedEntries(entries, operation);
+}
+
+class TransformToolImpl implements TransformTool {
+  readonly id = "transform" as const;
+  readonly #host: ToolHost;
+  readonly #editor: EditorStore;
+  #active = false;
+  /** Operation pinned at pointer down (move or copy). */
+  #operation: "move" | "copy" | undefined;
+  #anchor: Vec3i | undefined;
+  #current: Vec3i | undefined;
+  #regions: readonly SelectionRegion[] | undefined;
+
+  constructor(options: TransformToolOptions) {
+    this.#host = options.host;
+    this.#editor = options.editor;
+  }
+
+  get active(): boolean {
+    return this.#active;
+  }
+
+  get draft(): undefined {
+    return undefined;
+  }
+
+  pointerDown(clientX: number, clientY: number): ToolActionResult {
+    // A second down while a gesture is captured is a no-op (safety).
+    if (this.#active) return { ok: true };
+    const mode = this.#editor.transformMode;
+    // Rotate/mirror/delete are button-driven previews, not gestures.
+    if (mode !== "move" && mode !== "copy") return { ok: true };
+    const store = this.#host.store;
+    if (store === undefined) return { ok: false, error: sessionNotOpen() };
+    const regions = selectionRegions(store, this.#editor.selection);
+    if (regions === undefined) return { ok: true };
+    const hit = this.#host.pick(clientX, clientY);
+    if (hit === undefined) return { ok: true };
+    this.#operation = mode;
+    this.#anchor = [...hit.voxel];
+    this.#current = [...hit.voxel];
+    this.#regions = regions;
+    this.#active = true;
+    return this.#publishDragPreview();
+  }
+
+  pointerMove(clientX: number, clientY: number): ToolActionResult {
+    if (!this.#active || this.#anchor === undefined) return { ok: true };
+    const hit = this.#host.pick(clientX, clientY);
+    if (hit === undefined) return { ok: true };
+    this.#current = [...hit.voxel];
+    return this.#publishDragPreview();
+  }
+
+  pointerUp(): ToolActionResult {
+    if (!this.#active || this.#operation === undefined) return { ok: true };
+    const operation = this.#operation;
+    const regions = this.#regions;
+    const anchor = this.#anchor;
+    const current = this.#current;
+    this.reset();
+    if (
+      regions === undefined ||
+      anchor === undefined ||
+      current === undefined
+    ) {
+      return { ok: true };
+    }
+    const delta: Vec3i = [
+      current[0] - anchor[0],
+      current[1] - anchor[1],
+      current[2] - anchor[2],
+    ];
+    // A zero delta changes nothing: commit nothing rather than a no-op
+    // history entry.
+    if (isZeroDelta(delta)) return { ok: true };
+    try {
+      // Recompute the exact preview for the pinned regions and commit
+      // exactly its entries (ordered so the sequential commands realize
+      // the union semantics the preview promised).
+      const store = this.#host.store;
+      if (store === undefined) return { ok: true };
+      const computed = this.#compute(store, regions, { operation, delta });
+      const commands = computed.preview.entries.map(({ volumeId, source }) =>
+        operation === "move"
+          ? translateRegionCommand(this.#host.nextCommandId(), {
+              volumeId,
+              region: source,
+              delta,
+            })
+          : copyRegionCommand(this.#host.nextCommandId(), {
+              volumeId,
+              source,
+              destination: addDelta(source.min, delta),
+            }),
+      );
+      return this.#commit(commands, LABELS[operation]);
+    } catch (error) {
+      if (error instanceof WorkspaceError) {
+        return { ok: false, error };
+      }
+      throw error;
+    }
+  }
+
+  pointerCancel(): void {
+    this.reset();
+  }
+
+  reset(): void {
+    this.#active = false;
+    this.#operation = undefined;
+    this.#anchor = undefined;
+    this.#current = undefined;
+    this.#regions = undefined;
+    this.#editor.setTransformPreview(undefined);
+  }
+
+  previewRotate(axis: ShapeAxis): ToolActionResult {
+    if (this.#active) return { ok: true };
+    const pending = this.#editor.transformPreview;
+    let quarterTurns: QuarterTurns =
+      pending !== undefined &&
+      pending.operation === "rotate" &&
+      pending.axis === axis
+        ? cycleQuarterTurns(pending.quarterTurns)
+        : 1;
+    // A region whose rotation-plane extents have different parities can
+    // only rotate exactly by 180 degrees (resampling is deferred in v1);
+    // fall back to the always-exact step so the operation stays usable.
+    const store = this.#host.store;
+    if (quarterTurns !== 2 && store !== undefined) {
+      const regions = selectionRegions(store, this.#editor.selection);
+      const impossible = regions?.some(
+        ({ region }) => !canRotateExactly(region, axis, quarterTurns),
+      );
+      if (impossible === true) quarterTurns = 2;
+    }
+    return this.#publishPending({ operation: "rotate", axis, quarterTurns });
+  }
+
+  previewMirror(axis: ShapeAxis): ToolActionResult {
+    if (this.#active) return { ok: true };
+    return this.#publishPending({ operation: "mirror", axis });
+  }
+
+  previewDelete(): ToolActionResult {
+    if (this.#active) return { ok: true };
+    return this.#publishPending({ operation: "delete" });
+  }
+
+  applyPending(): ToolActionResult {
+    const pending = this.#editor.transformPreview;
+    if (
+      pending === undefined ||
+      pending.operation === "move" ||
+      pending.operation === "copy" ||
+      pending.entries.length === 0
+    ) {
+      return { ok: true };
+    }
+    try {
+      const entries = validatedEntries(pending.entries, pending.operation);
+      const commands = entries.map(({ volumeId, source }) => {
+        switch (pending.operation) {
+          case "rotate":
+            return rotateRegionCommand(this.#host.nextCommandId(), {
+              volumeId,
+              region: source,
+              axis: pending.axis,
+              quarterTurns: pending.quarterTurns,
+            });
+          case "mirror":
+            return mirrorRegionCommand(this.#host.nextCommandId(), {
+              volumeId,
+              region: source,
+              axis: pending.axis,
+            });
+          case "delete":
+            return deleteRegionCommand(this.#host.nextCommandId(), {
+              volumeId,
+              region: source,
+            });
+        }
+      });
+      this.reset();
+      return this.#commit(commands, LABELS[pending.operation]);
+    } catch (error) {
+      if (error instanceof WorkspaceError) {
+        this.reset();
+        return { ok: false, error };
+      }
+      throw error;
+    }
+  }
+
+  cancelPending(): void {
+    this.#editor.setTransformPreview(undefined);
+  }
+
+  /** Publishes the live move/copy drag preview; failures cancel the gesture. */
+  #publishDragPreview(): ToolActionResult {
+    const regions = this.#regions;
+    const anchor = this.#anchor;
+    const current = this.#current;
+    const operation = this.#operation;
+    if (
+      regions === undefined ||
+      anchor === undefined ||
+      current === undefined ||
+      operation === undefined
+    ) {
+      return { ok: true };
+    }
+    const store = this.#host.store;
+    if (store === undefined) return { ok: true };
+    const delta: Vec3i = [
+      current[0] - anchor[0],
+      current[1] - anchor[1],
+      current[2] - anchor[2],
+    ];
+    try {
+      const computed = this.#compute(store, regions, { operation, delta });
+      this.#preflightOccupied(store, computed);
+      this.#editor.setTransformPreview(computed.preview);
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof WorkspaceError) {
+        this.reset();
+        return { ok: false, error };
+      }
+      throw error;
+    }
+  }
+
+  /** Publishes a pending rotate/mirror/delete preview; failures clear it. */
+  #publishPending(params: TransformParams): ToolActionResult {
+    const store = this.#host.store;
+    if (store === undefined) return { ok: false, error: sessionNotOpen() };
+    const regions = selectionRegions(store, this.#editor.selection);
+    if (regions === undefined) {
+      this.#editor.setTransformPreview(undefined);
+      return { ok: true };
+    }
+    try {
+      const computed = this.#compute(store, regions, params);
+      // An operation that affects no voxels has nothing to apply.
+      if (computed.preview.movedVoxels === 0) {
+        this.#editor.setTransformPreview(undefined);
+        return { ok: true };
+      }
+      this.#preflightOccupied(store, computed);
+      this.#editor.setTransformPreview(computed.preview);
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof WorkspaceError) {
+        this.#editor.setTransformPreview(undefined);
+        return { ok: false, error };
+      }
+      throw error;
+    }
+  }
+
+  /** Budgeted exact preview computation shared by both publish paths. */
+  #compute(
+    store: DocumentStoreRead,
+    regions: readonly SelectionRegion[],
+    params: TransformParams,
+  ): ComputedTransform {
+    this.#preflightBudget(regions);
+    return computePreview(store, regions, params, this.#host.maxGestureVoxels);
+  }
+
+  /** Enforces the per-gesture voxel budget over the source regions. */
+  #preflightBudget(regions: readonly SelectionRegion[]): void {
+    let volume = 0;
+    for (const { region } of regions) {
+      volume += regionVolume(region);
+    }
+    if (volume > this.#host.maxGestureVoxels) {
+      throw tooManyVoxelsError(volume, this.#host.maxGestureVoxels);
+    }
+  }
+
+  /**
+   * Enforces the ADR-0009 occupied-voxel limit exactly: the per-volume
+   * net occupied change (additions minus removals) is derived from the
+   * preview's key sets, so a move that frees voxels near the limit is
+   * not falsely rejected.
+   */
+  #preflightOccupied(
+    store: DocumentStoreRead,
+    computed: ComputedTransform,
+  ): void {
+    for (const [volumeId, net] of computed.netByVolume) {
+      const view = store.getVolume(volumeId);
+      if (view === undefined) continue;
+      const requested = view.occupiedCount() + net;
+      if (requested > view.limits.maxOccupiedVoxels) {
+        throw tooManyOccupiedError(requested, view.limits.maxOccupiedVoxels);
+      }
+    }
+  }
+
+  #commit(commands: readonly Command[], label: string): ToolActionResult {
+    if (commands.length === 0) return { ok: true };
+    const error = this.#host.commit(commands, label);
+    return error === undefined ? { ok: true } : { ok: false, error };
+  }
+}
+
+/** Next 90-degree step in the 1 -> 2 -> 3 -> 1 cycle. */
+function cycleQuarterTurns(turns: QuarterTurns): QuarterTurns {
+  return ((turns % 3) + 1) as QuarterTurns;
+}
+
+/** Creates the transform tool for one composition. */
+export function createTransformTool(
+  options: TransformToolOptions,
+): TransformTool {
+  return new TransformToolImpl(options);
 }

@@ -131,28 +131,34 @@ export class MemoryProjectStorage
   ): AtomicWriteResult {
     const faults = options?.faults ?? this.#faults;
     const signal = options?.signal;
+    const onPhase = options?.onPhase;
 
+    onPhase?.("create-temp");
     throwPhaseFault(faults, "create-temp", path);
     throwIfAborted(signal, path);
     this.#temporary.add(tempPath);
 
+    onPhase?.("write-temp");
     throwPhaseFault(faults, "write-temp", path);
     throwIfAborted(signal, path);
     const next = Uint8Array.from(bytes);
     this.#temporary.delete(tempPath);
 
+    onPhase?.("flush-temp");
     throwPhaseFault(faults, "flush-temp", path);
     throwIfAborted(signal, path);
 
     const previous = this.#files.get(path);
     let backupCreated = false;
     if (previous !== undefined) {
+      onPhase?.("backup");
       throwPhaseFault(faults, "backup", path);
       throwIfAborted(signal, path);
       this.#files.set(backupPathFor(path), Uint8Array.from(previous));
       backupCreated = true;
     }
 
+    onPhase?.("replace");
     throwPhaseFault(faults, "replace", path);
     throwIfAborted(signal, path);
     this.#files.set(path, next);
@@ -160,6 +166,7 @@ export class MemoryProjectStorage
     // Best-effort parent directory sync never fails the save.
     let directorySyncSucceeded = true;
     try {
+      onPhase?.("sync-directory");
       throwPhaseFault(faults, "sync-directory", path);
     } catch {
       directorySyncSucceeded = false;

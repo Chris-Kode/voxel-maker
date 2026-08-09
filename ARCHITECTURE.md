@@ -165,7 +165,7 @@ Rules:
 | `EditorStore` | Selection, hover, active tool, camera, panels, timeline cursor, notices | Runtime only |
 | `SceneRuntime` | World transforms, evaluated animation, constraints, mesh and picking maps | Runtime projection only |
 | `AgentSession` | Context summary, budgets, base revision, tool state, cancellation | Agent runtime and preview only |
-| `FileService` | Open, atomic save, autosave, journal, keychain through scoped ports | External effects; never semantic mutation |
+| `FileService` | Open, atomic save, save-as, autosave, journal, recovery, and recent projects through scoped ports; prompts and pickers are injected (ticket #22) | External effects; never semantic mutation |
 
 Public reads return immutable snapshots, copies, or immutable accessors. A mutable `Uint16Array`, map, or record owned by authoritative state never escapes through a public interface.
 
@@ -258,6 +258,8 @@ A save captures immutable snapshot `(revision R, semantic hash H_R)`, writes a s
 Semantic commit precedes durable recovery I/O. An ordered recovery writer appends checksummed frames and tracks `lastJournaledRevision`. Failure leaves the edit valid and dirty, reports degraded crash recovery, and schedules retry; it never claims unconfirmed durability (plan S5.9, `docs/storage/recovery-journal-v1.md`).
 
 Recovery loads a durable snapshot, scans to the last complete valid frame, and replays through normal command decoding, migrations, limits, and invariants. It reports a corrupt tail and never guesses past it. Recovery restores the asset, then starts a fresh bounded user history (plan S5.10, `docs/storage/recovery-journal-v1.md`).
+
+The desktop workflow (plan S7.16, ticket #22, `docs/editor/project-lifecycle-v1.md`) drives new, open, save, save-as, recent-project, replace, close, and recovery through the lifecycle coordinator and the injected scoped storage ports. Each open document owns a save coordinator, a recovery journal, and a debounced autosave binding that are disposed and rebound on every lifecycle replacement; committed transactions reach the journal through the session's bus hooks. Dirty-close, overwrite, and recovery decisions go through an injected prompt service; pending-save, stale-completion, and degraded-recovery states are exposed on the workflow status so the shell can render them. Recent projects are a bounded, scoped list (localStorage in the browser build, the app-config-dir JSON file in the Tauri shell).
 
 ## Renderer and workers
 

@@ -4,6 +4,7 @@ import {
   IO_ERROR_CODES,
   IO_ERROR_MESSAGES,
   storageIoError,
+  type AtomicWritePhase,
   type ProjectStoragePort,
 } from "./port.js";
 import { captureRevisionSnapshot, type RevisionSnapshot } from "./snapshot.js";
@@ -29,6 +30,11 @@ export type SaveCoordinatorEvent =
       readonly kind: "save-started";
       readonly path: string;
       readonly revision: number;
+    }
+  | {
+      readonly kind: "save-progress";
+      readonly path: string;
+      readonly phase: AtomicWritePhase;
     }
   | {
       readonly kind: "save-completed";
@@ -73,6 +79,11 @@ export interface SaveCoordinator {
   isDirty(): boolean;
   /** Revision of the last completed save; undefined before the first save. */
   lastDurableRevision(): number | undefined;
+  /**
+   * Records an already-confirmed durable snapshot without I/O (opened
+   * projects start clean; saving to the same path is then a no-op).
+   */
+  markDurable(revision: number, semanticHash: string, path: string): void;
   /** Semantic hash of the last completed save; undefined before the first. */
   lastDurableHash(): string | undefined;
   /** Immutable snapshot of the current store state (no I/O). */
@@ -158,6 +169,21 @@ class SaveCoordinatorImpl implements SaveCoordinator {
   isDirty(): boolean {
     this.#updateDirty();
     return this.#dirty === true;
+  }
+
+  /**
+   * Records an already-confirmed durable snapshot without I/O (plan
+   * S5.14, ticket #22). Used when a project is opened from disk: the
+   * loaded snapshot is already the durable one, so the coordinator starts
+   * clean instead of demanding an immediate save. The path participates in
+   * the unchanged-save short circuit, so saving to the same path right
+   * after open resolves `unchanged` without touching the port.
+   */
+  markDurable(revision: number, semanticHash: string, path: string): void {
+    if (this.#disposed) return;
+    this.#durable = { revision, hash: semanticHash, path };
+    this.#liveHashCache = undefined;
+    this.#updateDirty();
   }
 
   lastDurableRevision(): number | undefined {
@@ -273,6 +299,13 @@ class SaveCoordinatorImpl implements SaveCoordinator {
       // reported failure, so no post-write abort check happens here.
       await this.#port.writeProjectAtomic(request.path, bytes, {
         signal: request.controller.signal,
+        onPhase: (phase) => {
+          this.#emit({
+            kind: "save-progress",
+            path: request.path,
+            phase,
+          });
+        },
       });
       // Completion records R as the durable snapshot and marks the project
       // clean only when the live semantic hash still equals captured H_R

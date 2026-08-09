@@ -25,6 +25,7 @@ import {
   type DesktopComposition,
   type FilePicker,
 } from "../composition.js";
+import { autoConfirmPrompts, requireResult } from "../test-prompts.js";
 
 /**
  * Desktop stroke integration tests (plan S7.3/S7.5, ticket #17): the full
@@ -134,10 +135,15 @@ const createFakePicker = (): FilePicker => ({
   },
 });
 
-function openFixture(composition: DesktopComposition, filled = true): void {
-  const result = composition.fileService.openLoadedProject(
-    "fixture.vxl",
-    buildFixtureProject(filled),
+async function openFixture(
+  composition: DesktopComposition,
+  filled = true,
+): Promise<void> {
+  const result = requireResult(
+    await composition.fileService.openLoadedProject(
+      "fixture.vxl",
+      buildFixtureProject(filled),
+    ),
   );
   if (!result.ok) {
     const error = result.error;
@@ -171,12 +177,13 @@ function previewMesh(
 }
 
 describe("desktop stroke workflows", () => {
-  it("draws a gap-free stroke as one labeled, undoable transaction", () => {
+  it("draws a gap-free stroke as one labeled, undoable transaction", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     // The freshly opened document defaults the active material to the
     // lowest material id, so the pencil is ready without a materials panel.
@@ -244,12 +251,13 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("erases a stroke as one labeled transaction and undoes it", () => {
+  it("erases a stroke as one labeled transaction and undoes it", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("erase");
     const viewport = composition.viewport;
@@ -282,12 +290,13 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("projects a transient preview and clears it on commit", () => {
+  it("projects a transient preview and clears it on commit", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const viewport = composition.viewport;
@@ -325,12 +334,13 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("cancelling or losing a pointer changes nothing", () => {
+  it("cancelling or losing a pointer changes nothing", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("erase");
     const viewport = composition.viewport;
@@ -349,13 +359,14 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("rejects strokes when the active material was deleted", () => {
+  it("rejects strokes when the active material was deleted", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
     // Empty volume so the material is deletable with a replacement.
-    openFixture(composition, false);
+    await openFixture(composition, false);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const state = composition.session.current;
@@ -389,16 +400,17 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("rejects a stroke that exceeds the lowered voxel budget atomically", () => {
+  it("rejects a stroke that exceeds the lowered voxel budget atomically", async () => {
     // ADR-0009 lets callers lower (never raise) hard limits; the desktop
     // composition exposes the stroke budget so the limit seam is testable
     // through the real pick/commit path.
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
       gestureVoxelLimit: 2,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const viewport = composition.viewport;
@@ -421,12 +433,13 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("finishes a stroke through the tool that started it", () => {
+  it("finishes a stroke through the tool that started it", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     composition.editor.setActiveMaterial(REPLACEMENT);
@@ -454,14 +467,15 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("explains the no-op when the document has no voxels", () => {
+  it("explains the no-op when the document has no voxels", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
     // Empty volume: picking misses, so a pencil click cannot start a
     // stroke; the controller says why instead of staying silent.
-    openFixture(composition, false);
+    await openFixture(composition, false);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const viewport = composition.viewport;
@@ -480,12 +494,13 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("rejects a stroke whose active material id does not exist", () => {
+  it("rejects a stroke whose active material id does not exist", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     // An "invalid" active material (id not in the document) fails at
@@ -503,12 +518,13 @@ describe("desktop stroke workflows", () => {
     composition.dispose();
   });
 
-  it("resets an in-progress stroke when the document is replaced", () => {
+  it("resets an in-progress stroke when the document is replaced", async () => {
     const composition = createDesktopComposition({
       storage: new MemoryProjectStorage(),
       picker: createFakePicker(),
+      prompts: autoConfirmPrompts,
     });
-    openFixture(composition);
+    await openFixture(composition);
     frameFront(composition);
     composition.editor.setActiveTool("pencil");
     const viewport = composition.viewport;
@@ -530,10 +546,10 @@ describe("desktop stroke workflows", () => {
     );
     // The commit itself does not end the gesture; closing the document
     // does. Close, then open a fresh document.
-    const closed = composition.fileService.closeProject();
+    const closed = requireResult(await composition.fileService.closeProject());
     expect(closed.ok).toBe(true);
     expect(viewport.toolActive).toBe(false);
-    openFixture(composition);
+    await openFixture(composition);
     expect(composition.editor.activeMaterial).toBe(MATERIAL);
     composition.dispose();
   });

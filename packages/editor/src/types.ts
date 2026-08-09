@@ -1,6 +1,7 @@
 import type { Command } from "@voxel-maker/commands";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
+import type { QuarterTurns, ShapeAxis } from "@voxel-maker/voxel";
 import type {
   CommandId,
   MaterialId,
@@ -32,7 +33,8 @@ export type EditorToolId =
   | "eyedropper"
   | "box"
   | "sphere"
-  | "cylinder";
+  | "cylinder"
+  | "transform";
 
 /** Select-tool granularity (plan S7.2/S7.4): node, voxel, or region. */
 export type SelectionMode = "node" | "voxel" | "region";
@@ -157,3 +159,74 @@ export interface Tool {
 export type ToolActionResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: WorkspaceError };
+
+/**
+ * Transform-tool operation modes (plan S7.19, ticket #19): move and copy
+ * are drag gestures, rotate/mirror/delete preview on button press and
+ * apply on confirmation. The mode is runtime-only `EditorStore` state.
+ */
+export type TransformMode = "move" | "copy" | "rotate" | "mirror" | "delete";
+
+/**
+ * Exact per-entry affected bounds of one transform operation (plan S7.19,
+ * ticket #19): the half-open source region the operation reads and the
+ * half-open destination region it writes (identical for mirror and
+ * delete; the rotated AABB for rotate; the translated AABB for move and
+ * copy).
+ */
+export interface TransformEntryPreview {
+  readonly volumeId: VolumeId;
+  /** Half-open source region the operation reads. */
+  readonly source: IntAabb;
+  /** Exact half-open affected bounds after the operation. */
+  readonly destination: IntAabb;
+}
+
+/**
+ * Exact preview of one transform operation (plan S7.19, ticket #19),
+ * computed against the authoritative store with the v1 region semantics
+ * (docs/commands/voxel-regions.md): destinations are exact AABBs, and
+ * collision behavior is the explicit overwrite mode. Runtime-only, never
+ * persisted; cleared on commit, cancel, tool switch, or lifecycle
+ * replacement.
+ *
+ * Counts are per-gesture unions (exact even when several entries share a
+ * volume): `movedVoxels` is the occupied source content the operation
+ * affects, `overwrittenVoxels` is the occupied destination content
+ * outside the operation's own source that the operation replaces, and
+ * `removedVoxels` is the occupied source content that is cleared and not
+ * re-occupied.
+ */
+export type TransformPreview =
+  | (TransformPreviewBase & {
+      readonly operation: "move";
+      /** Integer translation delta of the drag. */
+      readonly delta: Vec3i;
+    })
+  | (TransformPreviewBase & {
+      readonly operation: "copy";
+      /** Integer translation delta of the drag. */
+      readonly delta: Vec3i;
+    })
+  | (TransformPreviewBase & {
+      readonly operation: "rotate";
+      readonly axis: ShapeAxis;
+      /** Exact 90-degree increments: 1, 2, or 3. */
+      readonly quarterTurns: QuarterTurns;
+    })
+  | (TransformPreviewBase & {
+      readonly operation: "mirror";
+      /** Axis perpendicular to the mirror plane. */
+      readonly axis: ShapeAxis;
+    })
+  | (TransformPreviewBase & { readonly operation: "delete" });
+
+interface TransformPreviewBase {
+  readonly entries: readonly TransformEntryPreview[];
+  /** Occupied voxels the operation affects (the source content). */
+  readonly movedVoxels: number;
+  /** Occupied destination voxels the operation overwrites (collisions). */
+  readonly overwrittenVoxels: number;
+  /** Occupied voxels the operation removes (cleared, not re-occupied). */
+  readonly removedVoxels: number;
+}

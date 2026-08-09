@@ -9,7 +9,11 @@ import {
   createDocumentStore,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
-import { CommandBus, CommandRegistry } from "@voxel-maker/commands";
+import {
+  CommandBus,
+  CommandRegistry,
+  type CommandBusHooks,
+} from "@voxel-maker/commands";
 import type { VoxelDocument } from "@voxel-maker/model";
 import type { VoxelChunkSeed } from "@voxel-maker/voxel";
 
@@ -97,6 +101,14 @@ export interface CreateDocumentSessionOptions {
    * without changing the coordinator.
    */
   readonly registerCommands: readonly CommandRegistryRegistrar[];
+  /**
+   * Optional post-commit hooks applied to every fresh bus (plan S5.9). The
+   * composition root uses this seam to wire the ordered recovery journal:
+   * each installed document owns one journal writer, and the hooks fire
+   * exactly once per committed transaction with the exact record the
+   * journal needs. Hook exceptions are isolated by the bus.
+   */
+  readonly busHooks?: CommandBusHooks;
 }
 
 /** The narrow lifecycle surface handed to the composition root. */
@@ -124,11 +136,13 @@ export interface DocumentSession {
 
 class DocumentSessionImpl implements DocumentSession {
   readonly #registerCommands: readonly CommandRegistryRegistrar[];
+  readonly #busHooks: CommandBusHooks;
   readonly #listeners = createListenerSet<DocumentLifecycleEvent>();
   #current: DocumentSessionState | undefined;
 
   constructor(options: CreateDocumentSessionOptions) {
     this.#registerCommands = options.registerCommands;
+    this.#busHooks = options.busHooks ?? {};
   }
 
   get current(): DocumentSessionState | undefined {
@@ -200,7 +214,13 @@ class DocumentSessionImpl implements DocumentSession {
     });
     const registry = new CommandRegistry();
     for (const register of this.#registerCommands) register(registry);
-    const bus = new CommandBus(store, registry, writeCapability);
+    const bus = new CommandBus(
+      store,
+      registry,
+      writeCapability,
+      undefined,
+      this.#busHooks,
+    );
     const source = input.source ?? "system";
     const state: DocumentSessionState = {
       documentId: store.getDocument().documentId,
