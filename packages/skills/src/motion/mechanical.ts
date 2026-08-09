@@ -4,7 +4,7 @@ import { MOTION_TOOLS } from "./define.js";
 /**
  * Mechanical-Motion motion skill (plan S14.8, ticket #39): fixed instructions,
  * allowed tools, constraints, provenance, and evaluation metadata for
- * locomotion of a rigged biped. All commands the skill proposes are generic
+ * motion of a rigged mechanical linkage. All commands the skill proposes are generic
  * clips/tracks/keyframes commands on the existing rig; the skill itself
  * is removable versioned knowledge that no saved document depends on
  * (plan S14.9). The manifest is authored plain and validated by the
@@ -34,7 +34,7 @@ const STRUCTURAL_CHECKS: SkillManifest["evaluation"]["structuralChecks"] =
   Object.freeze([
     Object.freeze({
       name: "animation-count-in-range",
-      description: "The run stages exactly one clip.",
+      description: "The document stages exactly one clip.",
       options: { min: 1, max: 2 },
     } as const),
     Object.freeze({
@@ -49,7 +49,8 @@ const STRUCTURAL_CHECKS: SkillManifest["evaluation"]["structuralChecks"] =
     } as const),
     Object.freeze({
       name: "animation-duration-in-range",
-      description: "The sweep duration matches the machine cycle.",
+      description:
+        "Every clip's duration stays within the machine cycle range.",
       options: { min: 1, max: 4 },
     } as const),
     Object.freeze({

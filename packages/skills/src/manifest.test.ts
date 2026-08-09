@@ -296,6 +296,22 @@ describe("skill kind and category (AC1, ticket #39)", () => {
     expectCode(manifest, SKILL_EVALUATION_CODE);
   });
 
+  it("rejects an unknown fixture id at catalog load", () => {
+    const manifest = validManifest();
+    manifest.kind = "rigging";
+    manifest.category = "biped";
+    manifest.generators = [];
+    manifest.evaluation.fixtureId = "rig-bogus";
+    manifest.evaluation.visualBaselines = [];
+    const error = expectCode(manifest, SKILL_EVALUATION_CODE);
+    expect(error.context).toMatchObject({ cause: "UNKNOWN_FIXTURE_ID" });
+
+    // Creation skills that name a fixture must also resolve it.
+    const creation = validManifest();
+    creation.evaluation.fixtureId = "motion-bogus";
+    expectCode(creation, SKILL_EVALUATION_CODE);
+  });
+
   it("rejects generators and visual baselines on rigging and motion skills", () => {
     const manifest = validManifest();
     manifest.kind = "rigging";

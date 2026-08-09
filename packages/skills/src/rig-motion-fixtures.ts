@@ -957,161 +957,114 @@ function mechanicalClip(): AnimationDescriptor {
 }
 
 /**
- * Golden biped-rig trace (plan S14.10, ticket #39): the exact recorded
- * setPivot/addJoint/addConstraint commands whose committed result is the
- * `rig-biped` end fixture. Ids are stable so the applied state is
- * byte-identical in canonical identity to the golden end state.
+ * Recorded golden traces (plan S14.10, ticket #39): the exact command
+ * sequences whose committed results are the golden end fixtures. A rig
+ * trace derives from a rigging end fixture (one setPivot/addJoint/
+ * addConstraint per articulation, in node order); a motion trace derives
+ * from a motion end fixture (one createAnimation, then addTrack and
+ * setKeyframe per track/keyframe). Deriving from the golden end state
+ * keeps the trace and the fixture provably in sync — a recorded trace
+ * can never drift from the state it is supposed to reproduce. The
+ * command count of each trace equals the skill's golden-command
+ * efficiency limit, asserted by the evaluation suite.
  */
-export function bipedRigGoldenCommands(): readonly Command[] {
-  const pivots: readonly {
-    nodeId: string;
-    pivot: readonly [number, number, number];
-  }[] = [
-    { nodeId: "node:rig:biped:head", pivot: [0, 6, 0] },
-    { nodeId: "node:rig:biped:arm-upper-left", pivot: [-3, 6, 0] },
-    { nodeId: "node:rig:biped:arm-fore-left", pivot: [-3, 4, 0] },
-    { nodeId: "node:rig:biped:arm-upper-right", pivot: [3, 6, 0] },
-    { nodeId: "node:rig:biped:arm-fore-right", pivot: [3, 4, 0] },
-    { nodeId: "node:rig:biped:leg-thigh-left", pivot: [-1, 4, 0] },
-    { nodeId: "node:rig:biped:leg-shin-left", pivot: [-1, 2, 0] },
-    { nodeId: "node:rig:biped:leg-thigh-right", pivot: [1, 4, 0] },
-    { nodeId: "node:rig:biped:leg-shin-right", pivot: [1, 2, 0] },
-  ];
-  const constraints: readonly {
-    nodeId: string;
-    componentId: string;
-    min: readonly [number, number, number];
-    max: readonly [number, number, number];
-  }[] = [
-    {
-      nodeId: "node:rig:biped:arm-fore-left",
-      componentId: "component:rig:biped:elbow-left",
-      min: [-1.2, -Math.PI, -Math.PI],
-      max: [0.2, Math.PI, Math.PI],
-    },
-    {
-      nodeId: "node:rig:biped:arm-fore-right",
-      componentId: "component:rig:biped:elbow-right",
-      min: [-1.2, -Math.PI, -Math.PI],
-      max: [0.2, Math.PI, Math.PI],
-    },
-    {
-      nodeId: "node:rig:biped:leg-shin-left",
-      componentId: "component:rig:biped:knee-left",
-      min: [0, -Math.PI, -Math.PI],
-      max: [1.4, Math.PI, Math.PI],
-    },
-    {
-      nodeId: "node:rig:biped:leg-shin-right",
-      componentId: "component:rig:biped:knee-right",
-      min: [0, -Math.PI, -Math.PI],
-      max: [1.4, Math.PI, Math.PI],
-    },
-  ];
+
+/** The recorded golden trace of one rigging fixture. */
+export function rigGoldenCommands(fixtureId: string): readonly Command[] {
+  const fixture = rigMotionFixtureById(fixtureId);
+  if (fixture === undefined || fixture.kind !== "rigging") {
+    throw new Error(`unknown rigging fixture ${fixtureId}`);
+  }
   const commands: Command[] = [];
   let index = 0;
-  for (const entry of pivots) {
-    commands.push(
-      setPivotCommand(commandId(`command:rig-trace:pivot:${String(index)}`), {
-        nodeId: entry.nodeId as NodeId,
-        pivot: [...entry.pivot],
-      }),
-    );
-    index += 1;
-  }
-  for (const entry of pivots) {
-    commands.push(
-      addJointCommand(commandId(`command:rig-trace:joint:${String(index)}`), {
-        nodeId: entry.nodeId as NodeId,
-      }),
-    );
-    index += 1;
-  }
-  for (const entry of constraints) {
-    commands.push(
-      addConstraintCommand(
-        commandId(`command:rig-trace:constraint:${String(index)}`),
-        {
-          nodeId: entry.nodeId as NodeId,
-          componentId: entry.componentId as ComponentId,
-          limits: { min: [...entry.min], max: [...entry.max] },
-          before: null,
-        },
-      ),
-    );
-    index += 1;
+  for (const node of Object.values(fixture.end.nodes)) {
+    for (const component of node.components) {
+      if (component.kind === "pivot") {
+        commands.push(
+          setPivotCommand(
+            commandId(`command:rig-trace:pivot:${String(index)}`),
+            {
+              nodeId: node.nodeId,
+              pivot: component.pivot,
+            },
+          ),
+        );
+        index += 1;
+      } else if (component.kind === "joint") {
+        commands.push(
+          addJointCommand(
+            commandId(`command:rig-trace:joint:${String(index)}`),
+            {
+              nodeId: node.nodeId,
+            },
+          ),
+        );
+        index += 1;
+      } else if (component.kind === "constraint") {
+        const descriptor = component.constraints[0];
+        if (descriptor === undefined) continue;
+        commands.push(
+          addConstraintCommand(
+            commandId(`command:rig-trace:constraint:${String(index)}`),
+            {
+              nodeId: node.nodeId,
+              componentId: descriptor.componentId,
+              limits: descriptor.limits,
+              before: null,
+            },
+          ),
+        );
+        index += 1;
+      }
+    }
   }
   return commands;
 }
 
-/**
- * Golden walk-clip trace (plan S14.10, ticket #39): the exact recorded
- * createAnimation/addTrack/setKeyframe commands whose committed result
- * is the `motion-walk` end fixture. Track and keyframe ids mirror the
- * fixture's walk clip byte-for-byte (ids are part of the canonical
- * identity).
- */
-export function walkGoldenCommands(): readonly Command[] {
+/** The recorded golden trace of one motion fixture. */
+export function motionGoldenCommands(fixtureId: string): readonly Command[] {
+  const fixture = rigMotionFixtureById(fixtureId);
+  if (fixture === undefined || fixture.kind !== "motion") {
+    throw new Error(`unknown motion fixture ${fixtureId}`);
+  }
   const commands: Command[] = [];
-  const clipId = animationId("animation:rig-motion:walk:0001");
+  const animation = Object.values(fixture.end.animations)[0];
+  if (animation === undefined) {
+    throw new Error(`motion fixture ${fixtureId} has no golden clip`);
+  }
   commands.push(
-    createAnimationCommand(commandId("command:walk-trace:animation"), {
-      animationId: clipId,
-      name: "Walk",
-      duration: 2,
-      loop: "loop",
+    createAnimationCommand(commandId("command:motion-trace:animation"), {
+      animationId: animation.animationId,
+      ...(animation.name === undefined ? {} : { name: animation.name }),
+      duration: animation.duration,
+      loop: animation.loop,
     }),
   );
-  const tracks: readonly { target: string; label: string }[] = [
-    { target: "node:rig:biped:leg-thigh-left", label: "walk-thigh-left" },
-    { target: "node:rig:biped:leg-thigh-right", label: "walk-thigh-right" },
-    { target: "node:rig:biped:leg-shin-left", label: "walk-shin-left" },
-    { target: "node:rig:biped:leg-shin-right", label: "walk-shin-right" },
-  ];
-  // Quaternion constants of the axis-angle convention (0.5 rad and
-  // 0.3 rad about +X / -X, w = cos(a/2)).
-  const identity = [0, 0, 0, 1] as const;
-  const x05 = [0.24740395925452294, 0, 0, 0.96891242171064473] as const;
-  const xNeg05 = [-0.24740395925452294, 0, 0, 0.96891242171064473] as const;
-  const x03 = [0.14943813247359922, 0, 0, 0.98877107793604224] as const;
-  const xNeg03 = [-0.14943813247359922, 0, 0, 0.98877107793604224] as const;
-  const swings: Readonly<
-    Record<string, readonly (readonly [number, number, number, number])[]>
-  > = {
-    "walk-thigh-left": [identity, x05, identity],
-    "walk-thigh-right": [identity, xNeg05, identity],
-    "walk-shin-left": [identity, x03, identity],
-    "walk-shin-right": [identity, xNeg03, identity],
-  };
   let trackIndex = 0;
-  for (const { target, label } of tracks) {
-    const trackIdValue = trackId(`track:rig-motion:${label}`);
+  for (const track of animation.tracks) {
     commands.push(
       addTrackCommand(
-        commandId(`command:walk-trace:track:${String(trackIndex)}`),
+        commandId(`command:motion-trace:track:${String(trackIndex)}`),
         {
-          animationId: clipId,
-          trackId: trackIdValue,
-          targetNodeId: target as NodeId,
-          interpolation: "linear",
+          animationId: animation.animationId,
+          trackId: track.trackId,
+          targetNodeId: track.targetNodeId,
+          interpolation: track.interpolation,
         },
       ),
     );
-    const swing = swings[label] ?? [identity];
-    for (const [keyframeIndex, quaternion] of swing.entries()) {
+    for (const [keyframeIndex, keyframe] of track.keyframes.entries()) {
       commands.push(
         setKeyframeCommand(
           commandId(
-            `command:walk-trace:key:${String(trackIndex)}:${String(keyframeIndex)}`,
+            `command:motion-trace:key:${String(trackIndex)}:${String(keyframeIndex)}`,
           ),
           {
-            animationId: clipId,
-            trackId: trackIdValue,
-            keyframeId: keyframeId(
-              `keyframe:rig-motion:${label}:${String(keyframeIndex)}`,
-            ),
-            time: keyframeIndex,
-            property: { channel: "rotation", value: [...quaternion] },
+            animationId: animation.animationId,
+            trackId: track.trackId,
+            keyframeId: keyframe.keyframeId,
+            time: keyframe.time,
+            property: keyframe.property,
           },
         ),
       );
@@ -1119,6 +1072,16 @@ export function walkGoldenCommands(): readonly Command[] {
     trackIndex += 1;
   }
   return commands;
+}
+
+/** The recorded golden rig trace of the biped fixture (named export). */
+export function bipedRigGoldenCommands(): readonly Command[] {
+  return rigGoldenCommands(RIG_MOTION_FIXTURE_IDS.bipedRig);
+}
+
+/** The recorded golden walk-clip trace (named export). */
+export function walkGoldenCommands(): readonly Command[] {
+  return motionGoldenCommands(RIG_MOTION_FIXTURE_IDS.walk);
 }
 
 /**

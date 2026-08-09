@@ -12,15 +12,15 @@ import {
   createPreviewRegistry,
   createPreviewSession,
 } from "@voxel-maker/agent";
-import { animationId, type VolumeId } from "@voxel-maker/shared";
+import { type AnimationId, type VolumeId } from "@voxel-maker/shared";
 import { MOTION_SKILLS, RIGGING_SKILLS } from "./skill-registry.js";
 import { runStructuralChecks } from "./checks.js";
 import { checkEfficiency } from "./efficiency.js";
 import {
   RIG_MOTION_FIXTURE_IDS,
-  bipedRigGoldenCommands,
+  motionGoldenCommands,
+  rigGoldenCommands,
   rigMotionFixtureById,
-  walkGoldenCommands,
   type RigMotionFixture,
 } from "./rig-motion-fixtures.js";
 import {
@@ -220,110 +220,125 @@ function semanticHashOf(store: DocumentStoreRead): string {
 }
 
 describe("recorded golden traces apply through the preview seam (AC3/AC4)", () => {
-  it("biped-rig golden trace lands in the golden end state with provenance", () => {
-    const fixture = rigMotionFixtureById(
-      RIG_MOTION_FIXTURE_IDS.bipedRig,
-    ) as RigMotionFixture;
-    const skill = RIGGING_SKILLS.find(
-      (entry) => entry.name === "skill.biped-rig",
-    ) as SkillManifest;
+  it("every rigging skill's golden trace lands in its golden end state with provenance", () => {
+    for (const skill of RIGGING_SKILLS) {
+      const fixture = fixtureOf(skill);
+      const commands = rigGoldenCommands(fixture.id);
+      // The recorded trace length is the skill's golden command budget:
+      // the efficiency metadata is measured against a real recorded run.
+      expect(commands.length, skill.name).toBe(
+        skill.evaluation.efficiency.goldenCommands,
+      );
 
-    const records: CommittedTransactionRecord[] = [];
-    const handle = createDocumentStore({ document: fixture.start });
-    const store = handle.store;
-    const bus = new CommandBus(
-      store,
-      createPreviewRegistry(),
-      handle.writeCapability,
-      undefined,
-      { onCommitted: (record) => records.push(record) },
-    );
-    const session = createPreviewSession({
-      live: store,
-      applyBus: bus,
-    });
+      const records: CommittedTransactionRecord[] = [];
+      const handle = createDocumentStore({ document: fixture.start });
+      const bus = new CommandBus(
+        handle.store,
+        createPreviewRegistry(),
+        handle.writeCapability,
+        undefined,
+        { onCommitted: (record) => records.push(record) },
+      );
+      const session = createPreviewSession({
+        live: handle.store,
+        applyBus: bus,
+      });
+      const staged = session.stageMany(commands);
+      expect(staged.ok, `${skill.name}: ${JSON.stringify(staged)}`).toBe(true);
+      const applied = applyWithProvenance(
+        session,
+        skill.name,
+        skill.version,
+        `trace-${fixture.id}`,
+      );
+      expect(applied.ok, `${skill.name}: ${JSON.stringify(applied)}`).toBe(
+        true,
+      );
 
-    const staged = session.stageMany(bipedRigGoldenCommands());
-    expect(staged.ok, JSON.stringify(staged)).toBe(true);
-    expect(session.stagedCommands.length).toBe(bipedRigGoldenCommands().length);
+      // Provenance metadata is recorded on the committed transaction.
+      expect(records[0]?.label).toBe(
+        provenanceLabel(skill.name, skill.version),
+      );
+      expect(parseProvenanceLabel(records[0]?.label ?? "")).toEqual({
+        name: skill.name,
+        version: skill.version,
+      });
 
-    const applied = applyWithProvenance(
-      session,
-      skill.name,
-      skill.version,
-      "rig-trace-seed",
-    );
-    expect(applied.ok, JSON.stringify(applied)).toBe(true);
-
-    // Provenance metadata: the apply label and deterministic correlation
-    // id are recorded on the committed transaction.
-    const record = records[0];
-    expect(record).toBeDefined();
-    expect(record?.label).toBe(provenanceLabel("skill.biped-rig", "1.0.0"));
-    expect(parseProvenanceLabel(record?.label ?? "")).toEqual({
-      name: "skill.biped-rig",
-      version: "1.0.0",
-    });
-
-    // The committed state is EXACTLY the golden end fixture.
-    expect(semanticHashOf(store)).toBe(semanticHashOf(storeOf(fixture.end)));
-
-    // And the skill's fixed checks pass on the applied result.
-    const results = runChecks(skill, store);
-    for (const check of results) {
-      expect(check.passed, `${check.name}: ${String(check.passed)}`).toBe(true);
+      // The committed state is EXACTLY the golden end fixture.
+      expect(semanticHashOf(handle.store), skill.name).toBe(
+        semanticHashOf(storeOf(fixture.end)),
+      );
+      // And the skill's fixed checks pass on the applied result.
+      const results = runChecks(skill, handle.store);
+      for (const check of results) {
+        expect(
+          check.passed,
+          `${skill.name}: ${check.name}: ${String(check.passed)}`,
+        ).toBe(true);
+      }
     }
   });
 
-  it("walk golden trace stages a playable overlay clip and applies with provenance", () => {
-    const fixture = rigMotionFixtureById(
-      RIG_MOTION_FIXTURE_IDS.walk,
-    ) as RigMotionFixture;
-    const skill = MOTION_SKILLS.find(
-      (entry) => entry.name === "skill.walk",
-    ) as SkillManifest;
+  it("every motion skill's golden trace stages a playable overlay clip and applies with provenance", () => {
+    for (const skill of MOTION_SKILLS) {
+      const fixture = fixtureOf(skill);
+      const commands = motionGoldenCommands(fixture.id);
+      expect(commands.length, skill.name).toBe(
+        skill.evaluation.efficiency.goldenCommands,
+      );
 
-    const records: CommittedTransactionRecord[] = [];
-    const handle = createDocumentStore({ document: fixture.start });
-    const store = handle.store;
-    const bus = new CommandBus(
-      store,
-      createPreviewRegistry(),
-      handle.writeCapability,
-      undefined,
-      { onCommitted: (record) => records.push(record) },
-    );
-    const session = createPreviewSession({
-      live: store,
-      applyBus: bus,
-    });
+      const records: CommittedTransactionRecord[] = [];
+      const handle = createDocumentStore({ document: fixture.start });
+      const bus = new CommandBus(
+        handle.store,
+        createPreviewRegistry(),
+        handle.writeCapability,
+        undefined,
+        { onCommitted: (record) => records.push(record) },
+      );
+      const session = createPreviewSession({
+        live: handle.store,
+        applyBus: bus,
+      });
+      const staged = session.stageMany(commands);
+      expect(staged.ok, `${skill.name}: ${JSON.stringify(staged)}`).toBe(true);
 
-    const staged = session.stageMany(walkGoldenCommands());
-    expect(staged.ok, JSON.stringify(staged)).toBe(true);
+      // The staged clip is readable from the overlay before Apply (the
+      // playback projection of the preview session, plan S13.5): the
+      // fixed fixture's clip id resolves to the staged descriptor.
+      const goldenAnimation = Object.values(fixture.end.animations)[0];
+      expect(goldenAnimation).toBeDefined();
+      const overlay = session.overlayClip(
+        goldenAnimation?.animationId as AnimationId,
+      );
+      expect(overlay).toBeDefined();
+      expect(overlay?.duration).toBe(goldenAnimation?.duration);
+      expect(overlay?.loop).toBe(goldenAnimation?.loop);
+      expect(overlay?.tracks).toHaveLength(goldenAnimation?.tracks.length ?? 0);
 
-    // The staged clip is readable from the overlay before Apply (the
-    // playback projection of the preview session, plan S13.5).
-    const clipId = animationId("animation:rig-motion:walk:0001");
-    const overlay = session.overlayClip(clipId);
-    expect(overlay).toBeDefined();
-    expect(overlay?.duration).toBe(2);
-    expect(overlay?.loop).toBe("loop");
-    expect(overlay?.tracks).toHaveLength(4);
+      const applied = applyWithProvenance(
+        session,
+        skill.name,
+        skill.version,
+        `trace-${fixture.id}`,
+      );
+      expect(applied.ok, `${skill.name}: ${JSON.stringify(applied)}`).toBe(
+        true,
+      );
+      expect(records[0]?.label).toBe(
+        provenanceLabel(skill.name, skill.version),
+      );
 
-    const applied = applyWithProvenance(
-      session,
-      skill.name,
-      skill.version,
-      "walk-trace-seed",
-    );
-    expect(applied.ok, JSON.stringify(applied)).toBe(true);
-    expect(records[0]?.label).toBe(provenanceLabel("skill.walk", "1.0.0"));
-
-    expect(semanticHashOf(store)).toBe(semanticHashOf(storeOf(fixture.end)));
-
-    const results = runChecks(skill, store);
-    for (const check of results) {
-      expect(check.passed, `${check.name}: ${String(check.passed)}`).toBe(true);
+      expect(semanticHashOf(handle.store), skill.name).toBe(
+        semanticHashOf(storeOf(fixture.end)),
+      );
+      const results = runChecks(skill, handle.store);
+      for (const check of results) {
+        expect(
+          check.passed,
+          `${skill.name}: ${check.name}: ${String(check.passed)}`,
+        ).toBe(true);
+      }
     }
   });
 });

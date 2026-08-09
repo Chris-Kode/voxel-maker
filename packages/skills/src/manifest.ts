@@ -211,6 +211,12 @@ export interface SkillEnvironment {
   readonly knownTools: ReadonlySet<string>;
   /** Every registered generator name. */
   readonly knownGenerators: ReadonlySet<string>;
+  /**
+   * Every registered fixed evaluation fixture id (plan S14.10, ticket
+   * #39): rigging and motion manifests must reference a fixture that
+   * resolves in the fixture registry, or the manifest is rejected.
+   */
+  readonly knownFixtureIds: ReadonlySet<string>;
 }
 
 /** Stable error codes of the manifest validator (one per dimension). */
@@ -424,6 +430,7 @@ export function validateSkillManifest(
     value.evaluation,
     constraints,
     isCreation,
+    environment,
   );
 
   const manifest: SkillManifest = {
@@ -523,6 +530,7 @@ function validateEvaluation(
   value: unknown,
   constraints: SkillConstraints,
   isCreation: boolean,
+  environment: SkillEnvironment,
 ): SkillEvaluationMetadata {
   if (!isRecord(value)) {
     invalid(SKILL_EVALUATION_CODE, "Evaluation metadata must be an object", {});
@@ -544,6 +552,15 @@ function validateEvaluation(
     invalid(SKILL_EVALUATION_CODE, "Evaluation fixture id is required", {
       kind: "non-creation",
       fixtureId: value.fixtureId,
+    });
+  }
+  // The fixed fixture must resolve in the fixture registry: an unknown
+  // fixture id is rejected at catalog load, never discovered later by an
+  // evaluation run (plan S14.10, ticket #39 AC3).
+  if (fixtureId !== undefined && !environment.knownFixtureIds.has(fixtureId)) {
+    invalid(SKILL_EVALUATION_CODE, "Unknown evaluation fixture id", {
+      fixtureId,
+      cause: "UNKNOWN_FIXTURE_ID",
     });
   }
   const fixedPrompt = boundedString(
