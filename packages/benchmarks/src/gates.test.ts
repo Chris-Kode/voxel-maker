@@ -4,8 +4,9 @@ import {
   evaluateGates,
   resolveTier,
   summarizeGates,
+  type GateResult,
 } from "./gates.js";
-import type { BenchmarkReport } from "./report.js";
+import type { BenchmarkReport, ByteTransferMeasurement } from "./report.js";
 import { createBenchmarkFixture } from "./fixtures.js";
 import { runBenchmarks } from "./run.js";
 
@@ -448,4 +449,156 @@ describe("zero-sample gate defense (ticket #57)", () => {
     // Every zero-sample gate FAILS; none is skipped or certified.
     expect(zeroSample.every((gate) => !gate.pass && !gate.skipped)).toBe(true);
   }, 120_000);
+});
+
+describe("blocked/failed 100k export gate defense (issue #63)", () => {
+  /** Replaces the compact 100k export measurement of a scene report. */
+  function withExport(
+    report: BenchmarkReport,
+    exportMeasurement: ByteTransferMeasurement,
+  ): BenchmarkReport {
+    const scene = report.scenes.compact["100000"];
+    if (scene === undefined) throw new Error("test scene missing");
+    return {
+      ...report,
+      scenes: {
+        ...report.scenes,
+        compact: {
+          "100000": { ...scene, export: exportMeasurement },
+        },
+      },
+    };
+  }
+
+  const smokeExportGate = (report: BenchmarkReport): GateResult | undefined =>
+    evaluateGates(report, "ci-smoke").find(
+      (result) => result.id === "export.p95.100k.smoke",
+    );
+
+  it("fails the smoke gate when the 100k export was preflight-blocked", () => {
+    const report = withExport(sceneReport({}), {
+      summary: {
+        samples: 2,
+        mean: 0.5,
+        min: 0.4,
+        max: 0.6,
+        p50: 0.5,
+        p90: 0.6,
+        p95: 0.6,
+        p99: 0.6,
+      },
+      bytes: 0,
+      peakRssMiB: 0,
+      blocked: {
+        code: "PREFLIGHT_BLOCKED",
+        message: "glTF preflight blocked the export",
+      },
+    });
+    const gate = smokeExportGate(report);
+    expect(gate).toBeDefined();
+    expect(gate?.pass).toBe(false);
+    expect(gate?.skipped).toBe(false);
+    expect(gate?.failureReason).toContain("PREFLIGHT_BLOCKED");
+  });
+
+  it("fails the smoke gate when the 100k export crashed", () => {
+    const report = withExport(sceneReport({}), {
+      summary: {
+        samples: 1,
+        mean: 400,
+        min: 400,
+        max: 400,
+        p50: 400,
+        p90: 400,
+        p95: 400,
+        p99: 400,
+      },
+      bytes: 0,
+      peakRssMiB: 0,
+      blocked: {
+        code: "EXPORT_FAILED",
+        message: "synthetic exporter crash",
+      },
+    });
+    const gate = smokeExportGate(report);
+    expect(gate?.pass).toBe(false);
+    expect(gate?.skipped).toBe(false);
+    expect(gate?.failureReason).toContain("EXPORT_FAILED");
+  });
+
+  it("fails the smoke gate when a 100k export produced no bytes", () => {
+    // A zero-byte export with no blocked evidence (e.g. a skipped
+    // measurement placeholder) is still not a completed export.
+    const report = withExport(sceneReport({}), {
+      summary: {
+        samples: 2,
+        mean: 1,
+        min: 1,
+        max: 1,
+        p50: 1,
+        p90: 1,
+        p95: 1,
+        p99: 1,
+      },
+      bytes: 0,
+      peakRssMiB: 0,
+      blocked: undefined,
+    });
+    const gate = smokeExportGate(report);
+    expect(gate?.pass).toBe(false);
+    expect(gate?.skipped).toBe(false);
+  });
+
+  it("still passes when every 100k export completed with bytes", () => {
+    const gate = smokeExportGate(sceneReport({}));
+    expect(gate?.pass).toBe(true);
+    expect(gate?.skipped).toBe(false);
+    expect(gate?.failureReason).toBeUndefined();
+  });
+
+  it("keeps larger-scene limit blocks reportable without failing the 100k gate", () => {
+    // A 500k scene whose export hit the glTF face limit is graceful
+    // degradation: the blocked evidence stays in the report and the
+    // 100k smoke gate (which only asserts the required 100k exports)
+    // is unaffected.
+    const report = sceneReport({});
+    const scene = report.scenes.compact["100000"];
+    if (scene === undefined) throw new Error("test scene missing");
+    const withLargeBlock = {
+      ...report,
+      scenes: {
+        ...report.scenes,
+        compact: {
+          "100000": scene,
+          "500000": {
+            ...scene,
+            export: {
+              summary: {
+                samples: 0,
+                mean: 0,
+                min: 0,
+                max: 0,
+                p50: 0,
+                p90: 0,
+                p95: 0,
+                p99: 0,
+              },
+              bytes: 0,
+              peakRssMiB: 0,
+              blocked: {
+                code: "GLTF_FACE_LIMIT",
+                message: "glTF face limit exceeded",
+              },
+            },
+          },
+        },
+      },
+    };
+    const gate = smokeExportGate(withLargeBlock);
+    expect(gate?.pass).toBe(true);
+    expect(gate?.skipped).toBe(false);
+    // The blocked evidence remains in the report for larger scenes.
+    const largeExport = withLargeBlock.scenes.compact["500000"].export;
+    expect(largeExport.blocked.code).toBe("GLTF_FACE_LIMIT");
+  });
 });

@@ -33,6 +33,14 @@ export interface GateDefinition {
    * and must never certify a gate (ticket #57).
    */
   readonly samples?: (report: BenchmarkReport) => number | undefined;
+  /**
+   * Returns a reason string when the gate must fail regardless of the
+   * measured value — e.g. a required operation (the 100k export) did
+   * not complete, so a broken path can never certify the gate
+   * (issue #63). Undefined means the gate is decided by the measured
+   * value alone.
+   */
+  readonly failsOn?: (report: BenchmarkReport) => string | undefined;
 }
 
 /** The outcome of one gate on one report. */
@@ -49,6 +57,11 @@ export interface GateResult {
   /** True when measured <= limit (or the gate was skipped). */
   readonly pass: boolean;
   readonly skipped: boolean;
+  /**
+   * Why the gate failed despite a within-limit measurement (issue #63);
+   * undefined when the gate was decided by the measured value alone.
+   */
+  readonly failureReason: string | undefined;
 }
 
 /** Summary of a gate evaluation. */
@@ -231,6 +244,31 @@ function exportSamples(report: BenchmarkReport): number | undefined {
     minimum = minOrUndefined(minimum, summary.samples);
   }
   return minimum;
+}
+
+/**
+ * Reason when a requested 100k export did not complete (issue #63): a
+ * blocked, zero-byte, or zero-sample export is a broken export path, not
+ * a fast one, and must never certify the CI smoke gate. Only the
+ * required 100k exports are asserted here; larger scenes' limit blocks
+ * stay reportable as graceful degradation.
+ */
+function incompleteExportReason(report: BenchmarkReport): string | undefined {
+  for (const kind of Object.keys(report.scenes)) {
+    const scene = report.scenes[kind as keyof typeof report.scenes]["100000"];
+    if (scene === undefined) continue;
+    const exportMeasurement = scene.export;
+    if (exportMeasurement.blocked !== undefined) {
+      return `100k ${kind} export blocked (${exportMeasurement.blocked.code})`;
+    }
+    if (exportMeasurement.bytes === 0) {
+      return `100k ${kind} export produced no bytes`;
+    }
+    if (exportMeasurement.summary.samples === 0) {
+      return `100k ${kind} export produced no timing samples`;
+    }
+  }
+  return undefined;
 }
 
 /** Peak RSS over every measured scene (MiB). */
@@ -611,6 +649,7 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
       return count === 0 ? undefined : total / count / 1000;
     },
     samples: (report: BenchmarkReport) => exportSamples(report),
+    failsOn: incompleteExportReason,
   }) as GateDefinition,
   Object.freeze({
     id: "memory.peak.smoke",
@@ -731,6 +770,10 @@ export function evaluateGates(
     // an accidental zero-count run can never produce green release
     // evidence.
     const zeroSample = !skipped && samples === 0;
+    // A gate can also fail on completeness (issue #63): a required
+    // operation that did not complete (e.g. a blocked 100k export) must
+    // never certify the gate, even when its measured value is small.
+    const failureReason = gate.failsOn?.(report);
     return {
       id: gate.id,
       label: gate.label,
@@ -739,8 +782,11 @@ export function evaluateGates(
       limit: gate.limit,
       measured,
       samples,
-      pass: skipped || (!zeroSample && measured <= gate.limit),
+      pass:
+        skipped ||
+        (failureReason === undefined && !zeroSample && measured <= gate.limit),
       skipped,
+      failureReason,
     };
   });
 }
