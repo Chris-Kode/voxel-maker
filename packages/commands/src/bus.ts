@@ -569,13 +569,17 @@ export class CommandBus {
       this.#pushPast(entry);
       this.#dropFuture();
     } else if (mode.kind === "undo") {
-      this.#past.pop();
+      // Issue #112: moving an entry past<->future is a byte-neutral
+      // transfer. #popPast releases the entry's inverse bytes before
+      // #pushFuture re-adds them; without the release the trim
+      // double-counts the moved entry and prematurely evicts history.
+      this.#popPast();
       this.#pushFuture({
         ...mode.entry,
         ...historyMetadata(options, revisionBefore, revisionAfter),
       });
     } else if (mode.kind === "redo") {
-      this.#future.pop();
+      this.#popFuture();
       this.#pushPast({
         ...mode.entry,
         ...historyMetadata(options, revisionBefore, revisionAfter),
@@ -590,8 +594,7 @@ export class CommandBus {
           "CommandBus: cancel rollback entry is not the pending gesture",
         );
       }
-      this.#past.pop();
-      this.#inverseBytes -= mode.entry.inverseBytes;
+      this.#popPast();
       this.#sealPending();
     }
 
@@ -768,6 +771,26 @@ export class CommandBus {
     this.#future.push(entry);
     this.#inverseBytes += entry.inverseBytes;
     this.#trim();
+  }
+
+  /**
+   * Pops the newest past entry and releases its inverse bytes. Every pop
+   * must release bytes before a matching push re-adds them, or the trim
+   * double-counts the moved entry (issue #112). Accounting follows the
+   * entry actually popped, keeping the byte meter consistent with the
+   * retained lists.
+   */
+  #popPast(): HistoryEntry | undefined {
+    const entry = this.#past.pop();
+    if (entry !== undefined) this.#inverseBytes -= entry.inverseBytes;
+    return entry;
+  }
+
+  /** Pops the newest future entry and releases its inverse bytes. */
+  #popFuture(): HistoryEntry | undefined {
+    const entry = this.#future.pop();
+    if (entry !== undefined) this.#inverseBytes -= entry.inverseBytes;
+    return entry;
   }
 
   #dropFuture(): void {

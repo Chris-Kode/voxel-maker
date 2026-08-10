@@ -562,6 +562,90 @@ describe("undo and redo", () => {
     expect(undo3.error.code).toBe("NOTHING_TO_UNDO");
   });
 
+  it("keeps an undone entry redoable when it fits the inverse-byte budget", () => {
+    // Issue #112: undo popped the entry without subtracting its bytes, so
+    // pushFuture re-added them and the trim immediately evicted the moved
+    // entry (and older ones). With maxHistoryInverseBytes: 90 the single
+    // set inverse (53 canonical JSON bytes today) fits, so undo must leave
+    // it redoable; the past-length assertion above fails loudly if the
+    // inverse ever grows past the budget.
+    const { bus, store } = createBus({
+      maxCommandsPerTransaction: 1_024,
+      maxCommandPayloadBytes: 1_048_576,
+      maxTransactionEnvelopeBytes: 16_777_216,
+      maxVoxelsPerTransaction: 1_000_000,
+      maxHistoryEntries: 512,
+      maxHistoryInverseBytes: 90,
+    });
+    bus.execute(set("hb:0001", [0, 0, 0]), options("hb:0001", 0));
+    expect(bus.historySnapshot().past).toHaveLength(1);
+
+    const undo = bus.undo(options("hb:undo:0001", 1));
+    expect(undo.ok).toBe(true);
+    if (!undo.ok) return;
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(0);
+    expect(bus.canRedo()).toBe(true);
+    expect(bus.historySnapshot().future).toHaveLength(1);
+
+    const redo = bus.redo(options("hb:redo:0001", 2));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(bus.canUndo()).toBe(true);
+    expect(bus.historySnapshot().past).toHaveLength(1);
+    expect(bus.historySnapshot().future).toHaveLength(0);
+  });
+
+  it("transfers entries between past and future without double-counting bytes", () => {
+    // Issue #112: moving an entry past<->future must be byte-neutral. With
+    // maxHistoryInverseBytes: 120 the two set inverses (53 canonical JSON
+    // bytes each today) fit together, so undoing the latest entry must not
+    // evict the older one from the past; the past-length assertion above
+    // fails loudly if an inverse ever grows past the budget.
+    const { bus, store } = createBus({
+      maxCommandsPerTransaction: 1_024,
+      maxCommandPayloadBytes: 1_048_576,
+      maxTransactionEnvelopeBytes: 16_777_216,
+      maxVoxelsPerTransaction: 1_000_000,
+      maxHistoryEntries: 512,
+      maxHistoryInverseBytes: 120,
+    });
+    bus.execute(set("hb2:0001", [0, 0, 0]), options("hb2:0001", 0));
+    bus.execute(set("hb2:0002", [1, 0, 0]), options("hb2:0002", 1));
+    expect(bus.historySnapshot().past).toHaveLength(2);
+
+    const undo1 = bus.undo(options("hb2:undo:0001", 2));
+    expect(undo1.ok).toBe(true);
+    if (!undo1.ok) return;
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+    expect(bus.canUndo()).toBe(true);
+    expect(bus.canRedo()).toBe(true);
+    expect(bus.historySnapshot().past).toHaveLength(1);
+    expect(bus.historySnapshot().future).toHaveLength(1);
+
+    const undo2 = bus.undo(options("hb2:undo:0002", 3));
+    expect(undo2.ok).toBe(true);
+    if (!undo2.ok) return;
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(0);
+    expect(bus.canRedo()).toBe(true);
+    expect(bus.historySnapshot().past).toHaveLength(0);
+    expect(bus.historySnapshot().future).toHaveLength(2);
+
+    const redo1 = bus.redo(options("hb2:redo:0001", 4));
+    expect(redo1.ok).toBe(true);
+    if (!redo1.ok) return;
+    expect(bus.historySnapshot().past).toHaveLength(1);
+    expect(bus.historySnapshot().future).toHaveLength(1);
+
+    const redo2 = bus.redo(options("hb2:redo:0002", 5));
+    expect(redo2.ok).toBe(true);
+    if (!redo2.ok) return;
+    expect(bus.historySnapshot().past).toHaveLength(2);
+    expect(bus.historySnapshot().future).toHaveLength(0);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(1);
+  });
+
   it("undoes a fill whose inverse exceeds the forward payload budget", () => {
     // ADR-0003: every v1 edit command is undoable. The forward fill payload
     // is tiny, but its exact inverse (one patch per voxel) is large; input
