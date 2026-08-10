@@ -210,10 +210,10 @@ export class WorkspaceError extends Error {
 }
 
 export function opaqueId<Kind extends string>(
-  value: string,
+  value: unknown,
   kind: Kind,
 ): OpaqueId<Kind> {
-  if (value.length === 0 || value.length > 128) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 128) {
     throw new WorkspaceError({
       family: "validation",
       code: "INVALID_ID",
@@ -224,32 +224,43 @@ export function opaqueId<Kind extends string>(
   return value as OpaqueId<Kind>;
 }
 
-export const animationId = (value: string): AnimationId =>
+export const animationId = (value: unknown): AnimationId =>
   opaqueId(value, "AnimationId");
-export const commandId = (value: string): CommandId =>
+export const commandId = (value: unknown): CommandId =>
   opaqueId(value, "CommandId");
-export const componentId = (value: string): ComponentId =>
+export const componentId = (value: unknown): ComponentId =>
   opaqueId(value, "ComponentId");
-export const documentId = (value: string): DocumentId =>
+export const documentId = (value: unknown): DocumentId =>
   opaqueId(value, "DocumentId");
-export const keyframeId = (value: string): KeyframeId =>
+export const keyframeId = (value: unknown): KeyframeId =>
   opaqueId(value, "KeyframeId");
-export const nodeId = (value: string): NodeId => opaqueId(value, "NodeId");
-export const recoverySessionId = (value: string): RecoverySessionId =>
+export const nodeId = (value: unknown): NodeId => opaqueId(value, "NodeId");
+export const recoverySessionId = (value: unknown): RecoverySessionId =>
   opaqueId(value, "RecoverySessionId");
-export const trackId = (value: string): TrackId => opaqueId(value, "TrackId");
-export const transactionId = (value: string): TransactionId =>
+export const trackId = (value: unknown): TrackId => opaqueId(value, "TrackId");
+export const transactionId = (value: unknown): TransactionId =>
   opaqueId(value, "TransactionId");
-export const volumeId = (value: string): VolumeId =>
+export const volumeId = (value: unknown): VolumeId =>
   opaqueId(value, "VolumeId");
 
-export function materialId(value: number): MaterialId {
-  if (!Number.isInteger(value) || value < 1 || value > 65_535) {
+export function materialId(value: unknown): MaterialId {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > 65_535
+  ) {
     throw new WorkspaceError({
       family: "validation",
       code: "INVALID_MATERIAL_ID",
       message: "Material identifier must be an integer from 1 through 65535",
-      context: { value },
+      // Wrong runtime types may not be JSON-serializable (e.g. BigInt) and
+      // non-finite numbers are not canonical JSON, so carry only the type
+      // name in context; finite numbers are always safe to embed.
+      context:
+        typeof value === "number" && Number.isFinite(value)
+          ? { value }
+          : { valueType: value === null ? "null" : typeof value },
     });
   }
   return value as MaterialId;
