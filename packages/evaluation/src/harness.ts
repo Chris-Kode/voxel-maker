@@ -306,7 +306,7 @@ export async function evaluateScenario(
       if (
         !cancelRequested &&
         options.cancelAfterToolCalls !== undefined &&
-        executedToolCalls > options.cancelAfterToolCalls
+        executedToolCalls >= options.cancelAfterToolCalls
       ) {
         cancelRequested = true;
         sessionHolder.session?.cancel();
@@ -358,6 +358,11 @@ export async function evaluateScenario(
   );
   const beforePreviews = renderPreviewEvidence(beforeStore);
 
+  // Issue #80: the zero-call cancellation trace cancels BEFORE the first
+  // round, so no provider request, tool, or usage activity is recorded.
+  if (options.cancelAfterToolCalls === 0) {
+    sessionHolder.session.cancel();
+  }
   const result = await sessionHolder.session.run();
   const durationMs = clock.now();
   // Capture the staged proposal facts BEFORE apply (apply closes the
