@@ -136,27 +136,9 @@ export class BrowserFilePicker implements FilePicker {
   pickSavePath(suggestedName: string): Promise<PickedPath | undefined> {
     return Promise.resolve({ token: suggestedName, path: suggestedName });
   }
-
-  pickSaveImagePaths(
-    suggestedName: string,
-  ): Promise<readonly PickedPath[] | undefined> {
-    // Plain-browser shell: derive the four standard-view names from the
-    // chosen base path (the native shell mints per-view handles instead).
-    return Promise.resolve(
-      previewImageNames(suggestedName).map((name) => ({
-        token: name,
-        path: name,
-      })),
-    );
-  }
-}
-
-/** Derives the four standard-view file names from a chosen base path. */
-function previewImageNames(basePath: string): readonly string[] {
-  const stem = /\.png$/iu.test(basePath) ? basePath.slice(0, -4) : basePath;
-  return ["perspective", "front", "side", "top"].map(
-    (view) => `${stem}-${view}.png`,
-  );
+  // No `pickSaveImagePaths`: the plain-browser shell has no native handle
+  // layer, so the preview-export service falls back to one save pick and
+  // derives the four standard-view names itself (preview-export.ts).
 }
 
 function pickFile(): Promise<File | undefined> {

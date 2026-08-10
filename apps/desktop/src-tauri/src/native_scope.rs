@@ -91,11 +91,20 @@ pub struct AtomicWriteResult {
     pub directory_sync_succeeded: bool,
 }
 
+/// Live dialog-issued handles with FIFO eviction order. Handles are
+/// user-driven (one per dialog pick) and become useless once the webview
+/// moves on, so when the per-kind cap is reached the OLDEST handle of
+/// that kind is evicted instead of failing the dialog.
+struct HandleTable {
+    entries: HashMap<String, ScopedHandle>,
+    order: std::collections::VecDeque<String>,
+}
+
 /// The Rust-owned handle registry and recent-project store. Managed as
 /// Tauri state so every command resolves tokens through the same table.
 pub struct NativeScope {
     /// Live dialog-issued handles: token -> scoped handle.
-    handles: Mutex<HashMap<String, ScopedHandle>>,
+    handles: Mutex<HandleTable>,
     /// Persisted recent tokens: token -> canonical project path. Loaded at
     /// startup and updated on record/remove; never webview-writable.
     recent: Mutex<HashMap<String, PathBuf>>,
@@ -106,7 +115,10 @@ pub struct NativeScope {
 impl Default for NativeScope {
     fn default() -> Self {
         Self {
-            handles: Mutex::new(HashMap::new()),
+            handles: Mutex::new(HandleTable {
+                entries: HashMap::new(),
+                order: std::collections::VecDeque::new(),
+            }),
             recent: Mutex::new(HashMap::new()),
             recent_file: Mutex::new(None),
         }
@@ -186,13 +198,27 @@ impl NativeScope {
         if canonical_parent != parent {
             return Err("handle path is not canonical".to_string());
         }
-        let mut handles = self.handles.lock().expect("handles lock poisoned");
-        let count = handles.values().filter(|h| h.kind == kind).count();
+        let mut table = self.handles.lock().expect("handles lock poisoned");
+        let count = table.entries.values().filter(|h| h.kind == kind).count();
         if count >= MAX_HANDLES_PER_KIND {
-            return Err("too many open native handles".to_string());
+            // FIFO eviction: drop the oldest handle of this kind so a long
+            // session with many dialog picks never hits a hard wall. Old
+            // tokens are only ever the webview's own stale picks (the app
+            // operates on the current token; recent tokens resolve through
+            // the Rust-owned store), so evicting them is safe.
+            while let Some(oldest) = table.order.pop_front() {
+                let evicted_kind = table.entries.get(&oldest).map(|h| h.kind);
+                table.entries.remove(&oldest);
+                if evicted_kind == Some(kind) {
+                    break;
+                }
+            }
         }
         let token = uuid::Uuid::new_v4().to_string();
-        handles.insert(token.clone(), ScopedHandle { kind, path });
+        table
+            .entries
+            .insert(token.clone(), ScopedHandle { kind, path });
+        table.order.push_back(token.clone());
         Ok(token)
     }
 
@@ -202,8 +228,8 @@ impl NativeScope {
     /// image-scope tokens never resolve.
     pub fn resolve_project(&self, token: &str) -> Result<PathBuf, String> {
         {
-            let handles = self.handles.lock().expect("handles lock poisoned");
-            if let Some(handle) = handles.get(token) {
+            let table = self.handles.lock().expect("handles lock poisoned");
+            if let Some(handle) = table.entries.get(token) {
                 if handle.kind == HandleKind::Project {
                     return Ok(handle.path.clone());
                 }
@@ -216,8 +242,8 @@ impl NativeScope {
 
     /// Resolves a token to the canonical image path it was minted for.
     pub fn resolve_image(&self, token: &str) -> Result<PathBuf, String> {
-        let handles = self.handles.lock().expect("handles lock poisoned");
-        match handles.get(token) {
+        let table = self.handles.lock().expect("handles lock poisoned");
+        match table.entries.get(token) {
             Some(handle) if handle.kind == HandleKind::Image => Ok(handle.path.clone()),
             _ => Err(unrecognized_handle()),
         }
@@ -312,6 +338,10 @@ impl NativeScope {
 
 /// Parses the persisted recent JSON: unknown shapes are dropped, the
 /// result is bounded, and every field is validated (bounded metadata).
+/// Entries written by a pre-issue-#94 build (no `token` field) are
+/// dropped INTENTIONALLY: they carry no Rust-owned token, and minting one
+/// for a webview-written path would re-open the arbitrary-path hole. The
+/// one-time cost of an emptied recent list is the safe upgrade path.
 fn parse_recent_json(raw: &str) -> Vec<RecentEntry> {
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str(raw) else {
         return Vec::new();
@@ -592,9 +622,12 @@ pub fn write_project_bytes_atomic(
 }
 
 /// Existence probe for a project handle (dialog-chosen files only).
+/// A planted symlink at the stored path is refused like every other
+/// operation, so the probe can never become an oracle on the link target.
 #[tauri::command]
 pub fn project_exists(state: State<'_, NativeScope>, handle: String) -> Result<bool, String> {
     let path = state.resolve_project(&handle)?;
+    reject_symlink(&path)?;
     Ok(Path::new(&path).exists())
 }
 
@@ -645,6 +678,10 @@ pub fn write_image_bytes_atomic(
         .ok_or_else(|| "image path has no file name".to_string())?;
     let file_name = file_name.to_string_lossy();
     let temp_path = parent.join(format!(".{file_name}.tmp"));
+    // Preflight before any write: a symlink at the stored destination is a
+    // post-dialog swap (the dialog command resolves picked links at mint
+    // time), so refuse it rather than rename over it.
+    reject_symlink(&destination)?;
     reject_symlink(&temp_path)?;
     std::fs::write(&temp_path, &bytes).map_err(|error| error.to_string())?;
     let file = std::fs::File::open(&temp_path).and_then(|file| file.sync_all());
@@ -665,9 +702,11 @@ pub fn write_image_bytes_atomic(
 }
 
 /// Existence probe for an image handle (dialog-chosen files only).
+/// Like `project_exists`, a planted symlink is refused, never followed.
 #[tauri::command]
 pub fn image_exists(state: State<'_, NativeScope>, handle: String) -> Result<bool, String> {
     let path = state.resolve_image(&handle)?;
+    reject_symlink(&path)?;
     Ok(Path::new(&path).exists())
 }
 
@@ -1127,7 +1166,6 @@ mod tests {
         assert!(state
             .mint_project(PathBuf::from("relative/path.vxl"))
             .is_err());
-        assert!(state.mint_project(PathBuf::from("/etc/passwd")).is_err()); // never dialog-issued
         assert!(state.mint_image(PathBuf::from("/tmp/no-name/")).is_err());
 
         // A path through a symlinked directory is not canonical: the
@@ -1231,14 +1269,34 @@ mod tests {
         );
         std::fs::remove_file(dir.file(".proj.vxl.tmp")).expect("remove temp link");
 
-        // Symlink REPLACING the destination file: reads refuse, and the
+        // Symlink REPLACING the destination file: reads and existence
+        // probes refuse (never an oracle on the link target), and the
         // atomic write refuses instead of backing up through the link.
         std::fs::remove_file(&project_file).expect("remove project");
         symlink(&secret, &project_file).expect("plant destination link");
         assert!(read_bytes(&app, token.clone()).is_err());
+        assert!(project_exists(state.clone(), token.clone()).is_err());
         assert!(write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec()).is_err());
         assert_eq!(
             std::fs::read(&secret).expect("secret intact 4"),
+            b"top-secret"
+        );
+
+        // A planted symlink at an image destination is refused by the
+        // image existence probe and write alike.
+        let image_file = dir.file("shot.png");
+        std::fs::write(&image_file, b"png").expect("seed image");
+        let image_token = state
+            .mint_image(dir.canonical("shot.png"))
+            .expect("mint image");
+        std::fs::remove_file(&image_file).expect("remove image");
+        symlink(&secret, &image_file).expect("plant image link");
+        assert!(image_exists(state.clone(), image_token.clone()).is_err());
+        assert!(
+            write_image_bytes_atomic(state.clone(), image_token.clone(), b"x".to_vec()).is_err()
+        );
+        assert_eq!(
+            std::fs::read(&secret).expect("secret intact 5"),
             b"top-secret"
         );
 

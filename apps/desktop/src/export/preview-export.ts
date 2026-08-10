@@ -240,6 +240,17 @@ export function createPreviewExportService(
       const picked = await pickPreviewDestinations(picker, suggested);
       if (picked === undefined) return undefined;
       const destinations = picked;
+      if (destinations.length !== STANDARD_PREVIEW_VIEWS.length) {
+        return {
+          ok: false,
+          cancelled: false,
+          paths: [],
+          error: toWorkspaceError(
+            new Error("The image picker returned an invalid destination count"),
+            { family: "io", code: "PREVIEW_IO_FAILED" },
+          ),
+        };
+      }
       const basePath = stripPngExtension(destinations[0]?.path ?? suggested);
       const paths = destinations.map((destination) => destination.path);
       // Overwrite confirmation before any render or write: the user
@@ -287,7 +298,18 @@ export function createPreviewExportService(
       const written: string[] = [];
       for (let index = 0; index < STANDARD_PREVIEW_VIEWS.length; index += 1) {
         const view = STANDARD_PREVIEW_VIEWS[index] as PreviewViewId;
-        const destination = destinations[index] as PickedPath;
+        const destination = destinations[index];
+        if (destination === undefined) {
+          return {
+            ok: false,
+            cancelled: false,
+            paths: written,
+            error: toWorkspaceError(
+              new Error("The image picker returned no destination for a view"),
+              { family: "io", code: "PREVIEW_IO_FAILED" },
+            ),
+          };
+        }
         // A newer run supersedes this one (the shell disables concurrent
         // exports, but the guard keeps the invariant local).
         if (serial !== runSerial) {

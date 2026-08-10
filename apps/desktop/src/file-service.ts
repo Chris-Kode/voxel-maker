@@ -602,8 +602,8 @@ export function createFileService(options: FileServiceOptions): FileService {
 
   /** Installs a fully validated load through the lifecycle coordinator. */
   function install(
-    name: string,
     storageToken: string | undefined,
+    name: string,
     loaded: LoadedProject,
     installOptions: {
       readonly source: "import" | "recovery";
@@ -696,7 +696,7 @@ export function createFileService(options: FileServiceOptions): FileService {
     bytes: Uint8Array,
   ): FileServiceResult {
     const loaded = readVxlProject(bytes);
-    return install(displayPath, storageToken, toLoaded(bytes), {
+    return install(storageToken, displayPath, toLoaded(bytes), {
       source: "import",
       durable: {
         revision: loaded.document.revision,
@@ -719,7 +719,7 @@ export function createFileService(options: FileServiceOptions): FileService {
     bytes: Uint8Array,
   ): Promise<FileServiceResult> {
     const loaded = readVxlProject(bytes);
-    const result = install(displayPath, storageToken, toLoaded(bytes), {
+    const result = install(storageToken, displayPath, toLoaded(bytes), {
       source: "import",
       durable: {
         revision: loaded.document.revision,
@@ -764,8 +764,8 @@ export function createFileService(options: FileServiceOptions): FileService {
     });
     const report = recovered.report;
     const result = install(
-      displayPath,
       storageToken,
+      displayPath,
       { document: recovered.document, volumes: recovered.volumes },
       {
         source: "recovery",
