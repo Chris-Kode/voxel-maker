@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { VOX_VERSION, encodeVox, parseVox } from "./vox.js";
+import {
+  VOX_VERSION,
+  encodeVox,
+  parseVox,
+  validateVoxParseLimits,
+} from "./vox.js";
 import { VOX_DEFAULT_PALETTE } from "./vox-palette.js";
-import type { VoxModel, VoxParseLimits } from "./vox-types.js";
+import {
+  DEFAULT_VOX_PARSE_LIMITS,
+  type VoxModel,
+  type VoxParseLimits,
+} from "./vox-types.js";
 
 /** Asserts that `fn` throws a WorkspaceError with the given code. */
 function expectCode(fn: () => unknown, code: string): void {
@@ -359,6 +368,56 @@ describe("parseVox", () => {
     expectCode(() => parseVox(bytes, limits), "VOX_FILE_TOO_LARGE");
     const bigLimits: VoxParseLimits = { ...limits, maxFileBytes: 1 << 30 };
     expectCode(() => parseVox(bytes, bigLimits), "VOX_TOO_MANY_CHUNKS");
+  });
+
+  describe("validateVoxParseLimits", () => {
+    const LIMIT_MEMBERS = [
+      "maxFileBytes",
+      "maxModels",
+      "maxVoxelsPerModel",
+      "maxTotalVoxels",
+      "maxChunks",
+      "maxUnknownChunkBytes",
+    ] as const satisfies readonly (keyof VoxParseLimits)[];
+
+    it("rejects every raised member", () => {
+      for (const member of LIMIT_MEMBERS) {
+        const raised: VoxParseLimits = {
+          ...DEFAULT_VOX_PARSE_LIMITS,
+          [member]: DEFAULT_VOX_PARSE_LIMITS[member] + 1,
+        };
+        expectCode(() => {
+          validateVoxParseLimits(raised);
+        }, "VOX_PARSE_LIMITS_INVALID");
+      }
+    });
+
+    it("rejects non-finite, fractional, and non-positive members", () => {
+      const cases: VoxParseLimits[] = [
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxChunks: Number.NaN },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxModels: Number.POSITIVE_INFINITY },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxTotalVoxels: 1.5 },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxUnknownChunkBytes: 0 },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxFileBytes: -1 },
+      ];
+      for (const limits of cases) {
+        expectCode(() => {
+          validateVoxParseLimits(limits);
+        }, "VOX_PARSE_LIMITS_INVALID");
+      }
+    });
+
+    it("accepts the frozen defaults and lower overrides", () => {
+      expect(() => {
+        validateVoxParseLimits(DEFAULT_VOX_PARSE_LIMITS);
+      }).not.toThrow();
+      expect(() => {
+        validateVoxParseLimits({
+          ...DEFAULT_VOX_PARSE_LIMITS,
+          maxChunks: 10,
+        });
+      }).not.toThrow();
+    });
   });
 });
 

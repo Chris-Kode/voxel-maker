@@ -24,6 +24,7 @@ import {
   DEFAULT_VOX_PARSE_LIMITS,
   mapVoxImport,
   parseVox,
+  validateVoxParseLimits,
   type VoxParseLimits,
   type VoxWarning,
 } from "@voxel-maker/formats";
@@ -96,12 +97,13 @@ export function importVox(
   store: DocumentStoreRead,
   options: ImportVoxOptions,
 ): ImportVoxOutcome {
+  const parseLimits = options.parseLimits ?? DEFAULT_VOX_PARSE_LIMITS;
   throwIfAborted(options.signal);
+  // The profile is validated at the interchange boundary before parsing or
+  // mutation: callers may only lower the frozen hard defaults (issue #90).
+  validateVoxParseLimits(parseLimits);
   const totalVoxels = options.bytes.byteLength;
-  const parsed = parseVox(
-    options.bytes,
-    options.parseLimits ?? DEFAULT_VOX_PARSE_LIMITS,
-  );
+  const parsed = parseVox(options.bytes, parseLimits);
   throwIfAborted(options.signal);
   options.onProgress?.("parse", totalVoxels, totalVoxels);
 

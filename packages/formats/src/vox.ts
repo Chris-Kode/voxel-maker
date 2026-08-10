@@ -187,6 +187,61 @@ class VoxReader {
 
 const textDecoder = new TextDecoder("ascii");
 
+/**
+ * The members of a VOX parse limit profile, in declaration order
+ * (ADR-0009, issue #90). The `satisfies` clause keeps every entry a real
+ * member, and `_assertAllParseLimitMembers` below fails compilation when a
+ * member is added without extending this list, so validation can never
+ * silently skip a limit.
+ */
+const PARSE_LIMIT_MEMBERS = [
+  "maxFileBytes",
+  "maxModels",
+  "maxVoxelsPerModel",
+  "maxTotalVoxels",
+  "maxChunks",
+  "maxUnknownChunkBytes",
+] as const satisfies readonly (keyof VoxParseLimits)[];
+
+/**
+ * Compile-time completeness: `PARSE_LIMIT_MEMBERS` must cover every
+ * `VoxParseLimits` member, so validation can never silently skip a limit.
+ * A member added to the interface without extending the list makes the
+ * `never` assignment below fail compilation.
+ */
+const _assertAllParseLimitMembers: Exclude<
+  keyof VoxParseLimits,
+  (typeof PARSE_LIMIT_MEMBERS)[number]
+> extends never
+  ? true
+  : never = true;
+void _assertAllParseLimitMembers;
+
+/**
+ * Validates a caller-supplied VOX parse limit profile (ADR-0009, issue
+ * #90): callers may only lower the frozen hard defaults, so every member
+ * must be a positive integer no greater than its `DEFAULT_VOX_PARSE_LIMITS`
+ * value. Any raised, non-finite, fractional, or non-positive member is
+ * rejected with the stable `VOX_PARSE_LIMITS_INVALID` limit error.
+ * `parseVox` itself deliberately keeps accepting raised limits (its tests
+ * exercise them); enforcement lives at consuming seams such as the import
+ * service.
+ */
+export function validateVoxParseLimits(limits: VoxParseLimits): void {
+  for (const member of PARSE_LIMIT_MEMBERS) {
+    const value = limits[member];
+    const hardMax = DEFAULT_VOX_PARSE_LIMITS[member];
+    if (!Number.isInteger(value) || value <= 0 || value > hardMax) {
+      throw voxError(
+        "limit",
+        "VOX_PARSE_LIMITS_INVALID",
+        "VOX parse limits may only be lowered: each member must be a positive integer no greater than its hard default",
+        { member, value: String(value), hardMax },
+      );
+    }
+  }
+}
+
 /** Parses a VOX version-150 file; rejects malformed or unbounded input. */
 export function parseVox(
   bytes: Uint8Array,
