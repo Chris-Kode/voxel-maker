@@ -19,6 +19,7 @@ import {
   captureRevisionSnapshot,
   createRecoveryJournal,
   createSaveCoordinator,
+  createSnapshotWriteGate,
   createVxlProjectEncoder,
   decodeJournalFrames,
   type JournalLimits,
@@ -437,6 +438,13 @@ export function createRecoverySession(
   options: RecoverySessionOptions,
 ): RecoverySession {
   const { store, port, registry, writeCapability } = options;
+  // One shared snapshot-write gate (ticket #51): saves and compaction both
+  // replace the project snapshot, so both route their replacements through
+  // the same serialization/fencing owner. Without it, a save captured at an
+  // older revision can finish after compaction installed a newer snapshot
+  // and overwrite it, leaving a stale snapshot beside a newer journal
+  // anchor that recovery rejects.
+  const snapshotWriteGate = createSnapshotWriteGate(port);
   const journal = createRecoveryJournal({
     projectPath: options.projectPath,
     port,
@@ -445,6 +453,7 @@ export function createRecoverySession(
     baseSemanticHash: options.baseSemanticHash,
     encoder: createVxlProjectEncoder(),
     capture: () => captureRevisionSnapshot(store),
+    snapshotWriteGate,
     ...(options.journalLimits === undefined
       ? {}
       : { limits: options.journalLimits }),
@@ -453,6 +462,7 @@ export function createRecoverySession(
     store,
     port,
     encoder: createVxlProjectEncoder(),
+    snapshotWriteGate,
   });
   const bus = new CommandBus(
     store,
@@ -502,6 +512,7 @@ export function createRecoverySession(
     dispose() {
       journal.dispose();
       saveCoordinator.dispose();
+      snapshotWriteGate.dispose();
     },
   };
 }

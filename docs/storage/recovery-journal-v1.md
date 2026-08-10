@@ -67,7 +67,15 @@ incomplete frame.
   replacement snapshot, then resets the journal anchor to the captured
   revision/hash and removes covered frames. Compaction order is fixed:
   the replacement snapshot is durable before old journal data is removed,
-  so a crash between the two steps still recovers.
+  so a crash between the two steps still recovers. Snapshot replacements
+  route through the document's shared `SnapshotWriteGate` (atomic-save
+  contract, ticket #51): compaction is serialized and revision-fenced
+  against manual/autosaves, so a save captured at an older revision can
+  never overwrite a newer compacted snapshot and leave snapshot 0 beside
+  header 1. When a compaction snapshot write is superseded (a strictly
+  newer snapshot is already durable at the path), the anchor reset still
+  runs: recovery treats a snapshot newer than the anchor as a confirmed
+  save and skips covered frames.
 - `resetBase(revision, hash)` rewrites the journal anchored at a newly
   confirmed snapshot, keeping only frames beyond that revision
   (confirmed-save cleanup policy below).

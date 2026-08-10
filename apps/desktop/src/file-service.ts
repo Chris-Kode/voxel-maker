@@ -25,6 +25,7 @@ import {
   captureRevisionSnapshot,
   createRecoveryJournal,
   createSaveCoordinator,
+  createSnapshotWriteGate,
   createVxlProjectEncoder,
   decodeJournalFrames,
   type AtomicWritePhase,
@@ -32,6 +33,7 @@ import {
   type RecoveryJournal,
   type RecoveryJournalPort,
   type SaveCoordinator,
+  type SnapshotWriteGate,
 } from "@voxel-maker/storage";
 import type { EditorStore } from "@voxel-maker/editor";
 import { recoverProjectFromPorts, type RecoveryReport } from "./recovery.js";
@@ -155,6 +157,8 @@ interface Binding {
   readonly store: DocumentStoreRead;
   readonly sessionId: RecoverySessionId;
   readonly coordinator: SaveCoordinator;
+  /** Shared snapshot-write gate serializing saves with compaction (ticket #51). */
+  readonly snapshotWriteGate: SnapshotWriteGate;
   /** Undefined until the project has a path (journal materializes on save). */
   journal: RecoveryJournal | undefined;
   readonly autosave: AutosaveController;
@@ -315,6 +319,7 @@ export function createFileService(options: FileServiceOptions): FileService {
     binding.autosave.dispose();
     binding.journal?.dispose();
     binding.coordinator.dispose();
+    binding.snapshotWriteGate.dispose();
     currentJournal = undefined;
     pendingRecords = [];
     // Lifecycle replacement resets every per-document runtime projection
@@ -413,10 +418,19 @@ export function createFileService(options: FileServiceOptions): FileService {
     },
   ): void {
     unbind();
+    // One shared snapshot-write gate per document (ticket #51): manual
+    // saves, autosaves, and compaction all replace the same project
+    // snapshot, so every replacement routes through the same
+    // serialization/fencing owner. Without it, a save captured at an older
+    // revision can finish after compaction installed a newer snapshot and
+    // overwrite it, leaving a stale snapshot beside a newer journal anchor
+    // that recovery rejects.
+    const snapshotWriteGate = createSnapshotWriteGate(storage);
     const coordinator = createSaveCoordinator({
       store: state.store,
       port: storage,
       encoder: createVxlProjectEncoder(),
+      snapshotWriteGate,
     });
     coordinator.markDurable(
       bindOptions.durable.revision,
@@ -438,6 +452,7 @@ export function createFileService(options: FileServiceOptions): FileService {
               bindOptions.durable.semanticHash,
             encoder: createVxlProjectEncoder(),
             capture: () => captureRevisionSnapshot(state.store),
+            snapshotWriteGate,
           });
 
     const unsubscribeCoordinator = coordinator.subscribe((event) => {
@@ -506,6 +521,7 @@ export function createFileService(options: FileServiceOptions): FileService {
       store: state.store,
       sessionId: bindOptions.sessionId,
       coordinator,
+      snapshotWriteGate,
       journal,
       autosave,
       unsubscribeStore: state.store.subscribe(() => {
@@ -544,6 +560,7 @@ export function createFileService(options: FileServiceOptions): FileService {
       baseSemanticHash: anchor.semanticHash,
       encoder: createVxlProjectEncoder(),
       capture: () => captureRevisionSnapshot(current.store),
+      snapshotWriteGate: current.snapshotWriteGate,
     });
     current.unsubscribeJournal = subscribeJournal(journal);
     current.journal = journal;
