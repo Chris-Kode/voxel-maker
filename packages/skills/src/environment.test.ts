@@ -14,10 +14,31 @@ import { SKILL_GENERATOR_CODE } from "./manifest.js";
  * Public registry view tests (issue #108): the exported registry
  * collections are read-only facades over private authoritative
  * collections. Consumers cannot rewrite validation decisions by
- * mutating the exported views: mutation attempts fail (the views
- * expose no mutation surface), and phantom generators stay rejected by
- * `registerSkill` even after a mutation attempt.
+ * mutating the exported views: the views expose no mutation surface,
+ * the authoritative backing collection is not reachable as a runtime
+ * property, and phantom generators stay rejected by `registerSkill`
+ * even after mutation attempts.
  */
+
+/**
+ * Asserts the full read-only-view contract of one exported set view:
+ * reads work, the view is not a live Set, mutation methods do not
+ * exist (attempts throw), and the authoritative backing collection is
+ * not reachable through the facade.
+ */
+function expectReadOnlySetView(view: ReadonlySet<string>): void {
+  expect(view instanceof Set).toBe(false);
+  expect("add" in view).toBe(false);
+  expect("delete" in view).toBe(false);
+  expect("clear" in view).toBe(false);
+  expect(() => (view as Set<string>).add("injected")).toThrow();
+  // The backing collection must never be reachable as a runtime
+  // property: TS `private` is erased, so the facade holds it in an
+  // ES-private field that no consumer can probe.
+  expect("backing" in view).toBe(false);
+  expect(Object.getOwnPropertyNames(view)).not.toContain("backing");
+  expect(Reflect.get(view, "backing")).toBeUndefined();
+}
 
 /** A creation manifest valid in every dimension except its generators. */
 function phantomGeneratorManifest(): unknown {
@@ -74,47 +95,23 @@ describe("public registry views (issue #108)", () => {
     expect([...KNOWN_GENERATOR_NAMES]).toEqual(
       GENERATOR_DEFINITIONS.map((definition) => definition.name),
     );
-    // The exported value is a facade, not a live Set: it has no
-    // mutation surface, so a consumer cannot rewrite the registry.
-    expect(KNOWN_GENERATOR_NAMES instanceof Set).toBe(false);
-    expect("add" in KNOWN_GENERATOR_NAMES).toBe(false);
-    expect("delete" in KNOWN_GENERATOR_NAMES).toBe(false);
-    expect("clear" in KNOWN_GENERATOR_NAMES).toBe(false);
-    // Any mutation attempt must fail loudly instead of corrupting the
-    // authoritative collection.
-    expect(() =>
-      (KNOWN_GENERATOR_NAMES as Set<string>).add("generator.not-registered"),
-    ).toThrow();
+    expectReadOnlySetView(KNOWN_GENERATOR_NAMES);
   });
 
   it("exposes tool names and fixture ids as non-mutating read-only views", () => {
     expect(KNOWN_TOOL_NAMES.has("fillBox")).toBe(true);
     expect(KNOWN_FIXTURE_IDS.has("rig-biped")).toBe(true);
-    for (const view of [
-      KNOWN_TOOL_NAMES,
-      KNOWN_FIXTURE_IDS,
-    ] as readonly ReadonlySet<string>[]) {
-      expect(view instanceof Set).toBe(false);
-      expect("add" in view).toBe(false);
-      expect("delete" in view).toBe(false);
-      expect("clear" in view).toBe(false);
-      expect(() => (view as Set<string>).add("injected")).toThrow();
-    }
+    expectReadOnlySetView(KNOWN_TOOL_NAMES);
+    expectReadOnlySetView(KNOWN_FIXTURE_IDS);
   });
 
   it("backs the skill environment with the same non-mutating views", () => {
     expect(SKILL_ENVIRONMENT.knownTools).toBe(KNOWN_TOOL_NAMES);
     expect(SKILL_ENVIRONMENT.knownGenerators).toBe(KNOWN_GENERATOR_NAMES);
     expect(SKILL_ENVIRONMENT.knownFixtureIds).toBe(KNOWN_FIXTURE_IDS);
-    for (const view of [
-      SKILL_ENVIRONMENT.knownTools,
-      SKILL_ENVIRONMENT.knownGenerators,
-      SKILL_ENVIRONMENT.knownFixtureIds,
-    ]) {
-      expect(view instanceof Set).toBe(false);
-      expect("add" in view).toBe(false);
-      expect(() => (view as Set<string>).add("injected")).toThrow();
-    }
+    expectReadOnlySetView(SKILL_ENVIRONMENT.knownTools);
+    expectReadOnlySetView(SKILL_ENVIRONMENT.knownGenerators);
+    expectReadOnlySetView(SKILL_ENVIRONMENT.knownFixtureIds);
   });
 
   it("keeps rejecting phantom generators after a mutation attempt (issue #108 repro)", () => {
@@ -132,6 +129,22 @@ describe("public registry views (issue #108)", () => {
     }
     expect(caught).toBeInstanceOf(WorkspaceError);
     expect((caught as WorkspaceError).code).toBe(SKILL_GENERATOR_CODE);
+    expect(generatorByName("generator.not-registered")).toBeUndefined();
+  });
+
+  it("a consumer probing for the backing set cannot corrupt the registry (issue #108 repro)", () => {
+    // The full corruption route from the issue must be gone: even a
+    // consumer that probes the facade for its backing reference finds
+    // nothing to mutate, so the phantom generator stays unknown to the
+    // validation environment.
+    const backing: unknown = Reflect.get(KNOWN_GENERATOR_NAMES, "backing");
+    expect(backing).toBeUndefined();
+    if (backing !== undefined) {
+      (backing as Set<string>).add("generator.not-registered");
+    }
+    expect(
+      SKILL_ENVIRONMENT.knownGenerators.has("generator.not-registered"),
+    ).toBe(false);
     expect(generatorByName("generator.not-registered")).toBeUndefined();
   });
 });
