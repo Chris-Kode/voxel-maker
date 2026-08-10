@@ -80,6 +80,56 @@ describe("canonical quaternions", () => {
   it("rejects zero-length and non-finite quaternions", () => {
     expect(() => canonicalQuat([0, 0, 0, 0])).toThrow(/non-zero length/u);
     expect(() => canonicalQuat([Number.NaN, 0, 0, 1])).toThrow(/finite/u);
+    expect(() => canonicalQuat([Number.POSITIVE_INFINITY, 0, 0, 1])).toThrow(
+      /finite/u,
+    );
+  });
+
+  it("normalizes extreme finite magnitudes without overflow or underflow", () => {
+    // A naive x*x + y*y + z*z + w*w norm overflows to Infinity for
+    // Number.MAX_VALUE and underflows to zero for Number.MIN_VALUE.
+    expect(canonicalQuat([Number.MAX_VALUE, 0, 0, 0])).toEqual([1, 0, 0, 0]);
+    expect(canonicalQuat([Number.MIN_VALUE, 0, 0, 0])).toEqual([1, 0, 0, 0]);
+    expect(canonicalQuat([-Number.MIN_VALUE, 0, 0, 0])).toEqual([1, 0, 0, 0]);
+    expect(canonicalQuat([Number.MAX_VALUE, Number.MAX_VALUE, 0, 0])).toEqual([
+      1 / Math.sqrt(2),
+      1 / Math.sqrt(2),
+      0,
+      0,
+    ]);
+    expect(canonicalQuat([Number.MAX_VALUE, Number.MIN_VALUE, 0, 0])).toEqual([
+      1, 0, 0, 0,
+    ]);
+    // Squared components in the subnormal range carry large relative
+    // error, so they must take the scale-safe path as well.
+    expect(canonicalQuat([1e-160, 0, 0, 0])).toEqual([1, 0, 0, 0]);
+    expect(canonicalQuat([2.5e-162, 0, 0, 0])).toEqual([1, 0, 0, 0]);
+    expect(canonicalQuat([1e-160, 1e-160, 0, 0])).toEqual([
+      1 / Math.sqrt(2),
+      1 / Math.sqrt(2),
+      0,
+      0,
+    ]);
+    for (const q of [
+      canonicalQuat([Number.MAX_VALUE, 0, 0, 0]),
+      canonicalQuat([Number.MIN_VALUE, 0, 0, 0]),
+      canonicalQuat([Number.MAX_VALUE, Number.MAX_VALUE, 0, 0]),
+      canonicalQuat([1e-160, 0, 0, 0]),
+      canonicalQuat([1e-160, 1e-160, 0, 0]),
+    ]) {
+      expect(isNormalizedQuat(q)).toBe(true);
+      expect(isCanonicalQuat(q)).toBe(true);
+    }
+  });
+
+  it("canonicalizes transforms with extreme rotation magnitudes", () => {
+    const transform = canonicalTransform({
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [Number.MAX_VALUE, 0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    expect(transform.rotation).toEqual([1, 0, 0, 0]);
   });
 
   it("keeps normalized output within the ADR epsilon", () => {

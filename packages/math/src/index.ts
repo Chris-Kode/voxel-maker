@@ -37,6 +37,9 @@ export interface IntAabb {
  */
 export const QUATERNION_NORM_EPSILON = 1e-9;
 
+/** Smallest positive normal double; squared sums below it are subnormal. */
+const NORMAL_MIN = 2 ** -1022;
+
 const INT32_MIN = -2_147_483_648;
 const INT32_MAX = 2_147_483_647;
 
@@ -138,8 +141,24 @@ export function canonicalQuat(
   const y = canonicalNumber(value[1], at(path, 1));
   const z = canonicalNumber(value[2], at(path, 2));
   const w = canonicalNumber(value[3], at(path, 3));
-  const norm = Math.sqrt(x * x + y * y + z * z + w * w);
-  if (!(norm > 0)) {
+  const normSquared = x * x + y * y + z * z + w * w;
+  if (normSquared >= NORMAL_MIN && Number.isFinite(normSquared)) {
+    // The squared sum is a normal number, so the norm is accurate to a
+    // few ulps and the division cannot overflow or underflow.
+    const norm = Math.sqrt(normSquared);
+    return signCanonicalize(x / norm, y / norm, z / norm, w / norm);
+  }
+  // The squared sum overflowed to Infinity, underflowed to zero, or landed
+  // in the subnormal range where it carries large relative error (issue
+  // #83). Rescale by the largest component so the norm is computed in
+  // [1, 2] and cannot overflow.
+  const maxComponent = Math.max(
+    Math.abs(x),
+    Math.abs(y),
+    Math.abs(z),
+    Math.abs(w),
+  );
+  if (!(maxComponent > 0)) {
     throw new WorkspaceError({
       family: "validation",
       code: "INVALID_QUATERNION",
@@ -147,7 +166,24 @@ export function canonicalQuat(
       ...(path === undefined ? {} : { path }),
     });
   }
-  return signCanonicalize(x / norm, y / norm, z / norm, w / norm);
+  const scaledX = x / maxComponent;
+  const scaledY = y / maxComponent;
+  const scaledZ = z / maxComponent;
+  const scaledW = w / maxComponent;
+  const rescaledNorm = Math.sqrt(
+    scaledX * scaledX +
+      scaledY * scaledY +
+      scaledZ * scaledZ +
+      scaledW * scaledW,
+  );
+  // canonicalNumber already normalized -0 to +0, so no division below can
+  // produce -0; signCanonicalize additionally maps any negated zero to +0.
+  return signCanonicalize(
+    scaledX / rescaledNorm,
+    scaledY / rescaledNorm,
+    scaledZ / rescaledNorm,
+    scaledW / rescaledNorm,
+  );
 }
 
 /** Returns a canonical strictly positive scale vector (ADR-0001). */
