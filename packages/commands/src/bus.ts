@@ -199,6 +199,16 @@ export class CommandBus {
 
   readonly #hooks: CommandBusHooks;
 
+  /**
+   * Lifecycle revocation (ticket #54): once the owning session replaces,
+   * closes, or disposes the document, this bus is permanently inert. Every
+   * execute/undo/redo/gesture entry point rejects with a stable
+   * `BUS_REVOKED` conflict and the `onCommitted` hook can never fire, so a
+   * retained bus can neither advance its store nor leak a stale record into
+   * the current document's recovery journal.
+   */
+  #revoked = false;
+
   constructor(
     store: DocumentStore,
     registry: CommandRegistry,
@@ -211,6 +221,25 @@ export class CommandBus {
     this.#writeCapability = writeCapability;
     this.#limits = limits;
     this.#hooks = hooks;
+  }
+
+  /**
+   * Revokes this bus (ticket #54): idempotent, permanent, and safe to call
+   * from lifecycle transitions. Owned by the document lifecycle
+   * coordinator (`DocumentSession`); arbitrary projections must never
+   * revoke a live bus. Seals any unsealed gesture so retained handles
+   * report inactive, and marks every entry point to reject. After
+   * revocation even a replayed (idempotent) transaction id is rejected
+   * with `BUS_REVOKED` rather than returning the recorded success: the
+   * bus's epoch is over, so retrying callers must re-read the current
+   * session instead. Retained gesture handles report `GESTURE_SEALED`
+   * (handle surface) while direct bus calls report `BUS_REVOKED`; both
+   * are stable conflicts for the same dead epoch.
+   */
+  revoke(): void {
+    if (this.#revoked) return;
+    this.#revoked = true;
+    this.#sealPending();
   }
 
   /** Executes one command as a single transaction. */
@@ -226,6 +255,7 @@ export class CommandBus {
    * on this bus.
    */
   beginGesture(key: string): BeginGestureResult {
+    if (this.#revoked) return err(busRevokedError());
     if (this.#activeGestureKey !== undefined) {
       return err(
         new WorkspaceError({
@@ -245,6 +275,7 @@ export class CommandBus {
     commands: readonly Command[],
     options: TransactionOptions,
   ): TransactionResult {
+    if (this.#revoked) return err(busRevokedError());
     // An intervening commit seals the unsealed gesture entry (ADR-0003).
     this.#sealPending();
     return this.#runTransaction(commands, options, { kind: "commit" });
@@ -252,6 +283,7 @@ export class CommandBus {
 
   /** Undoes the most recent transaction, restoring exact semantic state. */
   undo(options: TransactionOptions): TransactionResult {
+    if (this.#revoked) return err(busRevokedError());
     // Undo seals the unsealed gesture entry, then undoes it like any
     // other entry (ADR-0003).
     this.#sealPending();
@@ -283,6 +315,7 @@ export class CommandBus {
 
   /** Redoes the most recently undone transaction. */
   redo(options: TransactionOptions): TransactionResult {
+    if (this.#revoked) return err(busRevokedError());
     // Redo seals the unsealed gesture entry (ADR-0003).
     this.#sealPending();
     const entry = this.#future[this.#future.length - 1];
@@ -529,23 +562,29 @@ export class CommandBus {
     // Plan S5.9: semantic commit precedes durable recovery I/O. The hook
     // fires after the commit and history bookkeeping are fully done; the
     // journal writer appends asynchronously and its failures never roll
-    // back or dirty the in-memory edit.
-    try {
-      this.#hooks.onCommitted?.({
-        transactionId: options.transactionId,
-        expectedRevision: options.expectedRevision,
-        source: options.source,
-        ...(options.correlationId === undefined
-          ? {}
-          : { correlationId: options.correlationId }),
-        ...(options.label === undefined ? {} : { label: options.label }),
-        revisionBefore,
-        revisionAfter,
-        commands,
-      });
-    } catch {
-      // The commit succeeded; a journal hook failure is isolated and
-      // reported through the journal's own degraded-durability events.
+    // back or dirty the in-memory edit. The revocation re-check is
+    // defense in depth: a store commit listener that re-enters the
+    // lifecycle (replace/close during `store.commit`) can revoke this bus
+    // before the hook would fire, and a stale record must never reach the
+    // current document's journal.
+    if (!this.#revoked) {
+      try {
+        this.#hooks.onCommitted?.({
+          transactionId: options.transactionId,
+          expectedRevision: options.expectedRevision,
+          source: options.source,
+          ...(options.correlationId === undefined
+            ? {}
+            : { correlationId: options.correlationId }),
+          ...(options.label === undefined ? {} : { label: options.label }),
+          revisionBefore,
+          revisionAfter,
+          commands,
+        });
+      } catch {
+        // The commit succeeded; a journal hook failure is isolated and
+        // reported through the journal's own degraded-durability events.
+      }
     }
     return ok(result);
   }
@@ -706,6 +745,7 @@ export class CommandBus {
     commands: readonly Command[],
     options: TransactionOptions,
   ): TransactionResult {
+    if (this.#revoked) return err(busRevokedError());
     const pending = this.#pending;
     if (pending === undefined || pending.key !== key) {
       // First update of a segment (the gesture itself, or a fresh segment
@@ -780,6 +820,7 @@ export class CommandBus {
    * seals and remains undoable.
    */
   cancelGesture(key: string, options: TransactionOptions): TransactionResult {
+    if (this.#revoked) return err(busRevokedError());
     if (this.#activeGestureKey !== key) {
       return err(
         new WorkspaceError({
@@ -1151,6 +1192,15 @@ function toWorkspaceError(error: unknown): WorkspaceError {
     cause: {
       type: error instanceof Error ? error.constructor.name : typeof error,
     },
+  });
+}
+
+/** Stable conflict for a bus revoked by a lifecycle transition (#54). */
+function busRevokedError(): WorkspaceError {
+  return new WorkspaceError({
+    family: "conflict",
+    code: "BUS_REVOKED",
+    message: "This command bus was revoked by a document lifecycle transition",
   });
 }
 
