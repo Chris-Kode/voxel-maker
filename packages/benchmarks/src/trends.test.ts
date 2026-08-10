@@ -304,6 +304,56 @@ describe("compareWithTrends / appendTrendRow", () => {
     expect(compareWithTrends(otherCpu, history)).toEqual([]);
   });
 
+  it("compares against the latest same-named-hardware row when rows alternate machines", () => {
+    // Issue #64: hosted-runner rotation (CPU A -> CPU B -> CPU A) must
+    // not bypass retained trend comparisons. The globally latest row is
+    // from CPU B, but an older CPU A baseline exists and must be used;
+    // a severe regression on CPU A is otherwise missed after any CPU B
+    // row.
+    const history: BenchmarkTrendHistory = {
+      schemaVersion: 1,
+      rows: [
+        {
+          date: "cpu-a-baseline",
+          hardware,
+          values: { "compact.100000.command.p95": 4 },
+        },
+        {
+          date: "cpu-b-row",
+          hardware: {
+            ...hardware,
+            cpuModel: "AMD EPYC 9V74 80-Core Processor",
+          },
+          values: { "compact.100000.command.p95": 4 },
+        },
+      ],
+    };
+    const regressedA: BenchmarkReport = {
+      ...report,
+      date: "2025-03-01T00:00:00.000Z",
+      scenes: {
+        ...report.scenes,
+        compact: {
+          ...report.scenes.compact,
+          "100000": {
+            ...(report.scenes.compact["100000"] as SceneMeasurements),
+            command: {
+              ...(report.scenes.compact["100000"] as SceneMeasurements).command,
+              p95: 40,
+            },
+          },
+        },
+      },
+    };
+    const comparisons = compareWithTrends(regressedA, history);
+    const commit = comparisons.find(
+      (c) => c.key === "compact.100000.command.p95",
+    );
+    expect(commit?.previous).toBe(4);
+    expect(commit?.current).toBe(40);
+    expect(commit?.regressed).toBe(true);
+  });
+
   it("compares when every named-hardware field matches", () => {
     expect(sameNamedHardware(report.hardware, { ...hardware })).toBe(true);
     expect(sameNamedHardware(report.hardware, { ...hardware, cores: 8 })).toBe(
