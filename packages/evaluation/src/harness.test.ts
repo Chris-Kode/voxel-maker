@@ -14,10 +14,16 @@ import {
 import {
   EVALUATION_VERSION,
   PROVIDER_VERSION,
+  RIG_EVALUATION_VERSION,
   SYSTEM_PROMPT_VERSION,
 } from "./versions.js";
 import { redPixelRatio } from "./previews.js";
 import { EVAL_IDS, EVAL_RED_COLOR } from "./fixtures.js";
+import { EVALUATION_SUITE_MANIFEST } from "./suite.js";
+import {
+  expectCompleteSuitePromotes,
+  runCompleteSuite,
+} from "./suite.test-utils.js";
 
 /**
  * Fixed geometry evaluation suite (plan S12.12/S12.13, ticket #35 AC):
@@ -200,18 +206,90 @@ describe("fixed geometry evaluation: golden scenarios", () => {
 });
 
 describe("fixed geometry evaluation: promotion gates", () => {
-  it("the golden suite passes every explicit promotion threshold", async () => {
-    const results: GeometryEvalResult[] = [];
-    for (const scenarioId of SCENARIO_IDS) {
-      results.push(await evaluateScenario({ scenarioId }));
-    }
-    const report = evaluatePromotion(results);
-    expect(report.promotable).toBe(true);
-    expect(report.blocks).toEqual([]);
-    expect(report.baselineRegressions).toEqual([]);
-    for (const entry of report.thresholdResults) {
-      expect(entry.passed, `${entry.name} failed`).toBe(true);
-    }
+  it("the complete fixed suite passes every explicit promotion threshold", async () => {
+    const results = await runCompleteSuite();
+    expectCompleteSuitePromotes(evaluatePromotion(results));
+  }, 30_000);
+
+  it("a single golden result cannot promote (issue #76)", async () => {
+    // The bug: one cherry-picked golden result was treated as the whole
+    // suite and promoted. The manifest gate must reject the run as
+    // incomplete.
+    const golden = await evaluateScenario({ scenarioId: "red-seat" });
+    const report = evaluatePromotion([golden]);
+    expect(report.promotable).toBe(false);
+    expect(
+      report.blocks.some((block) => block.includes("missing required case")),
+    ).toBe(true);
+  });
+
+  it("rejects duplicate cases in the supplied results", async () => {
+    const golden = await evaluateScenario({ scenarioId: "red-seat" });
+    const report = evaluatePromotion([golden, golden]);
+    expect(report.promotable).toBe(false);
+    expect(
+      report.blocks.some((block) => block.includes("duplicate case")),
+    ).toBe(true);
+  });
+
+  it("rejects cases that are not in the suite manifest", async () => {
+    const golden = await evaluateScenario({
+      scenarioId: "red-seat",
+      caseId: "not-a-suite-case",
+    });
+    const report = evaluatePromotion([golden]);
+    expect(report.promotable).toBe(false);
+    expect(report.blocks.some((block) => block.includes("unknown case"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects a fail-closed case whose run applied", async () => {
+    // The safety lane must fail closed: an adversarial case that
+    // reaches Apply must block promotion even though every other case
+    // is present and passing.
+    const results = await runCompleteSuite();
+    const applied = await evaluateScenario({
+      scenarioId: "red-seat",
+      caseId: "red-seat-invalid-trace",
+    });
+    const report = evaluatePromotion([
+      ...results.filter((result) => result.caseId !== "red-seat-invalid-trace"),
+      applied,
+    ]);
+    expect(report.promotable).toBe(false);
+    expect(
+      report.blocks.some((block) => block.includes("expected fail-closed")),
+    ).toBe(true);
+  }, 30_000);
+
+  it("rejects a case recorded under the wrong suite version", async () => {
+    const golden = await evaluateScenario({ scenarioId: "red-seat" });
+    const mislabeled = {
+      ...golden,
+      versions: { ...golden.versions, evaluation: RIG_EVALUATION_VERSION },
+    };
+    const report = evaluatePromotion([mislabeled]);
+    expect(report.promotable).toBe(false);
+    expect(report.blocks.some((block) => block.includes("suite version"))).toBe(
+      true,
+    );
+  });
+
+  it("exposes the versioned suite manifest with expected outcomes", () => {
+    expect(EVALUATION_SUITE_MANIFEST.version).toBe("evaluation-suite-v1");
+    const applyCases = EVALUATION_SUITE_MANIFEST.cases.filter(
+      (suiteCase) => suiteCase.expectedOutcome === "apply",
+    );
+    const failClosedCases = EVALUATION_SUITE_MANIFEST.cases.filter(
+      (suiteCase) => suiteCase.expectedOutcome === "fail-closed",
+    );
+    expect(applyCases.length).toBeGreaterThan(0);
+    expect(failClosedCases.length).toBeGreaterThan(0);
+    expect(
+      new Set(EVALUATION_SUITE_MANIFEST.cases.map((suiteCase) => suiteCase.id))
+        .size,
+    ).toBe(EVALUATION_SUITE_MANIFEST.cases.length);
   });
 
   it("records a baseline for every scenario dimension at the suite version", () => {

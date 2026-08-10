@@ -17,6 +17,10 @@ import {
   createRigFixtureStore,
 } from "./rig-fixtures.js";
 import { RIG_EVALUATION_VERSION } from "./versions.js";
+import {
+  expectCompleteSuitePromotes,
+  runCompleteSuite,
+} from "./suite.test-utils.js";
 
 /**
  * Fixed rig/animation evaluation suite (plan S13.7-S13.9, ticket #36 AC):
@@ -178,19 +182,10 @@ describe("fixed rig/animation evaluation: golden scenarios", () => {
 });
 
 describe("fixed rig/animation evaluation: promotion gates", () => {
-  it("the combined golden suite passes every explicit promotion threshold", async () => {
-    const results: GeometryEvalResult[] = [];
-    for (const scenarioId of RIG_SCENARIO_IDS) {
-      results.push(await evaluateScenario({ scenarioId }));
-    }
-    const report = evaluatePromotion(results);
-    expect(report.promotable).toBe(true);
-    expect(report.blocks).toEqual([]);
-    expect(report.baselineRegressions).toEqual([]);
-    for (const entry of report.thresholdResults) {
-      expect(entry.passed, `${entry.name} failed`).toBe(true);
-    }
-  });
+  it("the complete fixed suite passes every explicit promotion threshold", async () => {
+    const results = await runCompleteSuite();
+    expectCompleteSuitePromotes(evaluatePromotion(results));
+  }, 30_000);
 
   it("records a rig baseline for every scenario dimension at the rig suite version", () => {
     for (const scenarioId of RIG_SCENARIO_IDS) {

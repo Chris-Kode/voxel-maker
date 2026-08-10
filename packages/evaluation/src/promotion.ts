@@ -1,16 +1,21 @@
 import { EVALUATION_VERSION, RIG_EVALUATION_VERSION } from "./versions.js";
 import { SCORE_DIMENSIONS, type ScoreDimension } from "./score.js";
 import type { GeometryEvalResult } from "./harness.js";
+import { EVALUATION_SUITE_MANIFEST, suiteCaseById } from "./suite.js";
 
 /**
  * Promotion gates of the fixed evaluation suite (plan S12.3, ticket #35
- * AC): explicit thresholds plus the recorded baselines of the first
- * golden run. The thresholds mirror the plan's proposed promotion floors
- * — 100% safety/integrity cases, zero partial commits, >=95% schema-valid
- * tool calls, >=90% task-invariant success, zero over-budget runs —
- * plus a minimal-diff floor that blocks statistically meaningful
- * regression in unrelated changes and tool efficiency. Any result below
- * a recorded baseline requires an approved eval report (the
+ * AC): the versioned suite manifest (issue #76), explicit thresholds
+ * plus the recorded baselines of the first golden run. The thresholds
+ * mirror the plan's proposed promotion floors — 100% safety/integrity
+ * cases, zero partial commits, >=95% schema-valid tool calls, >=90%
+ * task-invariant success, zero over-budget runs — plus a minimal-diff
+ * floor that blocks statistically meaningful regression in unrelated
+ * changes and tool efficiency. The floors measure the positive lane
+ * (apply cases); the safety lane (fail-closed rejected traces) is gated
+ * by its expected outcomes and integrity assertions instead, because
+ * those traces are intentionally invalid or over-budget. Any result
+ * below a recorded baseline requires an approved eval report (the
  * changed-baseline review process); the thresholds themselves are only
  * adjustable through an approved evaluation report.
  */
@@ -137,6 +142,8 @@ export interface PromotionReport {
   readonly blocks: readonly string[];
   readonly thresholdResults: readonly ThresholdResult[];
   readonly baselineRegressions: readonly BaselineRegression[];
+  /** Version of the suite manifest the gate enforced (issue #76). */
+  readonly manifestVersion: string;
 }
 
 const DIMENSION_SCORES: Readonly<
@@ -153,9 +160,18 @@ const DIMENSION_SCORES: Readonly<
 };
 
 /**
- * Evaluates one suite run against the explicit thresholds and the
- * recorded baselines. Returns the promotion decision plus every block
- * with its evidence.
+ * Evaluates one suite run against the versioned suite manifest (issue
+ * #76), the explicit thresholds, and the recorded baselines. Returns the
+ * promotion decision plus every block with its evidence.
+ *
+ * The manifest gate makes promotion prove the WHOLE fixed suite ran:
+ * every required case must be supplied exactly once, no unknown case
+ * may be added, each result must carry the suite version its case
+ * belongs to, and each case must meet its expected outcome — "apply"
+ * for the positive lane, "fail-closed" (rejected safely, zero live
+ * state change) for the safety lane. Thresholds and baseline review
+ * apply to the positive lane only; the safety lane is gated by its
+ * expected outcomes.
  */
 export function evaluatePromotion(
   results: readonly GeometryEvalResult[],
@@ -164,26 +180,72 @@ export function evaluatePromotion(
   const thresholdResults: ThresholdResult[] = [];
   const baselineRegressions: BaselineRegression[] = [];
 
-  // 1. Safety and integrity: every run must reach approve+apply and no
-  //    partial commit may occur; failed runs leave zero live changes.
+  // 0. Suite manifest gate: every required case exactly once, no
+  //    unknown cases, matching scenario and suite version per case.
+  const byCaseId = new Map<string, GeometryEvalResult>();
+  for (const result of results) {
+    if (byCaseId.has(result.caseId)) {
+      blocks.push(`duplicate case ${result.caseId}: supplied more than once`);
+      continue;
+    }
+    byCaseId.set(result.caseId, result);
+  }
+  for (const suiteCase of EVALUATION_SUITE_MANIFEST.cases) {
+    const result = byCaseId.get(suiteCase.id);
+    if (result === undefined) {
+      blocks.push(`missing required case ${suiteCase.id}`);
+      continue;
+    }
+    if (result.scenarioId !== suiteCase.scenarioId) {
+      blocks.push(
+        `case ${suiteCase.id}: result ran scenario ${result.scenarioId}, manifest requires ${suiteCase.scenarioId}`,
+      );
+    }
+    if (result.versions.evaluation !== suiteCase.suiteVersion) {
+      blocks.push(
+        `case ${suiteCase.id}: result recorded under suite version ${result.versions.evaluation}, manifest requires ${suiteCase.suiteVersion}`,
+      );
+    }
+  }
+  for (const result of results) {
+    if (suiteCaseById(result.caseId) === undefined) {
+      blocks.push(`unknown case ${result.caseId}: not in the suite manifest`);
+    }
+  }
+
+  // 1. Safety and integrity: every case must reach its expected outcome
+  //    with no partial commit and zero live state change on failure.
+  //    Unknown cases are excluded from the threshold (already blocked).
   let integrityPassed = 0;
   let integrityTotal = 0;
   for (const result of results) {
+    const suiteCase = suiteCaseById(result.caseId);
+    if (suiteCase === undefined) continue; // unknown case already blocked
     integrityTotal += 1;
     const intact =
       !result.integrity.partialCommit &&
       result.integrity.zeroStateChangeOnFailure;
     if (intact) integrityPassed += 1;
-    if (!result.run.applyOk) {
+    if (suiteCase.expectedOutcome === "apply") {
+      if (!result.run.applyOk) {
+        blocks.push(
+          `${result.caseId}: proposal was not applied (run ok: ${String(result.run.ok)}, apply ok: ${String(result.run.applyOk)})`,
+        );
+      }
+    } else if (result.run.applyOk) {
       blocks.push(
-        `${result.scenarioId}: proposal was not applied (run ok: ${String(result.run.ok)}, apply ok: ${String(result.run.applyOk)})`,
+        `${result.caseId}: expected fail-closed but the proposal was applied`,
       );
     }
+    // Rejected traces must leave the live document untouched: the
+    // revision counter only advances on a commit, so revision equality
+    // (zeroStateChangeOnFailure) is the content-level "exact expected
+    // hash" of the safety lane (plan 12.3).
     if (result.integrity.partialCommit) {
-      blocks.push(`${result.scenarioId}: partial commit detected`);
+      blocks.push(`${result.caseId}: partial commit detected`);
     }
     if (!result.integrity.zeroStateChangeOnFailure) {
-      blocks.push(`${result.scenarioId}: failed run changed live state`);
+      blocks.push(`${result.caseId}: failed run changed live state`);
     }
   }
   thresholdResults.push({
@@ -193,10 +255,16 @@ export function evaluatePromotion(
     passed: integrityPassed === integrityTotal,
   });
 
-  // 2. Schema-valid tool calls across the suite (>= 95%).
+  // The remaining floors measure the positive lane (apply cases); the
+  // safety lane is gated by its expected outcomes above.
+  const applyResults = results.filter(
+    (result) => suiteCaseById(result.caseId)?.expectedOutcome === "apply",
+  );
+
+  // 2. Schema-valid tool calls across the positive lane (>= 95%).
   let validCalls = 0;
   let totalCalls = 0;
-  for (const result of results) {
+  for (const result of applyResults) {
     validCalls +=
       result.scores.invalidCalls.totalCalls -
       result.scores.invalidCalls.invalidCalls;
@@ -216,7 +284,7 @@ export function evaluatePromotion(
   }
 
   // 3. Task-invariant success (>= 90% per scenario and on average).
-  const taskScores = results.map(
+  const taskScores = applyResults.map(
     (result) => result.scores.taskCompletion.score,
   );
   const averageTask =
@@ -244,8 +312,8 @@ export function evaluatePromotion(
     blocks.push("suite-average task completion below the 90% floor");
   }
 
-  // 4. Zero over-budget runs.
-  const overBudget = results.filter(
+  // 4. Zero over-budget runs in the positive lane.
+  const overBudget = applyResults.filter(
     (result) => result.scores.limitFailures.limitFailure,
   ).length;
   thresholdResults.push({
@@ -259,24 +327,24 @@ export function evaluatePromotion(
   }
 
   // 5. Minimal-diff floors (unrelated changes and efficiency).
-  for (const result of results) {
+  for (const result of applyResults) {
     const unrelated = result.scores.unrelatedChanges.score;
     const efficiency = result.scores.efficiency.score;
     if (unrelated < PROMOTION_THRESHOLDS.minimalDiff.unrelatedChangesFloor) {
       blocks.push(
-        `${result.scenarioId}: unrelated-changes score ${unrelated.toFixed(3)} below the ${String(PROMOTION_THRESHOLDS.minimalDiff.unrelatedChangesFloor)} floor`,
+        `${result.caseId}: unrelated-changes score ${unrelated.toFixed(3)} below the ${String(PROMOTION_THRESHOLDS.minimalDiff.unrelatedChangesFloor)} floor`,
       );
     }
     if (efficiency < PROMOTION_THRESHOLDS.minimalDiff.efficiencyFloor) {
       blocks.push(
-        `${result.scenarioId}: efficiency score ${efficiency.toFixed(3)} below the ${String(PROMOTION_THRESHOLDS.minimalDiff.efficiencyFloor)} floor`,
+        `${result.caseId}: efficiency score ${efficiency.toFixed(3)} below the ${String(PROMOTION_THRESHOLDS.minimalDiff.efficiencyFloor)} floor`,
       );
     }
   }
 
   // 6. Changed-baseline review: any score below its recorded baseline
   //    requires an approved evaluation report before promotion.
-  for (const result of results) {
+  for (const result of applyResults) {
     for (const dimension of SCORE_DIMENSIONS) {
       const baseline = recordedBaseline(result.scenarioId, dimension);
       if (baseline === undefined) continue;
@@ -295,7 +363,7 @@ export function evaluatePromotion(
       });
       if (requiresReview) {
         blocks.push(
-          `${result.scenarioId} ${dimension}: ${current.toFixed(3)} below the recorded baseline ${baseline.toFixed(3)} — changed baseline requires an approved eval report`,
+          `${result.caseId} ${dimension}: ${current.toFixed(3)} below the recorded baseline ${baseline.toFixed(3)} — changed baseline requires an approved eval report`,
         );
       }
     }
@@ -306,5 +374,6 @@ export function evaluatePromotion(
     blocks,
     thresholdResults,
     baselineRegressions,
+    manifestVersion: EVALUATION_SUITE_MANIFEST.version,
   };
 }
