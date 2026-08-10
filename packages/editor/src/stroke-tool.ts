@@ -35,8 +35,11 @@ import type {
  * - Erase strokes carry no material and remove every voxel of the path.
  * - Paint strokes pin the active material and recolor only occupied path
  *   voxels whose material differs from it; empty stretches and
- *   already-matching voxels never enter the draft. A paint stroke that
- *   changes nothing commits no transaction.
+ *   already-matching voxels never enter the draft. The rasterization
+ *   cursor follows the picked path, not the filtered draft, so a stroke
+ *   that starts on matching or empty content still paints the differing
+ *   voxels it crosses (issue #105). A paint stroke that changes nothing
+ *   commits no transaction.
  */
 
 export interface StrokeToolOptions {
@@ -83,6 +86,13 @@ class StrokeToolImpl implements StrokeTool {
   #voxels: Vec3i[] = [];
   /** Key set kept in lockstep with #voxels for O(1) dedupe per move. */
   #voxelKeys = new Set<string>();
+  /**
+   * The last picked path voxel, tracked separately from the filtered
+   * changed-voxel draft: the rasterization cursor follows the picked path
+   * so a paint stroke starting on matching/empty content still paints the
+   * differing voxels it crosses (issue #105).
+   */
+  #lastPathVoxel: Vec3i | undefined;
   #material: MaterialId | undefined;
   #active = false;
 
@@ -127,6 +137,8 @@ class StrokeToolImpl implements StrokeTool {
     if (hit === undefined) return { ok: true };
     this.#volumeId = hit.volumeId;
     this.#active = true;
+    this.#lastPathVoxel = hit.voxel;
+    this.#voxelKeys = new Set([voxelKey(hit.voxel)]);
     if (
       this.kind !== "paint" ||
       this.#paintChangesVoxel(
@@ -137,10 +149,8 @@ class StrokeToolImpl implements StrokeTool {
       )
     ) {
       this.#voxels = [hit.voxel];
-      this.#voxelKeys = new Set([voxelKey(hit.voxel)]);
     } else {
       this.#voxels = [];
-      this.#voxelKeys = new Set();
     }
     this.#editor.setDraft(this.draft);
     return { ok: true };
@@ -153,10 +163,13 @@ class StrokeToolImpl implements StrokeTool {
     // A stroke paints only the volume it started on: picks over other
     // volumes are ignored (deterministic, no accidental cross-node paint).
     if (hit.volumeId !== this.#volumeId) return { ok: true };
-    const last = this.#voxels[this.#voxels.length - 1];
+    const last = this.#lastPathVoxel;
     if (last === undefined) return { ok: true };
     if (voxelKey(last) === voxelKey(hit.voxel)) return { ok: true };
-    const remaining = this.#host.maxGestureVoxels - this.#voxels.length;
+    // The budget counts every unique rasterized path voxel (ADR-0009:
+    // voxels inspected by one operation), so a stroke that starts on
+    // matching/empty content cannot bypass the cap through the draft.
+    const remaining = this.#host.maxGestureVoxels - this.#voxelKeys.size;
     let segment: readonly Vec3i[];
     try {
       segment = segmentCoordinates(last, hit.voxel, remaining);
@@ -190,6 +203,7 @@ class StrokeToolImpl implements StrokeTool {
       this.#voxelKeys.add(key);
       this.#voxels.push(voxel);
     }
+    this.#lastPathVoxel = hit.voxel;
     this.#editor.setDraft(this.draft);
     return { ok: true };
   }
@@ -270,6 +284,7 @@ class StrokeToolImpl implements StrokeTool {
     this.#volumeId = undefined;
     this.#voxels = [];
     this.#voxelKeys.clear();
+    this.#lastPathVoxel = undefined;
     this.#material = undefined;
     this.#editor.setDraft(undefined);
   }
