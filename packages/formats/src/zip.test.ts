@@ -1,5 +1,10 @@
+import {
+  INPUT_FILE_LIMIT_EXCEEDED,
+  INPUT_FILE_MAX_BYTES,
+} from "@voxel-maker/shared";
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_ZIP_ARCHIVE_LIMITS,
   isValidEntryName,
   readZipArchive,
   writeZipArchive,
@@ -114,9 +119,44 @@ describe("writeZipArchive", () => {
       "INVALID_ENTRY_NAME",
     );
   });
+
+  it("rejects output above the input-file cap (issue #96)", () => {
+    // The writer must never emit a container its own reader rejects, so
+    // the same 512 MiB input-file cap binds the output size.
+    expectErrorCode(
+      () =>
+        writeZipArchive([{ name: "big.bin", data: new Uint8Array(8) }], {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxInputBytes: 4,
+        }),
+      INPUT_FILE_LIMIT_EXCEEDED,
+    );
+    expectErrorCode(
+      () =>
+        writeZipArchive([{ name: "tiny.bin", data: new Uint8Array(1) }], {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxInputBytes: 0,
+        }),
+      INPUT_FILE_LIMIT_EXCEEDED,
+    );
+  });
 });
 
 describe("readZipArchive", () => {
+  it("rejects input above the input-file cap before parsing (issue #96)", () => {
+    expectErrorCode(
+      () =>
+        readZipArchive(new Uint8Array(8), {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxInputBytes: 4,
+        }),
+      INPUT_FILE_LIMIT_EXCEEDED,
+    );
+  });
+
+  it("pins the default input cap to the shared 512 MiB hard limit", () => {
+    expect(DEFAULT_ZIP_ARCHIVE_LIMITS.maxInputBytes).toBe(INPUT_FILE_MAX_BYTES);
+  });
   it("rejects truncated and empty inputs", () => {
     expectErrorCode(
       () => readZipArchive(new Uint8Array(0)),
@@ -165,6 +205,7 @@ describe("readZipArchive", () => {
 
   it("enforces entry and total size limits", () => {
     const limits = {
+      ...DEFAULT_ZIP_ARCHIVE_LIMITS,
       maxEntries: 1,
       maxEntryNameBytes: 256,
       maxEntrySize: 1 << 20,

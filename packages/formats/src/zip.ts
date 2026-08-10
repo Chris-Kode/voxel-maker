@@ -1,4 +1,8 @@
-import { WorkspaceError } from "@voxel-maker/shared";
+import {
+  INPUT_FILE_LIMIT_EXCEEDED,
+  INPUT_FILE_MAX_BYTES,
+  WorkspaceError,
+} from "@voxel-maker/shared";
 import { crc32 } from "./crc32.js";
 
 /**
@@ -25,6 +29,13 @@ export interface ZipEntryInput {
 
 /** Container-level preflight limits (plan S5.4); callers may only lower. */
 export interface ZipArchiveLimits {
+  /**
+   * Independent raw input-file cap (ADR-0009 "native/external input file
+   * 512 MiB", issue #96): the whole archive — not just its declared
+   * entries — must fit, so an oversized input is rejected before any
+   * parsing or extraction work.
+   */
+  readonly maxInputBytes: number;
   readonly maxEntries: number;
   readonly maxEntryNameBytes: number;
   readonly maxEntrySize: number;
@@ -33,6 +44,7 @@ export interface ZipArchiveLimits {
 
 /** ADR-0009-style hard defaults for one container read. */
 export const DEFAULT_ZIP_ARCHIVE_LIMITS: ZipArchiveLimits = Object.freeze({
+  maxInputBytes: INPUT_FILE_MAX_BYTES,
   maxEntries: 4_096,
   maxEntryNameBytes: 256,
   maxEntrySize: 1 << 30,
@@ -108,8 +120,14 @@ const utf8Name = (name: string): Uint8Array => {
  * order (callers supply the canonical container order); every entry is
  * stored uncompressed with a fixed zero DOS timestamp and no extra fields.
  * Throws before producing bytes when a name or size violates the format.
+ * The archive's own size is bounded by the same input-file cap the reader
+ * enforces (issue #96), so a writer can never emit a container its own
+ * reader rejects; callers may only lower the provided limits.
  */
-export function writeZipArchive(entries: readonly ZipEntryInput[]): Uint8Array {
+export function writeZipArchive(
+  entries: readonly ZipEntryInput[],
+  limits: ZipArchiveLimits = DEFAULT_ZIP_ARCHIVE_LIMITS,
+): Uint8Array {
   const seen = new Set<string>();
   const prepared = entries.map((entry) => {
     assertWriteableName(entry.name);
@@ -149,6 +167,16 @@ export function writeZipArchive(entries: readonly ZipEntryInput[]): Uint8Array {
     prepared.length * CENTRAL_HEADER_BYTES +
     prepared.reduce((sum, entry) => sum + entry.nameBytes.byteLength, 0) +
     EOCD_BYTES;
+  if (localBytes > limits.maxInputBytes) {
+    throw limitError(
+      INPUT_FILE_LIMIT_EXCEEDED,
+      "ZIP archive exceeds the input-file size limit",
+      {
+        requested: localBytes,
+        limit: limits.maxInputBytes,
+      },
+    );
+  }
   if (localBytes > U32_MAX) {
     throw new WorkspaceError({
       family: "limit",
@@ -239,6 +267,20 @@ export function readZipArchive(
   bytes: Uint8Array,
   limits: ZipArchiveLimits = DEFAULT_ZIP_ARCHIVE_LIMITS,
 ): ZipEntry[] {
+  // ADR-0009 input-file cap (issue #96): the raw input is bounded before
+  // any scan, so a hostile oversized file is rejected without touching its
+  // body. This is independent of the per-entry and expanded-total limits,
+  // which only apply once the archive is known to fit.
+  if (bytes.byteLength > limits.maxInputBytes) {
+    throw limitError(
+      INPUT_FILE_LIMIT_EXCEEDED,
+      "ZIP archive exceeds the input-file size limit",
+      {
+        requested: bytes.byteLength,
+        limit: limits.maxInputBytes,
+      },
+    );
+  }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const eocd = findEocd(bytes, view);
   if (eocd === undefined) {

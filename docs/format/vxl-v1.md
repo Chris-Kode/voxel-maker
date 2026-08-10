@@ -169,7 +169,8 @@ ranges; per-entry CRC-32; manifest versions and index consistency; document
 schema version and document limits; volume chunk table structure, geometry,
 coordinates, safe u64-to-Number offsets, and checksums; and finally the
 semantic hash. Container-level defaults (plan S5.4 / ADR-0009) may only be
-lowered by callers: 4096 entries, 256-byte names, 1 GiB per entry, 2 GiB
+lowered by callers: a 512 MiB raw input-file cap (issue #96, enforced
+before any scan), 4096 entries, 256-byte names, 1 GiB per entry, 2 GiB
 total. The writer enforces the same defaults, so it can never emit a
 container its own reader rejects.
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,6 +19,8 @@ import { createDocument } from "@voxel-maker/model";
 import {
   commandId,
   documentId,
+  INPUT_FILE_LIMIT_EXCEEDED,
+  INPUT_FILE_MAX_BYTES,
   materialId,
   nodeId,
   transactionId,
@@ -388,6 +390,131 @@ describe("NodeProjectStorage real filesystem behavior", () => {
       const loaded = readVxlProject(await inner.readProject(path));
       expect(loaded.semanticHash).toBe(captured.semanticHash);
       expect(loaded.document.revision).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("NodeProjectStorage bounded reads (issue #96)", () => {
+  it("rejects a project above the 512 MiB input cap before reading its body", async () => {
+    const dir = await makeDirectory();
+    try {
+      const path = join(dir, "oversized.vxl");
+      // Sparse file with 512 MiB + 1 logical bytes and no backing blocks:
+      // a whole-file read would succeed cheaply here, so rejection with the
+      // stable limit error proves the preflight runs before the body read.
+      const handle = await open(path, "w");
+      await handle.truncate(INPUT_FILE_MAX_BYTES + 1);
+      await handle.close();
+      await expect(
+        new NodeProjectStorage().readProject(path),
+      ).rejects.toMatchObject({
+        family: "limit",
+        code: INPUT_FILE_LIMIT_EXCEEDED,
+        context: {
+          path,
+          requested: INPUT_FILE_MAX_BYTES + 1,
+          limit: INPUT_FILE_MAX_BYTES,
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an oversized backup before reading its body", async () => {
+    const dir = await makeDirectory();
+    try {
+      const path = join(dir, "demo.vxl");
+      const port = new NodeProjectStorage();
+      await port.writeProjectAtomic(path, new TextEncoder().encode("v1"));
+      await port.writeProjectAtomic(path, new TextEncoder().encode("v2"));
+      const handle = await open(`${path}.bak`, "w");
+      await handle.truncate(INPUT_FILE_MAX_BYTES + 1);
+      await handle.close();
+      await expect(port.readBackup(path)).rejects.toMatchObject({
+        family: "limit",
+        code: INPUT_FILE_LIMIT_EXCEEDED,
+        context: {
+          path: `${path}.bak`,
+          requested: INPUT_FILE_MAX_BYTES + 1,
+          limit: INPUT_FILE_MAX_BYTES,
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an oversized journal before reading its body", async () => {
+    const dir = await makeDirectory();
+    try {
+      const path = join(dir, "demo.vxl");
+      const port = new NodeProjectStorage();
+      await port.appendJournal(path, new TextEncoder().encode("frame"));
+      const handle = await open(journalPathFor(path), "w");
+      await handle.truncate(INPUT_FILE_MAX_BYTES + 1);
+      await handle.close();
+      await expect(port.readJournal(path)).rejects.toMatchObject({
+        family: "limit",
+        code: INPUT_FILE_LIMIT_EXCEEDED,
+        context: {
+          path: journalPathFor(path),
+          requested: INPUT_FILE_MAX_BYTES + 1,
+          limit: INPUT_FILE_MAX_BYTES,
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects non-regular project, backup, and journal paths before opening them", async () => {
+    const dir = await makeDirectory();
+    try {
+      const path = join(dir, "demo.vxl");
+      await mkdir(path);
+      const port = new NodeProjectStorage();
+      await expect(port.readProject(path)).rejects.toMatchObject({
+        family: "io",
+        code: IO_ERROR_CODES.notRegular,
+      });
+      await mkdir(`${path}.bak`);
+      await expect(port.readBackup(path)).rejects.toMatchObject({
+        family: "io",
+        code: IO_ERROR_CODES.notRegular,
+      });
+      await mkdir(journalPathFor(path));
+      await expect(port.readJournal(path)).rejects.toMatchObject({
+        family: "io",
+        code: IO_ERROR_CODES.notRegular,
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads exactly at the configured read cap and rejects one byte above", async () => {
+    const dir = await makeDirectory();
+    try {
+      const path = join(dir, "bounded.vxl");
+      const port = new NodeProjectStorage({ readMaxBytes: 16 });
+      await port.writeProjectAtomic(
+        path,
+        new TextEncoder().encode("0123456789abcdef"),
+      );
+      expect(new TextDecoder().decode(await port.readProject(path))).toBe(
+        "0123456789abcdef",
+      );
+      const handle = await open(path, "w");
+      await handle.truncate(17);
+      await handle.close();
+      await expect(port.readProject(path)).rejects.toMatchObject({
+        family: "limit",
+        code: INPUT_FILE_LIMIT_EXCEEDED,
+        context: { path, requested: 17, limit: 16 },
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

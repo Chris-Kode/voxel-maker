@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   documentId,
+  INPUT_FILE_MAX_BYTES,
   materialId,
   nodeId,
   volumeId,
@@ -356,9 +357,42 @@ describe("readVxlProject", () => {
     expectErrorCode(
       () =>
         readVxlProject(bytes, {
+          containerLimits: {
+            ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+            maxInputBytes: INPUT_FILE_MAX_BYTES + 1,
+          },
+        }),
+      "LIMIT_ABOVE_DEFAULT",
+    );
+    expectErrorCode(
+      () =>
+        readVxlProject(bytes, {
           documentLimits: { ...DEFAULT_DOCUMENT_LIMITS, maxNodes: 20_000 },
         }),
       "LIMIT_ABOVE_DEFAULT",
+    );
+  });
+
+  it("rejects a raw input above the 512 MiB input-file cap before parsing (issue #96)", () => {
+    // One byte above the ADR-0009 hard limit: the parser must fail with the
+    // stable limit error without scanning or extracting the archive. The
+    // buffer is zero-filled, so any ZIP-level code would mean the cap was
+    // not enforced first.
+    expectErrorCode(
+      () => readVxlProject(new Uint8Array(INPUT_FILE_MAX_BYTES + 1)),
+      "INPUT_FILE_LIMIT_EXCEEDED",
+    );
+    // Exactly at the cap the input check passes and the ZIP parse fails:
+    // the cap is inclusive and is not the only validation.
+    expectErrorCode(
+      () =>
+        readVxlProject(new Uint8Array(4), {
+          containerLimits: {
+            ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+            maxInputBytes: 4,
+          },
+        }),
+      "INVALID_ZIP_ARCHIVE",
     );
   });
 
