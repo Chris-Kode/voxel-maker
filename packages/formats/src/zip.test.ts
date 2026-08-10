@@ -354,6 +354,29 @@ describe("readZipArchive", () => {
         }),
       "LIMIT_ABOVE_DEFAULT",
     );
+    // A non-finite profile value would silently disable every comparison
+    // that uses it (issue #98 "validate limit profiles").
+    expectErrorCode(
+      () =>
+        readZipArchive(bytes, {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxEntryNameBytes: Number.NaN,
+        }),
+      "LIMIT_ABOVE_DEFAULT",
+    );
+  });
+
+  it("rejects the ZIP64 name-length marker before the byte limit", () => {
+    // The 0xFFFF name length is the ZIP64 marker for a 16-bit length, so it
+    // is format corruption (INVALID_ZIP_ARCHIVE) like the other marker
+    // fields, never a caller-profile limit error. The central directory is
+    // grown so the forged record physically fits and the marker check —
+    // not the truncation check — is what rejects it.
+    const base = writeZipArchive([{ name: "a", data: text("x") }]);
+    const forged = growCentralDirectory(base, 0xffff, (view, centralOffset) => {
+      view.setUint16(centralOffset + 28, 0xffff, true);
+    });
+    expectErrorCode(() => readZipArchive(forged), "INVALID_ZIP_ARCHIVE");
   });
 });
 

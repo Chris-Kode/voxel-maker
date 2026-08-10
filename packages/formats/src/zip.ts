@@ -370,6 +370,16 @@ export function readZipArchive(
         "ZIP central directory record is truncated",
       );
     }
+    // ZIP64 name-length marker: reject the unsupported marker before the
+    // byte-limit check, matching how the other marker fields are handled
+    // (markers are format corruption; limits are caller profiles).
+    if (nameLength === 0xffff) {
+      throw corrupt(
+        "INVALID_ZIP_ARCHIVE",
+        "ZIP record uses unsupported sizes or ZIP64 markers",
+        { nameLength },
+      );
+    }
     // Issue #98: enforce the configured byte limit on the raw name length
     // before slicing or decoding, so a lowered profile rejects oversized
     // names with a stable limit error before any name allocation.
@@ -413,7 +423,6 @@ export function readZipArchive(
       compressedSize !== uncompressedSize ||
       compressedSize === U32_MAX ||
       uncompressedSize === U32_MAX ||
-      nameLength === 0xffff ||
       extraLength === 0xffff ||
       commentLength === 0xffff ||
       localOffset === U32_MAX
