@@ -831,6 +831,110 @@ describe("transform occupied-limit preflight", () => {
     expect(transform.applyPending()).toEqual({ ok: true });
     transform.reset();
   });
+
+  it("mirrors two disjoint same-volume regions at the occupied limit", () => {
+    // Ticket #107 regression: the preview mapped the per-volume union of
+    // occupied keys relative to every region, so a region-relative
+    // mirror also mapped the other region's voxels, inflated the net
+    // occupied change, and falsely rejected a valid mirror at the
+    // occupied-voxel limit. Each entry's own keys must be mapped against
+    // that entry's region, so two disjoint mirrors net zero and pass.
+    const occupied = new Set<string>();
+    for (const x of [0, 2]) occupied.add(`${String(x)},0,0`);
+    for (const x of [5, 7]) occupied.add(`${String(x)},0,0`);
+    const view = fakeReadView(VOLUME, occupied, {
+      ...DEFAULT_VOXEL_VOLUME_LIMITS,
+      maxOccupiedVoxels: 4,
+    });
+    const editor = createEditorStore();
+    editor.setSelection([
+      {
+        kind: "region",
+        volumeId: VOLUME,
+        region: { min: [0, 0, 0], max: [3, 1, 1] },
+      },
+      {
+        kind: "region",
+        volumeId: VOLUME,
+        region: { min: [5, 0, 0], max: [8, 1, 1] },
+      },
+    ]);
+    const harness = createHarness();
+    const transform = toolOnFakeStore(
+      harness,
+      fakeStore(harness.store.getDocument(), view),
+      editor,
+    );
+    expect(transform.previewMirror("x")).toEqual({ ok: true });
+    const preview = editor.transformPreview;
+    if (preview === undefined || preview.operation !== "mirror") {
+      throw new Error("mirror preview missing");
+    }
+    // Each region's two voxels map inside the same region: the union
+    // preview is exactly four moved voxels, nothing overwritten or
+    // removed, and the net occupied change is zero.
+    expect(preview.movedVoxels).toBe(4);
+    expect(preview.overwrittenVoxels).toBe(0);
+    expect(preview.removedVoxels).toBe(0);
+    transform.reset();
+
+    // Genuine over-limit copies still fail: copying both regions onto
+    // empty space adds four voxels (4 + 4 > 4) and is rejected exactly,
+    // leaving no preview or gesture behind.
+    editor.setTransformMode("copy");
+    expect(transform.pointerDown(0, 0)).toEqual({ ok: true });
+    const copy = transform.pointerMove(9, 0);
+    expect(copy.ok).toBe(false);
+    if (!copy.ok) expect(copy.error.code).toBe("TOO_MANY_OCCUPIED_VOXELS");
+    expect(transform.active).toBe(false);
+    expect(editor.transformPreview).toBeUndefined();
+    transform.reset();
+  });
+
+  it("rotates two disjoint same-volume regions at the occupied limit", () => {
+    // Ticket #107 regression: the same per-entry mapping fix applies to
+    // rotation; two disjoint exact rotations at the occupied-voxel limit
+    // must pass the exact preflight instead of being falsely rejected.
+    const occupied = new Set<string>();
+    for (const x of [0, 1]) occupied.add(`${String(x)},0,0`);
+    for (const x of [4, 5]) occupied.add(`${String(x)},0,0`);
+    const view = fakeReadView(VOLUME, occupied, {
+      ...DEFAULT_VOXEL_VOLUME_LIMITS,
+      maxOccupiedVoxels: 4,
+    });
+    const editor = createEditorStore();
+    editor.setSelection([
+      {
+        kind: "region",
+        volumeId: VOLUME,
+        region: { min: [0, 0, 0], max: [2, 1, 2] },
+      },
+      {
+        kind: "region",
+        volumeId: VOLUME,
+        region: { min: [4, 0, 0], max: [6, 1, 2] },
+      },
+    ]);
+    const harness = createHarness();
+    const transform = toolOnFakeStore(
+      harness,
+      fakeStore(harness.store.getDocument(), view),
+      editor,
+    );
+    expect(transform.previewRotate("y")).toEqual({ ok: true });
+    const preview = editor.transformPreview;
+    if (preview === undefined || preview.operation !== "rotate") {
+      throw new Error("rotate preview missing");
+    }
+    // Two exact rotations at the limit: four moved voxels; each region
+    // vacates one occupied position and re-occupies one new position
+    // (two removed total, nothing overwritten), so the net occupied
+    // change is zero and the limit preflight accepts the rotation.
+    expect(preview.movedVoxels).toBe(4);
+    expect(preview.overwrittenVoxels).toBe(0);
+    expect(preview.removedVoxels).toBe(2);
+    transform.reset();
+  });
 });
 
 describe("transform session and selection preconditions", () => {
@@ -1222,6 +1326,51 @@ describe("transform mirror", () => {
       expect(harness.transform.applyPending()).toEqual({ ok: true });
     }
     expect(harness.occupied(VOLUME)).toBe(3);
+    harness.transform.reset();
+  });
+
+  it("mirrors two disjoint same-volume regions as exact per-entry unions", () => {
+    // Ticket #107 regression guard: the preview must map each entry's
+    // own occupied keys against that entry's region, so the union
+    // preview counts stay exact and the commit invents no voxels.
+    const harness = createHarness();
+    setVoxels(harness, VOLUME, [
+      [0, 0, 0],
+      [2, 0, 0],
+      [5, 0, 0],
+      [7, 0, 0],
+    ]);
+    harness.editor.setSelection([
+      {
+        kind: "region",
+        volumeId: VOLUME,
+        region: { min: [0, 0, 0], max: [3, 1, 1] },
+      },
+      {
+        kind: "region",
+        volumeId: VOLUME,
+        region: { min: [5, 0, 0], max: [8, 1, 1] },
+      },
+    ]);
+    harness.editor.setTransformMode("mirror");
+    expect(harness.transform.previewMirror("x")).toEqual({ ok: true });
+    const preview = harness.editor.transformPreview;
+    if (preview === undefined || preview.operation !== "mirror") {
+      throw new Error("mirror preview missing");
+    }
+    expect(preview.movedVoxels).toBe(4);
+    expect(preview.overwrittenVoxels).toBe(0);
+    expect(preview.removedVoxels).toBe(0);
+    expect(harness.transform.applyPending()).toEqual({ ok: true });
+    expect(labels(harness)).toEqual(["Mirror selection"]);
+    const voxels = harness.voxels(VOLUME);
+    expect(voxels.size).toBe(4);
+    // 0 <-> 2 inside the first region and 5 <-> 7 inside the second:
+    // cross-region mappings must not invent positions.
+    for (const x of [0, 2, 5, 7]) {
+      expect(voxels.get(`${String(x)},0,0`)).toBe(MATERIAL);
+    }
+    expect(harness.occupied(VOLUME)).toBe(4);
     harness.transform.reset();
   });
 });
