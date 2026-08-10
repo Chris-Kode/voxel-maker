@@ -206,10 +206,21 @@ interface VoxelNode {
 function buildExportPalette(
   document: VoxelDocument,
   usedMaterialIds: readonly MaterialId[],
-): { palette: VoxColor[]; materialToIndex: Map<MaterialId, number> } {
+): {
+  palette: VoxColor[];
+  materialToIndex: Map<MaterialId, number>;
+  /**
+   * Owner material ids per assigned palette entry, in first-seen
+   * material-id order. Entry `entries[i]` owns palette index `i + 1`, so
+   * the array length is the projected palette-entry count that preflight
+   * and the 255-entry limit must agree on (ADR-0011).
+   */
+  entries: readonly (readonly MaterialId[])[];
+} {
   const sorted = [...usedMaterialIds].sort((a, b) => a - b);
   const materialToIndex = new Map<MaterialId, number>();
   const colorToIndex = new Map<string, number>();
+  const ownersByColor = new Map<string, MaterialId[]>();
   const palette: VoxColor[] = [
     { r: 0, g: 0, b: 0, a: 0 },
     ...Array.from({ length: VOX_PALETTE_ENTRIES - 1 }, () => ({
@@ -235,9 +246,17 @@ function buildExportPalette(
         a: Math.round(material.opacity * 255),
       };
     }
+    // The owner group is keyed by the same color as the palette entry, so
+    // a group always exists once its color has an assigned index.
+    const owners = ownersByColor.get(material.color);
+    if (owners === undefined) {
+      ownersByColor.set(material.color, [materialIdValue]);
+    } else {
+      owners.push(materialIdValue);
+    }
     materialToIndex.set(materialIdValue, index);
   }
-  return { palette, materialToIndex };
+  return { palette, materialToIndex, entries: [...ownersByColor.values()] };
 }
 
 /** Collects every node carrying a voxel component, in document order. */
@@ -497,10 +516,7 @@ export function preflightVoxExport(
   // drops semantic content). The 255-entry limit applies to the projected
   // palette, not the raw material count, so representable exports are not
   // falsely blocked.
-  const { materialToIndex } = buildExportPalette(document, [
-    ...usedMaterialIds,
-  ]);
-  const entryOwners = new Map<number, MaterialId>();
+  const { entries } = buildExportPalette(document, [...usedMaterialIds]);
   for (const materialIdValue of [...usedMaterialIds].sort((a, b) => a - b)) {
     const material = document.materials[materialIdValue];
     if (material === undefined) {
@@ -541,33 +557,37 @@ export function preflightVoxExport(
         context: { material: String(materialIdValue) },
       });
     }
-    const entry = materialToIndex.get(materialIdValue);
-    if (entry === undefined) continue;
-    const owner = entryOwners.get(entry);
-    if (owner === undefined) {
-      entryOwners.set(entry, materialIdValue);
-      continue;
-    }
-    const ownerMaterial = document.materials[owner];
-    const opacityDiffers =
-      ownerMaterial !== undefined &&
-      Math.round(ownerMaterial.opacity * 255) !==
-        Math.round(material.opacity * 255);
-    losses.push({
-      code: VOX_EXPORT_LOSSES.materialDistinction,
-      message: opacityDiffers
-        ? "Materials with the same color but different opacity share one palette entry"
-        : "Distinct materials with the same color share one palette entry; their identities and names are not preserved",
-      severity: "bake",
-      context: {
-        material: String(materialIdValue),
-        collapsedInto: String(owner),
-      },
-    });
   }
-  // Palette entries are assigned contiguously from index 1, so the number
-  // of owned entries is the projected palette size.
-  const projectedEntryCount = entryOwners.size;
+  // Every owner after the first in one projected palette entry is a
+  // distinct Material identity the VOX palette cannot represent; report
+  // each collapse before encoding (ADR-0011).
+  for (const owners of entries) {
+    const owner = owners[0];
+    if (owner === undefined) continue;
+    const ownerMaterial = document.materials[owner];
+    if (ownerMaterial === undefined) continue;
+    for (const collapsedId of owners.slice(1)) {
+      const collapsed = document.materials[collapsedId];
+      if (collapsed === undefined) continue;
+      const opacityDiffers =
+        Math.round(ownerMaterial.opacity * 255) !==
+        Math.round(collapsed.opacity * 255);
+      losses.push({
+        code: VOX_EXPORT_LOSSES.materialDistinction,
+        message: opacityDiffers
+          ? "Materials with the same color but different opacity share one palette entry; their identities are not preserved"
+          : "Distinct materials with the same color share one palette entry; their identities are not preserved",
+        severity: "bake",
+        context: {
+          material: String(collapsedId),
+          collapsedInto: String(owner),
+        },
+      });
+    }
+  }
+  // The palette builder assigns exactly one entry per distinct color, so
+  // its projected entry count is the palette size the limit applies to.
+  const projectedEntryCount = entries.length;
   if (projectedEntryCount > VOX_MAX_COLOR_INDEX) {
     blocked.push({
       code: VOX_EXPORT_LOSSES.colorLimit,
