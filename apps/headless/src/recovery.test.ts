@@ -27,7 +27,11 @@ import {
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 import { NodeProjectStorage } from "./node-storage.js";
 import { createRecoverySession, recoverProject } from "./recovery.js";
-import { journalEventOnce, runRecoveryTrace } from "./recovery-trace.js";
+import {
+  journalEventOnce,
+  runRecoveryTrace,
+  saveDurableAnchor,
+} from "./recovery-trace.js";
 
 /** Immutable volume read views of every document volume (throws when missing). */
 function volumeViews(store: {
@@ -414,6 +418,13 @@ describe("headless crash recovery", () => {
       const document = trace.createTraceDocument();
       const { store, writeCapability } = createDocumentStore({ document });
       const registry = trace.createTraceRegistry();
+      // A durable anchor snapshot at revision 0, then two journaled edits.
+      // The anchor write happens BEFORE the session exists, exactly like
+      // the real open flow: the snapshot is already durable on disk when
+      // the session is created over it, so the session starts clean
+      // (issue #66).
+      const anchor = await saveDurableAnchor(store, port, projectPath);
+      expect(anchor.status).toBe("saved");
       const session = createRecoverySession({
         projectPath,
         port,
@@ -424,9 +435,6 @@ describe("headless crash recovery", () => {
         baseRevision: 0,
         baseSemanticHash: canonicalAssetSemanticHash(document, new Map()),
       });
-      // A durable anchor snapshot at revision 0, then two journaled edits.
-      const anchor = await session.save(projectPath);
-      expect(anchor.status).toBe("saved");
       const run = (label: string, expectedRevision: number): number => {
         const result = session.bus.execute(
           fillBoxCommand(commandId(`command:issue65:${label}`), {
@@ -524,6 +532,12 @@ describe("headless crash recovery", () => {
       const document = trace.createTraceDocument();
       const { store, writeCapability } = createDocumentStore({ document });
       const registry = trace.createTraceRegistry();
+      // A durable anchor save, then one journaled edit. The anchor write
+      // happens BEFORE the session exists, exactly like the real open
+      // flow: the snapshot is already durable on disk when the session is
+      // created over it, so the session starts clean (issue #66).
+      const anchor = await saveDurableAnchor(store, port, projectPath);
+      expect(anchor.status).toBe("saved");
       const session = createRecoverySession({
         projectPath,
         port,
@@ -534,9 +548,6 @@ describe("headless crash recovery", () => {
         baseRevision: 0,
         baseSemanticHash: canonicalAssetSemanticHash(document, new Map()),
       });
-      // A durable anchor save, then one journaled edit.
-      const anchor = await session.save(projectPath);
-      expect(anchor.status).toBe("saved");
       const edit = session.bus.execute(
         fillBoxCommand(commandId("command:e2e:samepath"), {
           volumeId: VOLUME,
@@ -667,6 +678,90 @@ describe("headless crash recovery", () => {
       expect(next.journal.isDegraded()).toBe(false);
       expect(next.journal.lastJournaledRevision()).toBe(3);
       next.dispose();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("starts clean and saves unchanged when the live snapshot matches the durable base (issue #66)", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "voxel-maker-recovery-"));
+    try {
+      const projectPath = join(directory, "clean.vxl");
+      const port = new NodeProjectStorage();
+      const trace = await import("./recovery-trace.js");
+      const document = trace.createTraceDocument();
+      const { store, writeCapability } = createDocumentStore({ document });
+      const registry = trace.createTraceRegistry();
+      // The issue's repro: first durably save the fixed snapshot, then open
+      // a session over that exact base revision/hash.
+      const anchor = await saveDurableAnchor(store, port, projectPath);
+      expect(anchor.status).toBe("saved");
+      const durableBytes = await port.readProject(projectPath);
+      const session = createRecoverySession({
+        projectPath,
+        port,
+        store,
+        writeCapability,
+        registry,
+        sessionId: SESSION,
+        baseRevision: 0,
+        baseSemanticHash: canonicalAssetSemanticHash(document, new Map()),
+      });
+      // A freshly opened durable project starts clean: the live snapshot IS
+      // the durable base, so an immediate same-path save is a no-op that
+      // must not rewrite the file or create a backup.
+      expect(session.saveCoordinator.isDirty()).toBe(false);
+      const outcome = await session.save(projectPath);
+      expect(outcome.status).toBe("unchanged");
+      expect(await port.readProject(projectPath)).toEqual(durableBytes);
+      expect(await port.readBackup(projectPath)).toBeUndefined();
+      session.dispose();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a recovered session dirty when live state moved past the durable base (issue #66)", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "voxel-maker-recovery-"));
+    try {
+      const projectPath = join(directory, "replayed.vxl");
+      const port = new NodeProjectStorage();
+      const trace = await import("./recovery-trace.js");
+      const document = trace.createTraceDocument();
+      const { store, writeCapability } = createDocumentStore({ document });
+      const registry = trace.createTraceRegistry();
+      const bus = new CommandBus(store, registry, writeCapability);
+      const edit = bus.execute(
+        fillBoxCommand(commandId("command:e2e:replayed"), {
+          volumeId: VOLUME,
+          region: { min: [0, 0, 0], max: [2, 2, 2] },
+          material: materialId(1),
+        }),
+        {
+          transactionId: transactionId("transaction:e2e:replayed"),
+          expectedRevision: 0,
+          source: "ui",
+        },
+      );
+      expect(edit.ok).toBe(true);
+      // The session anchors at the durable base (revision 0) while the live
+      // state is already past it (replayed recovery): it must stay dirty
+      // and a save must write the replayed state.
+      const session = createRecoverySession({
+        projectPath,
+        port,
+        store,
+        writeCapability,
+        registry,
+        sessionId: SESSION,
+        baseRevision: 0,
+        baseSemanticHash: canonicalAssetSemanticHash(document, new Map()),
+      });
+      expect(session.saveCoordinator.isDirty()).toBe(true);
+      const outcome = await session.save(projectPath);
+      expect(outcome.status).toBe("saved");
+      expect(await port.exists(projectPath)).toBe(true);
+      session.dispose();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
