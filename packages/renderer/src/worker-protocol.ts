@@ -287,6 +287,29 @@ export function parseMeshingResponseMessage(
   };
 }
 
+/**
+ * Fresh copy of one chunk input (plan S6.4/S6.6, ticket #62). The worker
+ * executor transfers the buffers it posts, so every attempt must own its
+ * own buffers: transferring a shared copy would detach it for every
+ * later retry (and for the caller), and `postMessage` would throw
+ * `DataCloneError` on the next attempt. Copying here keeps `job.input`
+ * and any caller-held copy intact across retries.
+ */
+export function copyChunkMeshInput(input: ChunkMeshInput): ChunkMeshInput {
+  return {
+    namespace: input.namespace,
+    volumeId: input.volumeId,
+    coordinate: [...input.coordinate],
+    revision: input.revision,
+    values: new Uint16Array(input.values),
+    halo: {
+      faces: new Uint16Array(input.halo.faces),
+      edges: new Uint16Array(input.halo.edges),
+      corners: new Uint16Array(input.halo.corners),
+    },
+  };
+}
+
 /** Transfer list for a request: every copied input buffer moves to the worker. */
 export function meshingRequestTransfer(input: ChunkMeshInput): Transferable[] {
   return [input.values, input.halo.faces, input.halo.edges, input.halo.corners];
