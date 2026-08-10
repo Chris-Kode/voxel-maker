@@ -73,6 +73,27 @@ function createSession() {
   });
 }
 
+/**
+ * Creates a session whose bus hooks record the current document at commit
+ * time, mirroring the composition root's journal sink (ticket #54): a
+ * stale bus must never produce a record attributed to a later document.
+ */
+function createHookedSession() {
+  const records: Array<{ documentId: string; revisionAfter: number }> = [];
+  const session = createDocumentSession({
+    registerCommands: [registerVoxelCommands],
+    busHooks: {
+      onCommitted(record) {
+        records.push({
+          documentId: session.current?.documentId ?? "none",
+          revisionAfter: record.revisionAfter,
+        });
+      },
+    },
+  });
+  return { session, records };
+}
+
 /** Asserts that `action` throws a `WorkspaceError` with the given code. */
 function expectSessionError(action: () => void, code: string): void {
   let thrown: unknown;
@@ -227,18 +248,7 @@ describe("DocumentSession lifecycle coordinator", () => {
   });
 
   it("applies bus hooks to every fresh bus so recovery wiring can journal", () => {
-    const records: Array<{ documentId: string; revisionAfter: number }> = [];
-    const session = createDocumentSession({
-      registerCommands: [registerVoxelCommands],
-      busHooks: {
-        onCommitted(record) {
-          records.push({
-            documentId: session.current?.documentId ?? "none",
-            revisionAfter: record.revisionAfter,
-          });
-        },
-      },
-    });
+    const { session, records } = createHookedSession();
     session.open({ document: createFixtureDocument(9) });
     const result = session.current?.bus.execute(
       setVoxelCommand(commandId("command:session:hook"), {
@@ -326,5 +336,249 @@ describe("DocumentSession lifecycle coordinator", () => {
     expect(events).toHaveLength(0);
     session.dispose();
     expect(session.current).toBeUndefined();
+  });
+
+  it("revokes the previous bus on replace so retained buses reject and never journal", () => {
+    const { session, records } = createHookedSession();
+    const first = session.open({ document: createFixtureDocument(1) });
+
+    // One legitimate commit on the first bus: the journal hook fires once,
+    // attributed to document A.
+    const commitA = first.bus.execute(
+      setVoxelCommand(commandId("command:session:revoke-a"), {
+        volumeId: VOLUME,
+        coordinate: [0, 0, 0],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:revoke-a"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(commitA.ok).toBe(true);
+
+    session.replace({ document: createFixtureDocument(2) });
+    expect(session.current?.documentId).toBe("document:session:0002");
+
+    // A retained stale bus must reject with a stable conflict, must not
+    // advance its own store, and must never invoke the shared journal hook
+    // (the composition root forwards it to the CURRENT document's journal).
+    const stale = first.bus.execute(
+      setVoxelCommand(commandId("command:session:revoke-stale"), {
+        volumeId: VOLUME,
+        coordinate: [1, 1, 1],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:revoke-stale"),
+        expectedRevision: 1,
+        source: "ui",
+      },
+    );
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) {
+      expect(stale.error).toBeInstanceOf(WorkspaceError);
+      expect(stale.error.family).toBe("conflict");
+      expect(stale.error.code).toBe("BUS_REVOKED");
+    }
+    expect(first.store.revision).toBe(1);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toEqual({
+      documentId: "document:session:0001",
+      revisionAfter: 1,
+    });
+
+    // Undo/redo on the retained bus reject the same way.
+    const staleUndo = first.bus.undo({
+      transactionId: transactionId("transaction:session:revoke-undo"),
+      expectedRevision: 1,
+      source: "ui",
+    });
+    expect(staleUndo.ok).toBe(false);
+    if (!staleUndo.ok) {
+      expect(staleUndo.error.code).toBe("BUS_REVOKED");
+    }
+    const staleRedo = first.bus.redo({
+      transactionId: transactionId("transaction:session:revoke-redo"),
+      expectedRevision: 1,
+      source: "ui",
+    });
+    expect(staleRedo.ok).toBe(false);
+    if (!staleRedo.ok) {
+      expect(staleRedo.error.code).toBe("BUS_REVOKED");
+    }
+    expect(records).toHaveLength(1);
+  });
+
+  it("revokes the current bus on close and dispose so retained buses reject", () => {
+    const { session, records } = createHookedSession();
+    const state = session.open({ document: createFixtureDocument(3) });
+    session.close();
+    const afterClose = state.bus.execute(
+      setVoxelCommand(commandId("command:session:revoke-close"), {
+        volumeId: VOLUME,
+        coordinate: [1, 1, 1],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:revoke-close"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(afterClose.ok).toBe(false);
+    if (!afterClose.ok) {
+      expect(afterClose.error.code).toBe("BUS_REVOKED");
+    }
+    expect(records).toHaveLength(0);
+
+    const state2 = session.open({ document: createFixtureDocument(4) });
+    session.dispose();
+    const afterDispose = state2.bus.execute(
+      setVoxelCommand(commandId("command:session:revoke-dispose"), {
+        volumeId: VOLUME,
+        coordinate: [1, 1, 1],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:revoke-dispose"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(afterDispose.ok).toBe(false);
+    if (!afterDispose.ok) {
+      expect(afterDispose.error.code).toBe("BUS_REVOKED");
+    }
+    expect(records).toHaveLength(0);
+  });
+
+  it("keeps the previous bus usable when a replacement fails validation", () => {
+    const session = createSession();
+    const first = session.open({ document: createFixtureDocument(5) });
+    const invalid = {
+      ...createFixtureDocument(6),
+      nodes: {},
+    };
+    expectSessionError(
+      () => session.replace({ document: invalid }),
+      "MISSING_REFERENCE",
+    );
+    // The failed replacement must not revoke the still-current bus: the old
+    // document remains authoritative and editable.
+    expect(session.current?.documentId).toBe("document:session:0005");
+    const result = first.bus.execute(
+      setVoxelCommand(commandId("command:session:revoke-kept"), {
+        volumeId: VOLUME,
+        coordinate: [1, 1, 1],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:revoke-kept"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(first.store.revision).toBe(1);
+  });
+
+  it("rejects retained gesture handles after replace, close, and dispose", () => {
+    const session = createSession();
+
+    // After replace: the handle reports inactive and every call rejects.
+    const first = session.open({ document: createFixtureDocument(7) });
+    const gesture = first.bus.beginGesture("gesture:session:stale");
+    expect(gesture.ok).toBe(true);
+    if (!gesture.ok) return;
+
+    session.replace({ document: createFixtureDocument(8) });
+    expect(gesture.value.active).toBe(false);
+    const update = gesture.value.update(
+      [
+        setVoxelCommand(commandId("command:session:revoke-gesture"), {
+          volumeId: VOLUME,
+          coordinate: [1, 1, 1],
+          material: materialId(1),
+        }),
+      ],
+      {
+        transactionId: transactionId("transaction:session:revoke-gesture"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(update.ok).toBe(false);
+    if (!update.ok) {
+      expect(update.error.code).toBe("GESTURE_SEALED");
+    }
+    const cancel = gesture.value.cancel({
+      transactionId: transactionId("transaction:session:revoke-gesture-cancel"),
+      expectedRevision: 0,
+      source: "ui",
+    });
+    expect(cancel.ok).toBe(false);
+    if (!cancel.ok) {
+      expect(cancel.error.code).toBe("GESTURE_SEALED");
+    }
+    expect(first.store.revision).toBe(0);
+
+    // After close: a gesture opened on the closing document also dies.
+    session.close();
+    const second = session.open({ document: createFixtureDocument(9) });
+    const closingGesture = second.bus.beginGesture("gesture:session:closing");
+    expect(closingGesture.ok).toBe(true);
+    if (!closingGesture.ok) return;
+    session.close();
+    expect(closingGesture.value.active).toBe(false);
+    const closingUpdate = closingGesture.value.update(
+      [
+        setVoxelCommand(commandId("command:session:revoke-gesture-close"), {
+          volumeId: VOLUME,
+          coordinate: [1, 1, 1],
+          material: materialId(1),
+        }),
+      ],
+      {
+        transactionId: transactionId(
+          "transaction:session:revoke-gesture-close",
+        ),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(closingUpdate.ok).toBe(false);
+    if (!closingUpdate.ok) {
+      expect(closingUpdate.error.code).toBe("GESTURE_SEALED");
+    }
+
+    // After dispose: the last installed bus and its gestures are dead too.
+    const third = session.open({ document: createFixtureDocument(10) });
+    const disposedGesture = third.bus.beginGesture("gesture:session:disposed");
+    expect(disposedGesture.ok).toBe(true);
+    if (!disposedGesture.ok) return;
+    session.dispose();
+    expect(disposedGesture.value.active).toBe(false);
+    const disposedUpdate = disposedGesture.value.update(
+      [
+        setVoxelCommand(commandId("command:session:revoke-gesture-dispose"), {
+          volumeId: VOLUME,
+          coordinate: [1, 1, 1],
+          material: materialId(1),
+        }),
+      ],
+      {
+        transactionId: transactionId(
+          "transaction:session:revoke-gesture-dispose",
+        ),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(disposedUpdate.ok).toBe(false);
+    if (!disposedUpdate.ok) {
+      expect(disposedUpdate.error.code).toBe("GESTURE_SEALED");
+    }
   });
 });

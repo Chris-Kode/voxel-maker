@@ -561,3 +561,111 @@ describe("undo and redo", () => {
     expect(store.getVoxel(VOLUME, [3, 3, 3])).toBe(1);
   });
 });
+describe("CommandBus.revoke", () => {
+  function createHookedBus(): {
+    bus: CommandBus;
+    store: ReturnType<typeof createDocumentStore>["store"];
+    records: Array<{ revisionAfter: number; transactionId: string }>;
+  } {
+    const { store, writeCapability } = createDocumentStore({
+      document: createDemoDocument(),
+    });
+    const registry = new CommandRegistry();
+    registerVoxelCommands(registry);
+    const records: Array<{ revisionAfter: number; transactionId: string }> = [];
+    const bus = new CommandBus(store, registry, writeCapability, undefined, {
+      onCommitted(record) {
+        records.push({
+          revisionAfter: record.revisionAfter,
+          transactionId: record.transactionId,
+        });
+      },
+    });
+    return { bus, store, records };
+  }
+
+  it("rejects execute/undo/redo with BUS_REVOKED and never fires hooks", () => {
+    const { bus, store, records } = createHookedBus();
+    const commit = bus.execute(set("revoke:0001", [0, 0, 0]), {
+      ...options("revoke:0001", 0),
+    });
+    expect(commit.ok).toBe(true);
+    expect(records).toHaveLength(1);
+
+    bus.revoke();
+    const stale = bus.execute(set("revoke:0002", [1, 0, 0]), {
+      ...options("revoke:0002", 1),
+    });
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) {
+      expect(stale.error.code).toBe("BUS_REVOKED");
+    }
+    const staleUndo = bus.undo({
+      ...options("revoke:undo:0001", 1),
+    });
+    expect(staleUndo.ok).toBe(false);
+    if (!staleUndo.ok) {
+      expect(staleUndo.error.code).toBe("BUS_REVOKED");
+    }
+    const staleRedo = bus.redo({
+      ...options("revoke:redo:0001", 1),
+    });
+    expect(staleRedo.ok).toBe(false);
+    if (!staleRedo.ok) {
+      expect(staleRedo.error.code).toBe("BUS_REVOKED");
+    }
+    // The old store does not advance and the hook never fires again.
+    expect(store.revision).toBe(1);
+    expect(records).toHaveLength(1);
+  });
+
+  it("rejects beginGesture and seals any open gesture handle", () => {
+    const { bus, store } = createHookedBus();
+    const gesture = bus.beginGesture("gesture:revoke:0001");
+    expect(gesture.ok).toBe(true);
+    if (!gesture.ok) return;
+
+    bus.revoke();
+    expect(gesture.value.active).toBe(false);
+    const update = gesture.value.update([set("revoke:g:0001", [1, 0, 0])], {
+      ...options("revoke:g:0001", 0),
+    });
+    expect(update.ok).toBe(false);
+    if (!update.ok) {
+      expect(update.error.code).toBe("GESTURE_SEALED");
+    }
+    const cancel = gesture.value.cancel({
+      ...options("revoke:g:cancel:0001", 0),
+    });
+    expect(cancel.ok).toBe(false);
+    if (!cancel.ok) {
+      expect(cancel.error.code).toBe("GESTURE_SEALED");
+    }
+    const fresh = bus.beginGesture("gesture:revoke:0002");
+    expect(fresh.ok).toBe(false);
+    if (!fresh.ok) {
+      expect(fresh.error.code).toBe("BUS_REVOKED");
+    }
+    expect(store.revision).toBe(0);
+  });
+
+  it("is idempotent and returns the same stable conflict every time", () => {
+    const { bus } = createHookedBus();
+    bus.revoke();
+    bus.revoke();
+    const first = bus.execute(set("revoke:idem:0001", [0, 0, 0]), {
+      ...options("revoke:idem:0001", 0),
+    });
+    const second = bus.execute(set("revoke:idem:0002", [1, 0, 0]), {
+      ...options("revoke:idem:0002", 0),
+    });
+    expect(first.ok).toBe(false);
+    expect(second.ok).toBe(false);
+    if (!first.ok && !second.ok) {
+      expect(first.error.code).toBe("BUS_REVOKED");
+      expect(second.error.code).toBe("BUS_REVOKED");
+      expect(first.error.family).toBe("conflict");
+      expect(second.error.message).toBe(first.error.message);
+    }
+  });
+});

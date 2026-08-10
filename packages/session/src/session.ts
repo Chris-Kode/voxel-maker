@@ -158,7 +158,17 @@ class DocumentSessionImpl implements DocumentSession {
         { documentId: this.#current.documentId },
       );
     }
-    return this.#install(input, "document-opened", undefined);
+    const state = this.#buildState(input);
+    this.#current = state;
+    this.#emit({
+      kind: "document-opened",
+      documentId: state.documentId,
+      revision: state.revision,
+      store: state.store,
+      bus: state.bus,
+      source: state.source,
+    });
+    return state;
   }
 
   replace(input: SessionInstallInput): DocumentSessionState {
@@ -170,7 +180,25 @@ class DocumentSessionImpl implements DocumentSession {
         "No document is open; use open to install the first aggregate",
       );
     }
-    return this.#install(input, "document-replaced", previous.documentId);
+    // Build the replacement fully before revoking anything: a failed
+    // validation must leave the current document and its bus untouched
+    // (ticket #54). Only after the new aggregate is constructed is the
+    // previous bus revoked, so retained stale buses reject every call and
+    // their shared onCommitted hook can never leak into the new document's
+    // recovery journal.
+    const state = this.#buildState(input);
+    previous.bus.revoke();
+    this.#current = state;
+    this.#emit({
+      kind: "document-replaced",
+      previousDocumentId: previous.documentId,
+      documentId: state.documentId,
+      revision: state.revision,
+      store: state.store,
+      bus: state.bus,
+      source: state.source,
+    });
+    return state;
   }
 
   close(): void {
@@ -182,6 +210,9 @@ class DocumentSessionImpl implements DocumentSession {
         "No document is open to close",
       );
     }
+    // Revoke before dropping the binding: code retaining the bus must fail
+    // immediately, and no hook can forward a stale record anywhere.
+    current.bus.revoke();
     this.#current = undefined;
     this.#emit({
       kind: "document-closed",
@@ -196,15 +227,13 @@ class DocumentSessionImpl implements DocumentSession {
   }
 
   dispose(): void {
+    this.#current?.bus.revoke();
     this.#listeners.clear();
     this.#current = undefined;
   }
 
-  #install(
-    input: SessionInstallInput,
-    kind: "document-opened" | "document-replaced",
-    previousDocumentId: DocumentId | undefined,
-  ): DocumentSessionState {
+  /** Constructs a fully validated state without touching the current binding. */
+  #buildState(input: SessionInstallInput): DocumentSessionState {
     // createDocumentStore fully validates the aggregate and installs copied
     // chunk seeds under every hard limit, so an invalid load can never
     // produce a partial session (plan S5.3/S5.15).
@@ -214,13 +243,17 @@ class DocumentSessionImpl implements DocumentSession {
     });
     const registry = new CommandRegistry();
     for (const register of this.#registerCommands) register(registry);
-    const bus = new CommandBus(
-      store,
-      registry,
-      writeCapability,
-      undefined,
-      this.#busHooks,
-    );
+    // Defense in depth (ticket #54): every install receives the shared
+    // composition hooks wrapped in an epoch guard, so even a bus that
+    // somehow bypassed revocation can never forward a record while another
+    // (or no) document is current. The closure reads `state` only after
+    // it is initialized below, and hooks can only fire after installation.
+    const bus = new CommandBus(store, registry, writeCapability, undefined, {
+      onCommitted: (record) => {
+        if (this.#current !== state) return;
+        this.#busHooks.onCommitted?.(record);
+      },
+    });
     const source = input.source ?? "system";
     const state: DocumentSessionState = {
       documentId: store.getDocument().documentId,
@@ -230,27 +263,6 @@ class DocumentSessionImpl implements DocumentSession {
       registry,
       source,
     };
-    this.#current = state;
-    this.#emit(
-      kind === "document-opened"
-        ? {
-            kind: "document-opened",
-            documentId: state.documentId,
-            revision: state.revision,
-            store,
-            bus,
-            source,
-          }
-        : {
-            kind: "document-replaced",
-            previousDocumentId: previousDocumentId as DocumentId,
-            documentId: state.documentId,
-            revision: state.revision,
-            store,
-            bus,
-            source,
-          },
-    );
     return state;
   }
 
