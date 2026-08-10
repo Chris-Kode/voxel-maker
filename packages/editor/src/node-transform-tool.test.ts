@@ -10,12 +10,14 @@ import {
 } from "@voxel-maker/shared";
 import type { VoxelChunkSeed } from "@voxel-maker/voxel";
 import {
+  applyMatrix,
   eulerXYZToQuaternion,
   quaternionToEulerXYZ,
   type Transform,
   type Vec3,
 } from "@voxel-maker/math";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
+import { worldTransformMatrix } from "@voxel-maker/document";
 import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
@@ -52,9 +54,13 @@ const VOLUME = volumeId("volume:gizmo:0001");
 /**
  * Demo document: root with children A and B. A owns a 2x2x2 volume at
  * local [0,2)^3, so its world bounds center is (1,1,1) and the gizmo
- * radius is sqrt(3) (half the diagonal).
+ * radius is sqrt(3) (half the diagonal) when the root is at identity.
+ * A root transform lets tests exercise world deltas under scaled and
+ * rotated parents (issue #104).
  */
-function createDemoDocument(): VoxelDocument {
+function createDemoDocument(
+  rootTransform: Transform = identity,
+): VoxelDocument {
   return createDocument({
     documentId: "document:gizmo:0001" as never,
     metadata: { title: "transform tool test" },
@@ -65,7 +71,7 @@ function createDemoDocument(): VoxelDocument {
         name: "Root",
         parentId: null,
         children: [A, B],
-        transform: identity,
+        transform: rootTransform,
         components: [],
       },
       {
@@ -160,8 +166,8 @@ const localXPlaneRay = (dy: number): CameraRay => {
   };
 };
 
-const zRotateRay = (px: number, py: number): CameraRay => {
-  const direction = [px, py, -9] as const;
+const zRotateRay = (px: number, py: number, planeZ = 1): CameraRay => {
+  const direction = [px, py, planeZ - 10] as const;
   const length = Math.hypot(direction[0], direction[1], direction[2]);
   return {
     origin: [0, 0, 10],
@@ -194,9 +200,12 @@ interface Harness {
   notices: string[];
 }
 
-function createHarness(selection: readonly SelectionEntry[]): Harness {
+function createHarness(
+  selection: readonly SelectionEntry[],
+  rootTransform: Transform = identity,
+): Harness {
   const { store, writeCapability } = createDocumentStoreHandle({
-    document: createDemoDocument(),
+    document: createDemoDocument(rootTransform),
     volumes: seedVolume(),
   });
   const registry = new CommandRegistry();
@@ -389,6 +398,87 @@ describe("translate drag (plan S7.8)", () => {
     expect(tool.pointerUp().ok).toBe(true);
     expect(bus.historySnapshot().past).toHaveLength(1);
   });
+
+  it("moves by the world delta under a non-uniformly scaled parent (issue #104)", () => {
+    // Root scaled 2x on X: adding the world delta to the child's parent-local
+    // translation used to double the requested world move. The world X delta
+    // of 1 must produce a local X of 0.5 and exactly 1 world unit.
+    const { bus, store, tool, setRay } = createHarness(nodeSelection(A), {
+      ...identity,
+      scale: [2, 1, 1],
+    });
+    const worldBefore = worldTransformMatrix(store.getDocument(), A);
+    tool.setSpace("world");
+    tool.setSnapping(false);
+    setRay(xPlaneRay(0));
+    expect(tool.pointerDown(X, 0, 0).ok).toBe(true);
+    // dx = 1/3 -> plane x = 2, delta 1 along world X.
+    setRay(xPlaneRay(1 / 3));
+    expect(tool.pointerMove(10, 10).ok).toBe(true);
+    expectNear(nodeTransform(store, A).translation, [0.5, 0, 0]);
+    const worldAfter = worldTransformMatrix(store.getDocument(), A);
+    const before = applyMatrix(worldBefore, [0, 0, 0]);
+    expectNear(applyMatrix(worldAfter, [0, 0, 0]), [
+      before[0] + 1,
+      before[1],
+      before[2],
+    ]);
+    expect(tool.pointerUp().ok).toBe(true);
+    // Undo restores the exact baseline transform.
+    expect(bus.undo(txOptions(store.revision)).ok).toBe(true);
+    expect(nodeTransform(store, A).translation).toEqual([0, 0, 0]);
+  });
+
+  it("moves by the world delta under a rotated and non-uniformly scaled parent (issue #104)", () => {
+    // Root rotated 90 deg around Z with scale (2,1,1): world +X is local -Y
+    // under the parent, so a 1-unit world X move must write local (0,-1,0).
+    const { bus, store, tool, setRay } = createHarness(nodeSelection(A), {
+      ...identity,
+      rotation: eulerXYZToQuaternion([0, 0, Math.PI / 2]),
+      scale: [2, 1, 1],
+    });
+    tool.setSpace("world");
+    tool.setSnapping(false);
+    setRay(xPlaneRay(0));
+    expect(tool.pointerDown(X, 0, 0).ok).toBe(true);
+    // Gizmo center is (-1,2,1): the drag plane is y=2, so dx = 0.5 is a
+    // world X delta of 1.
+    setRay(xPlaneRay(0.5));
+    expect(tool.pointerMove(10, 10).ok).toBe(true);
+    expectNear(nodeTransform(store, A).translation, [0, -1, 0]);
+    expectNear(
+      applyMatrix(worldTransformMatrix(store.getDocument(), A), [0, 0, 0]),
+      [1, 0, 0],
+    );
+    expect(tool.pointerUp().ok).toBe(true);
+    // Undo restores the exact baseline transform.
+    expect(bus.undo(txOptions(store.revision)).ok).toBe(true);
+    expect(nodeTransform(store, A).translation).toEqual([0, 0, 0]);
+  });
+
+  it("moves by the world delta under a uniformly scaled parent (issue #104)", () => {
+    const { bus, store, tool, setRay } = createHarness(nodeSelection(A), {
+      ...identity,
+      scale: [2, 2, 2],
+    });
+    tool.setSpace("world");
+    tool.setSnapping(false);
+    setRay(xPlaneRay(0));
+    expect(tool.pointerDown(X, 0, 0).ok).toBe(true);
+    // Gizmo center is (2,2,2): the drag plane is y=2, so dx = 0.5 is a
+    // world X delta of 1.
+    setRay(xPlaneRay(0.5));
+    expect(tool.pointerMove(10, 10).ok).toBe(true);
+    expectNear(nodeTransform(store, A).translation, [0.5, 0, 0]);
+    expectNear(
+      applyMatrix(worldTransformMatrix(store.getDocument(), A), [0, 0, 0]),
+      [1, 0, 0],
+    );
+    expect(tool.pointerUp().ok).toBe(true);
+    // Undo restores the exact baseline transform.
+    expect(bus.undo(txOptions(store.revision)).ok).toBe(true);
+    expect(nodeTransform(store, A).translation).toEqual([0, 0, 0]);
+  });
 });
 
 describe("rotate drag (plan S7.8)", () => {
@@ -434,6 +524,100 @@ describe("rotate drag (plan S7.8)", () => {
     expect(tool.pointerMove(10, 10).ok).toBe(true);
     const euler = quaternionToEulerXYZ(nodeTransform(store, A).rotation);
     expect(euler[0]).toBeCloseTo(Math.PI / 6, 6);
+  });
+
+  it("rotates by the world amount under a uniformly scaled parent (issue #104)", () => {
+    // A uniform 2x parent used to leak its inverse scale into the child's
+    // local scale (0.5 instead of 1) while still moving the placement.
+    const { bus, store, tool, setRay } = createHarness(nodeSelection(A), {
+      ...identity,
+      scale: [2, 2, 2],
+    });
+    tool.setSpace("world");
+    tool.setSnapping(false);
+    setRay(zRotateRay(4, 2, 2));
+    expect(tool.pointerDown(RZ, 0, 0).ok).toBe(true);
+    // 90 deg counter-clockwise around +Z at the gizmo center (2,2,2).
+    setRay(zRotateRay(2, 4, 2));
+    expect(tool.pointerMove(10, 10).ok).toBe(true);
+    const transform = nodeTransform(store, A);
+    expectNear(transform.translation, [2, 0, 0]);
+    expectNear(transform.rotation, [0, 0, Math.SQRT1_2, Math.SQRT1_2]);
+    expectNear(transform.scale, [1, 1, 1]);
+    // The volume center orbits the gizmo center: it must stay at (2,2,2).
+    expectNear(
+      applyMatrix(worldTransformMatrix(store.getDocument(), A), [1, 1, 1]),
+      [2, 2, 2],
+    );
+    expect(tool.pointerUp().ok).toBe(true);
+    // Undo restores the exact baseline transform.
+    expect(bus.undo(txOptions(store.revision)).ok).toBe(true);
+    expect(nodeTransform(store, A).scale).toEqual([1, 1, 1]);
+  });
+
+  it("rotates by the world amount under a rotated and non-uniformly scaled parent (issue #104)", () => {
+    // Root rotated 90 deg around Z with scale (2,1,1): a 90-degree world
+    // rotation about the same world axis resolves to the same local shape
+    // as the unrotated-parent case, and the volume center orbits the gizmo
+    // center (-1,2,1).
+    const { bus, store, tool, setRay } = createHarness(nodeSelection(A), {
+      ...identity,
+      rotation: eulerXYZToQuaternion([0, 0, Math.PI / 2]),
+      scale: [2, 1, 1],
+    });
+    tool.setSpace("world");
+    tool.setSnapping(false);
+    setRay(zRotateRay(0, 2, 1));
+    expect(tool.pointerDown(RZ, 0, 0).ok).toBe(true);
+    // 90 deg counter-clockwise around +Z at the gizmo center (-1,2,1).
+    setRay(zRotateRay(-1, 3, 1));
+    expect(tool.pointerMove(10, 10).ok).toBe(true);
+    const transform = nodeTransform(store, A);
+    expectNear(transform.translation, [1.5, -1, 0]);
+    expectNear(transform.rotation, [0, 0, Math.SQRT1_2, Math.SQRT1_2]);
+    expectNear(transform.scale, [2, 0.5, 1]);
+    expectNear(
+      applyMatrix(worldTransformMatrix(store.getDocument(), A), [1, 1, 1]),
+      [-1, 2, 1],
+    );
+    expect(tool.pointerUp().ok).toBe(true);
+    // Undo restores the exact baseline transform.
+    expect(bus.undo(txOptions(store.revision)).ok).toBe(true);
+    expect(nodeTransform(store, A).translation).toEqual([0, 0, 0]);
+    expect(nodeTransform(store, A).rotation).toEqual([0, 0, 0, 1]);
+    expect(nodeTransform(store, A).scale).toEqual([1, 1, 1]);
+  });
+
+  it("rotates by the world amount under a non-uniformly scaled parent (issue #104)", () => {
+    // Under scale (2,1,1) a 90-degree world rotation must resolve to the
+    // local scale (2,0.5,1); the old code treated the local matrix as world
+    // and produced (1,0.5,1), visibly shrinking the child along X.
+    const { bus, store, tool, setRay } = createHarness(nodeSelection(A), {
+      ...identity,
+      scale: [2, 1, 1],
+    });
+    tool.setSpace("world");
+    tool.setSnapping(false);
+    setRay(zRotateRay(3, 1, 1));
+    expect(tool.pointerDown(RZ, 0, 0).ok).toBe(true);
+    // 90 deg counter-clockwise around +Z at the gizmo center (2,1,1).
+    setRay(zRotateRay(2, 2, 1));
+    expect(tool.pointerMove(10, 10).ok).toBe(true);
+    const transform = nodeTransform(store, A);
+    expectNear(transform.translation, [1.5, -1, 0]);
+    expectNear(transform.rotation, [0, 0, Math.SQRT1_2, Math.SQRT1_2]);
+    expectNear(transform.scale, [2, 0.5, 1]);
+    // The volume center must stay at the gizmo center (2,1,1).
+    expectNear(
+      applyMatrix(worldTransformMatrix(store.getDocument(), A), [1, 1, 1]),
+      [2, 1, 1],
+    );
+    expect(tool.pointerUp().ok).toBe(true);
+    // Undo restores the exact baseline transform.
+    expect(bus.undo(txOptions(store.revision)).ok).toBe(true);
+    expect(nodeTransform(store, A).translation).toEqual([0, 0, 0]);
+    expect(nodeTransform(store, A).rotation).toEqual([0, 0, 0, 1]);
+    expect(nodeTransform(store, A).scale).toEqual([1, 1, 1]);
   });
 });
 

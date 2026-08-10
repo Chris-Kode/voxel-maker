@@ -6,12 +6,11 @@ import {
 import {
   applyMatrix,
   canonicalTransform,
-  decomposeMatrix,
-  invertMatrix,
   multiplyMatrices,
   quaternionConjugate,
   quaternionFromAxisAngle,
   quaternionMultiply,
+  resolveLocalTransform,
   rotateVector,
   transformToMatrix,
   transformsEqual,
@@ -653,10 +652,36 @@ class TransformToolImpl implements NodeTransformTool {
           ? snapValue(delta, this.#translateSnap)
           : delta;
         if (amount === 0) return current;
-        const direction =
-          drag.space === "world"
-            ? drag.axis
-            : rotateVector(baseline.rotation, AXES[drag.handle.axis] as Vec3);
+        if (drag.space === "world") {
+          // W' = T(axis * amount) (parentWorld * baseline), then resolve
+          // the local transform under the baseline parent world (ADR-0001).
+          // Adding the world delta to the parent-local translation would
+          // let the parent scale multiply the requested amount (issue #104).
+          const parentWorld = drag.parentWorld.get(nodeId) ?? identityMatrix();
+          const world = multiplyMatrices(
+            parentWorld,
+            transformToMatrix(baseline),
+          );
+          const translatedWorld = multiplyMatrices(
+            translateMatrix(scale(drag.axis, amount)),
+            world,
+          );
+          const local = resolveLocalTransform(
+            translatedWorld,
+            parentWorld,
+            baseline.pivot,
+          );
+          return {
+            translation: local.translation,
+            pivot: baseline.pivot,
+            rotation: local.rotation,
+            scale: local.scale,
+          };
+        }
+        const direction = rotateVector(
+          baseline.rotation,
+          AXES[drag.handle.axis] as Vec3,
+        );
         return {
           translation: [
             baseline.translation[0] + direction[0] * amount,
@@ -678,18 +703,25 @@ class TransformToolImpl implements NodeTransformTool {
           : angle;
         if (Math.abs(amount) < 1e-12) return current;
         if (drag.space === "world") {
-          // W' = T(center) R T(-center) W(baseline), then resolve the
-          // local transform under the baseline parent world (ADR-0001).
-          const world = transformToMatrix(baseline);
+          // W' = T(center) R T(-center) (parentWorld * baseline), then
+          // resolve the local transform under the baseline parent world
+          // (ADR-0001). Rotating the bare local matrix as though it were
+          // world leaked the inverse parent into the resolved local scale
+          // and placement (issue #104).
           const parentWorld = drag.parentWorld.get(nodeId) ?? identityMatrix();
+          const world = multiplyMatrices(
+            parentWorld,
+            transformToMatrix(baseline),
+          );
           const rotatedWorld = rotateWorldMatrix(
             world,
             drag.targets.center,
             drag.axis,
             amount,
           );
-          const local = decomposeMatrix(
-            multiplyMatrices(invertMatrix(parentWorld), rotatedWorld),
+          const local = resolveLocalTransform(
+            rotatedWorld,
+            parentWorld,
             baseline.pivot,
           );
           return {
@@ -752,6 +784,11 @@ class TransformToolImpl implements NodeTransformTool {
 
 function identityMatrix(): Mat4 {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+}
+
+/** Pure world-space translation matrix (applies the delta to a world point). */
+function translateMatrix(delta: Vec3): Mat4 {
+  return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, delta[0], delta[1], delta[2], 1];
 }
 
 /** World matrix rotated around `center` by `angle` about `axis`. */
