@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { materialId, nodeId, volumeId } from "@voxel-maker/shared";
+import {
+  animationId,
+  keyframeId,
+  materialId,
+  nodeId,
+  trackId,
+  volumeId,
+} from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import {
   createDocumentStore,
@@ -551,6 +558,121 @@ describe("preflightVoxExport", () => {
     const { handle } = exportHarness(bare, []);
     const result = preflightVoxExport(bare, (id) => handle.store.getVolume(id));
     expect(result.ok).toBe(false);
+  });
+
+  it("blocks documents with Clips (ADR-0011 Clip loss)", () => {
+    const animated: VoxelDocument = {
+      ...exportDocument(),
+      animations: {
+        [animationId("animation:export:slide")]: {
+          animationId: animationId("animation:export:slide"),
+          name: "Slide",
+          duration: 2,
+          loop: "once",
+          tracks: [
+            {
+              trackId: trackId("track:export:slide"),
+              targetNodeId: nodeId("node:export:a"),
+              interpolation: "linear",
+              keyframes: [
+                {
+                  keyframeId: keyframeId("key:export:slide:0"),
+                  time: 0,
+                  property: { channel: "translation", value: [0, 0, 0] },
+                },
+                {
+                  keyframeId: keyframeId("key:export:slide:1"),
+                  time: 2,
+                  property: { channel: "translation", value: [1, 0, 0] },
+                },
+              ],
+            },
+          ],
+        },
+      } as VoxelDocument["animations"],
+    };
+    const { handle } = exportHarness(animated, [
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
+    ]);
+    const result = preflightVoxExport(animated, (id) =>
+      handle.store.getVolume(id),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const clipLoss = result.blocked.find(
+        (loss) => loss.code === "VOX_LOSS_CLIPS",
+      );
+      expect(clipLoss).toBeDefined();
+      expect(clipLoss?.severity).toBe("block");
+      expect(clipLoss?.context).toEqual({ clips: 1 });
+    }
+    // A Clip-free equivalent of the same document passes.
+    const plain = exportHarness(exportDocument(), [
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
+    ]);
+    const plainResult = preflightVoxExport(plain.document, (id) =>
+      plain.handle.store.getVolume(id),
+    );
+    expect(plainResult.ok).toBe(true);
+    if (plainResult.ok) {
+      expect(
+        plainResult.losses.some((loss) => loss.code === "VOX_LOSS_CLIPS"),
+      ).toBe(false);
+    }
+  });
+
+  it("reports joints, constraints, and node metadata as bake losses", () => {
+    const base = exportDocument();
+    const rigged: VoxelDocument = {
+      ...base,
+      nodes: {
+        ...base.nodes,
+        [nodeId("node:export:a")]: {
+          ...base.nodes[nodeId("node:export:a")],
+          metadata: { category: "prop" },
+          components: [
+            { kind: "voxel", schemaVersion: 1, volumeId: VOLUME_A },
+            { kind: "joint", schemaVersion: 1 },
+            {
+              kind: "constraint",
+              schemaVersion: 1,
+              constraints: [
+                {
+                  componentId: "component:export:limit:0001" as never,
+                  type: "rotation-limits",
+                  limits: {
+                    min: [0, 0, 0],
+                    max: [0, 0, 0],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const { handle } = exportHarness(rigged, [
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
+    ]);
+    const result = preflightVoxExport(rigged, (id) =>
+      handle.store.getVolume(id),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const codes = result.losses.map((loss) => loss.code);
+      expect(codes).toContain("VOX_LOSS_JOINTS");
+      expect(codes).toContain("VOX_LOSS_CONSTRAINTS");
+      expect(codes).toContain("VOX_LOSS_METADATA");
+    }
   });
 });
 

@@ -196,6 +196,8 @@ interface VoxelNode {
   readonly transformIsIdentity: boolean;
   readonly hasChildren: boolean;
   readonly name: string | undefined;
+  readonly metadata: VoxelDocument["nodes"][NodeId]["metadata"];
+  readonly components: VoxelDocument["nodes"][NodeId]["components"];
 }
 
 /**
@@ -255,6 +257,8 @@ function collectVoxelNodes(document: VoxelDocument): VoxelNode[] {
       transformIsIdentity: transformEqualsIdentity(node.transform),
       hasChildren: node.children.length > 0,
       name: node.name,
+      metadata: node.metadata,
+      components: node.components,
     });
   }
   return voxelNodes;
@@ -264,7 +268,10 @@ function collectVoxelNodes(document: VoxelDocument): VoxelNode[] {
  * Preflights a document for VOX export (plan S8.4, ADR-0011). Every
  * unsupported feature is either resolved through an explicit choice or
  * blocks the export with a structured loss report; nothing is dropped
- * silently.
+ * silently. Clips, joints, constraints, and node/document metadata are
+ * the ADR-0011 semantics audited here: Clips have no VOX representation
+ * and block the export, while rig annotations and metadata are reported
+ * as bake losses.
  */
 export function preflightVoxExport(
   document: VoxelDocument,
@@ -319,6 +326,58 @@ export function preflightVoxExport(
         severity: "bake",
         context: { nodeId: node.nodeId },
       });
+    }
+  }
+  // ADR-0011 semantics audit: Clips cannot be represented anywhere in the
+  // VOX subset (no animation chunks are written), so their presence blocks
+  // the export with a deterministic loss instead of dropping motion
+  // silently. Joints, constraints, and metadata have no VOX representation
+  // either; they are reported as bake losses (the voxel content itself is
+  // still exported, mirroring the node-name policy).
+  const animationCount = Object.keys(document.animations).length;
+  if (animationCount > 0) {
+    blocked.push({
+      code: VOX_EXPORT_LOSSES.clips,
+      message:
+        "Clips are not representable in the VOX subset; remove the animation before exporting",
+      severity: "block",
+      context: { clips: animationCount },
+    });
+  }
+  if (Object.keys(document.metadata).length > 0) {
+    losses.push({
+      code: VOX_EXPORT_LOSSES.metadata,
+      message: "Document metadata is not represented in the VOX subset",
+      severity: "bake",
+      context: { scope: "document" },
+    });
+  }
+  for (const node of voxelNodes) {
+    if (node.metadata !== undefined && Object.keys(node.metadata).length > 0) {
+      losses.push({
+        code: VOX_EXPORT_LOSSES.metadata,
+        message: "Node metadata is not represented in the VOX subset",
+        severity: "bake",
+        context: { nodeId: node.nodeId },
+      });
+    }
+    for (const component of node.components) {
+      if (component.kind === "joint") {
+        losses.push({
+          code: VOX_EXPORT_LOSSES.joints,
+          message: "Joint annotations are not represented in the VOX subset",
+          severity: "bake",
+          context: { nodeId: node.nodeId },
+        });
+      } else if (component.kind === "constraint") {
+        losses.push({
+          code: VOX_EXPORT_LOSSES.constraints,
+          message:
+            "Rotation-limit constraints are not represented in the VOX subset",
+          severity: "bake",
+          context: { nodeId: node.nodeId },
+        });
+      }
     }
   }
   if (voxelNodes.length === 0) {

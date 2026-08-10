@@ -146,6 +146,9 @@ export const VOX_EXPORT_LOSSES = {
   materialDistinction: "VOX_LOSS_MATERIAL_DISTINCTION",
   metadata: "VOX_LOSS_METADATA",
   emptyModel: "VOX_LOSS_EMPTY_MODEL",
+  clips: "VOX_LOSS_CLIPS",
+  joints: "VOX_LOSS_JOINTS",
+  constraints: "VOX_LOSS_CONSTRAINTS",
 } as const;
 
 /** One reported export loss; `blocked` losses abort the export. */
