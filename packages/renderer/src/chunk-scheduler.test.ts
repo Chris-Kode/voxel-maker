@@ -274,7 +274,7 @@ describe("chunk scheduler", () => {
     harness.scheduler.schedule(spec({ coordinate: [0, 0, 0], revision: 1 }));
     harness.scheduler.schedule(spec({ coordinate: [1, 0, 0], revision: 1 }));
     harness.scheduler.schedule(spec({ coordinate: [2, 0, 0], revision: 1 }));
-    // Overflow: the least important pending chunk (priority 5) drops.
+    // Overflow: the least important pending chunk (priority 5) defers.
     harness.scheduler.schedule(spec({ coordinate: [3, 0, 0], revision: 1 }));
     expect(harness.scheduler.diagnostics().pending).toBe(3);
     harness.scheduler.flush();
@@ -282,6 +282,130 @@ describe("chunk scheduler", () => {
       .map((result) => result.coordinate[0])
       .sort((a, b) => a - b);
     expect(xCoordinates).toEqual([0, 2, 3]);
+    // The deferred chunk is re-enqueued on the next flush, never dropped.
+    harness.scheduler.flush();
+    expect(harness.installed.map((result) => result.coordinate[0])).toEqual([
+      0, 2, 3, 1,
+    ]);
+    expect(harness.scheduler.diagnostics().pending).toBe(0);
+    harness.scheduler.dispose();
+  });
+
+  it("eventually installs every chunk when scheduling overflows maxPending", () => {
+    // Issue #59 regression: opening a sparse asset with more allocated
+    // chunks than `maxPending` evicted the least important pending chunk
+    // permanently — its mesh never installed until a later edit touched
+    // it. Every evicted chunk must be re-enqueued and installed, with the
+    // pending set staying bounded throughout.
+    const harness = createHarness({ maxPending: 256 });
+    for (let x = 0; x < 257; x += 1) {
+      harness.scheduler.schedule(spec({ coordinate: [x, 0, 0], revision: 1 }));
+    }
+    expect(harness.scheduler.diagnostics().pending).toBe(256);
+    let flushes = 0;
+    for (; flushes < 200; flushes += 1) {
+      harness.scheduler.flush();
+      const diagnostics = harness.scheduler.diagnostics();
+      expect(diagnostics.pending).toBeLessThanOrEqual(256);
+      if (
+        diagnostics.pending === 0 &&
+        diagnostics.inFlight === 0 &&
+        diagnostics.completedQueue === 0
+      ) {
+        break;
+      }
+    }
+    expect(flushes).toBeLessThan(200);
+    expect(harness.scheduler.diagnostics().pending).toBe(0);
+    expect(harness.installed).toHaveLength(257);
+    const coordinates = new Set(
+      harness.installed.map((result) => result.coordinate.join(",")),
+    );
+    expect(coordinates.size).toBe(257);
+    harness.scheduler.dispose();
+  });
+
+  it("supersedes a deferred chunk's revision until it meshes", () => {
+    const harness = createHarness({ maxPending: 2 });
+    harness.scheduler.schedule(spec({ coordinate: [0, 0, 0], revision: 1 }));
+    harness.scheduler.schedule(spec({ coordinate: [1, 0, 0], revision: 1 }));
+    // Overflow evicts the oldest pending chunk (equal priorities) into
+    // the deferred dirty source; a newer edit supersedes it there.
+    harness.scheduler.schedule(spec({ coordinate: [2, 0, 0], revision: 1 }));
+    harness.scheduler.schedule(spec({ coordinate: [0, 0, 0], revision: 2 }));
+    expect(harness.scheduler.diagnostics().deferred).toBe(1);
+    harness.scheduler.flush();
+    harness.scheduler.flush();
+    harness.scheduler.flush();
+    expect(harness.installed).toHaveLength(3);
+    const zero = harness.installed.find((result) => result.coordinate[0] === 0);
+    expect(zero?.revision).toBe(2);
+    expect(harness.scheduler.diagnostics().deferred).toBe(0);
+    harness.scheduler.dispose();
+  });
+
+  it("cancelChunk also removes a deferred chunk", () => {
+    const harness = createHarness({ maxPending: 2 });
+    harness.scheduler.schedule(spec({ coordinate: [0, 0, 0], revision: 1 }));
+    harness.scheduler.schedule(spec({ coordinate: [1, 0, 0], revision: 1 }));
+    harness.scheduler.schedule(spec({ coordinate: [2, 0, 0], revision: 1 }));
+    expect(harness.scheduler.diagnostics().deferred).toBe(1);
+    harness.scheduler.cancelChunk(spec({ coordinate: [0, 0, 0], revision: 1 }));
+    expect(harness.scheduler.diagnostics().deferred).toBe(0);
+    harness.scheduler.flush();
+    harness.scheduler.flush();
+    expect(harness.installed).toHaveLength(2);
+    expect(harness.installed.some((result) => result.coordinate[0] === 0)).toBe(
+      false,
+    );
+    harness.scheduler.dispose();
+  });
+
+  it("cancelVolume removes deferred chunks of one volume only", () => {
+    const harness = createHarness({ maxPending: 2 });
+    harness.scheduler.schedule(spec({ coordinate: [0, 0, 0], revision: 1 }));
+    harness.scheduler.schedule(spec({ coordinate: [1, 0, 0], revision: 1 }));
+    harness.scheduler.schedule(
+      spec({ coordinate: [2, 0, 0], revision: 1, volumeId: VOLUME_B }),
+    );
+    expect(harness.scheduler.diagnostics().deferred).toBe(1);
+    harness.scheduler.cancelVolume(VOLUME_A);
+    expect(harness.scheduler.diagnostics().deferred).toBe(0);
+    harness.scheduler.flush();
+    harness.scheduler.flush();
+    expect(harness.installed).toHaveLength(1);
+    expect(harness.installed[0]?.volumeId).toBe(VOLUME_B);
+    harness.scheduler.dispose();
+  });
+
+  it("cancelNamespaceAll removes deferred entries of one namespace only", () => {
+    const harness = createHarness({ maxPending: 2 });
+    harness.scheduler.schedule(
+      spec({
+        namespace: "preview:agent-1",
+        coordinate: [0, 0, 0],
+        revision: 1,
+      }),
+    );
+    harness.scheduler.schedule(
+      spec({
+        namespace: "preview:agent-1",
+        coordinate: [1, 0, 0],
+        revision: 1,
+      }),
+    );
+    harness.scheduler.schedule(spec({ coordinate: [2, 0, 0], revision: 1 }));
+    // Overflow evicted the oldest pending preview chunk into deferred.
+    expect(harness.scheduler.diagnostics().deferred).toBe(1);
+    // Cancelling the live namespace leaves the deferred preview entry.
+    harness.scheduler.cancelNamespaceAll("live");
+    expect(harness.scheduler.diagnostics().deferred).toBe(1);
+    harness.scheduler.cancelNamespaceAll("preview:agent-1");
+    expect(harness.scheduler.diagnostics().deferred).toBe(0);
+    harness.scheduler.flush();
+    harness.scheduler.flush();
+    expect(harness.installed).toHaveLength(0);
+    expect(harness.scheduler.diagnostics().pending).toBe(0);
     harness.scheduler.dispose();
   });
 

@@ -209,6 +209,7 @@ function flushAll(adapter: ReturnType<typeof createSceneAdapter>): void {
     const diagnostics = adapter.diagnostics();
     if (
       diagnostics.pendingChunks === 0 &&
+      diagnostics.deferredChunks === 0 &&
       diagnostics.inFlightMeshes === 0 &&
       diagnostics.uploadsThisFrame === 0
     ) {
@@ -591,6 +592,99 @@ describe("scene adapter", () => {
     adapter.flush();
     expect(adapter.chunkMeshCount).toBe(2);
     expect(adapter.diagnostics().uploadsThisFrame).toBe(1);
+    adapter.dispose();
+  });
+
+  it("eventually meshes every chunk when a project overflows maxPending", () => {
+    // Issue #59 regression: projecting a sparse volume with more
+    // allocated chunks than the scheduler's 256-slot pending set evicted
+    // the overflow chunk permanently, leaving it invisible until a later
+    // edit touched it. Eviction must defer, not drop: repeated flushes
+    // install every chunk while the pending set stays bounded.
+    const chunkCount = 257;
+    // 13x13x2 = 338 candidate chunk slots; take the first 257. A 3D slab
+    // keeps every axis well under the 2,048-voxel occupied-extent limit
+    // (ADR-0009) while still overflowing the 256-slot pending set.
+    const chunks: {
+      coordinate: [number, number, number];
+      values: Uint16Array;
+    }[] = [];
+    for (let z = 0; z < 2 && chunks.length < chunkCount; z += 1) {
+      for (let y = 0; y < 13 && chunks.length < chunkCount; y += 1) {
+        for (let x = 0; x < 13 && chunks.length < chunkCount; x += 1) {
+          chunks.push({ coordinate: [x, y, z], values: boxChunkSeed() });
+        }
+      }
+    }
+    expect(chunks).toHaveLength(chunkCount);
+    const document = createDocument({
+      documentId: documentId("document:scene:overflow"),
+      metadata: { title: "overflow fixture" },
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [CHILD],
+          transform: IDENTITY,
+          components: [],
+        },
+        {
+          nodeId: CHILD,
+          name: "Box",
+          parentId: ROOT,
+          children: [],
+          transform: IDENTITY,
+          components: [{ kind: "voxel", schemaVersion: 1, volumeId: VOLUME }],
+        },
+      ],
+      materials: [
+        {
+          materialId: materialId(1),
+          name: "box",
+          color: "#ff8800",
+          opacity: 1,
+          roughness: 0.5,
+          metallic: 0,
+          emissive: 0,
+        },
+      ],
+      volumes: [
+        {
+          volumeId: VOLUME,
+          bounds: { min: [0, 0, 0], max: [13 * 16, 13 * 16, 2 * 16] },
+        },
+      ],
+    });
+    const handle = createDocumentStore({
+      document,
+      volumes: new Map([[VOLUME, chunks]]),
+    });
+    const scene = new THREE.Scene();
+    const adapter = createSceneAdapter({ scene });
+    adapter.rebind(handle.store);
+    // Projection scheduled 257 chunks into a 256-slot pending set; the
+    // overflow sits in the deferred dirty source.
+    expect(adapter.diagnostics().pendingChunks).toBe(256);
+    expect(adapter.diagnostics().deferredChunks).toBe(1);
+    let flushes = 0;
+    for (; flushes < 300; flushes += 1) {
+      adapter.flush();
+      const diagnostics = adapter.diagnostics();
+      expect(diagnostics.pendingChunks).toBeLessThanOrEqual(256);
+      if (
+        diagnostics.pendingChunks === 0 &&
+        diagnostics.inFlightMeshes === 0 &&
+        diagnostics.uploadsThisFrame === 0
+      ) {
+        break;
+      }
+    }
+    expect(flushes).toBeLessThan(300);
+    expect(adapter.diagnostics().deferredChunks).toBe(0);
+    expect(adapter.diagnostics().pendingChunks).toBe(0);
+    expect(adapter.chunkMeshCount).toBe(chunkCount);
     adapter.dispose();
   });
 
