@@ -17,6 +17,10 @@ export interface DocumentLimits {
   readonly maxMetadataBytes: number;
   readonly maxMetadataStringBytes: number;
   readonly maxVoxelCoordinate: number;
+  /** ADR-0009: allocated non-empty Chunks, totaled per open Document. */
+  readonly maxChunks: number;
+  /** ADR-0009: occupied voxels, totaled per open Document. */
+  readonly maxOccupiedVoxels: number;
   readonly maxRevision: number;
 }
 
@@ -36,5 +40,7 @@ export const DEFAULT_DOCUMENT_LIMITS: DocumentLimits = Object.freeze({
   maxMetadataBytes: 1_048_576,
   maxMetadataStringBytes: 65_536,
   maxVoxelCoordinate: 1_048_575,
+  maxChunks: 262_144,
+  maxOccupiedVoxels: 1_000_000,
   maxRevision: Number.MAX_SAFE_INTEGER,
 });

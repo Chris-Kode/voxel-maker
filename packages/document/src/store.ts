@@ -320,6 +320,50 @@ class DocumentStoreImpl implements DocumentStore {
     }
   }
 
+  /**
+   * Aggregate ADR-0009 preflight over all volumes of the staged document
+   * (issue #92): occupied voxels and allocated non-empty chunks are
+   * document-wide totals, so per-volume enforcement alone lets work spread
+   * across volumes exceed the document limits. `staged.volumes` holds the
+   * copy-on-write clones of touched volumes; untouched volumes keep their
+   * committed state; removed volumes are absent from the staged document.
+   */
+  #validateDocumentVoxelTotals(staged: StagedState): void {
+    let occupied = 0;
+    let chunks = 0;
+    for (const volumeId of Object.keys(staged.document.volumes) as VolumeId[]) {
+      const volume =
+        staged.volumes.get(volumeId) ?? this.#repository.getVolume(volumeId);
+      if (volume === undefined) continue;
+      occupied += volume.occupiedCount();
+      chunks += volume.chunkCount();
+    }
+    if (occupied > this.#limits.maxOccupiedVoxels) {
+      throw new WorkspaceError({
+        family: "limit",
+        code: "TOO_MANY_OCCUPIED_VOXELS",
+        message: "Document exceeds its occupied-voxel limit",
+        context: {
+          requested: occupied,
+          limit: this.#limits.maxOccupiedVoxels,
+          resource: "occupiedVoxels",
+        },
+      });
+    }
+    if (chunks > this.#limits.maxChunks) {
+      throw new WorkspaceError({
+        family: "limit",
+        code: "TOO_MANY_CHUNKS",
+        message: "Document exceeds its non-empty chunk limit",
+        context: {
+          requested: chunks,
+          limit: this.#limits.maxChunks,
+          resource: "chunks",
+        },
+      });
+    }
+  }
+
   commit(
     staged: StagedState,
     event: DocumentCommitted,
@@ -412,6 +456,12 @@ class DocumentStoreImpl implements DocumentStore {
         });
       }
     }
+    // Issue #92: ADR-0009 chunk/occupied-voxel limits are totals per open
+    // Document, so the aggregate over every volume of the staged document
+    // (staged clones for touched volumes, committed state otherwise) is
+    // preflighted before install. Rejection leaves revision, history, and
+    // committed voxel state untouched.
+    this.#validateDocumentVoxelTotals(staged);
     this.#document = deepFreeze(staged.document);
     this.#repository.installVolumes(staged.volumes);
     this.#repository.removeVolumes(staged.removedVolumes);

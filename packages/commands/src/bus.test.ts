@@ -185,6 +185,7 @@ describe("CommandBus.execute", () => {
       maxCommandsPerTransaction: 1,
       maxCommandPayloadBytes: 1_048_576,
       maxTransactionEnvelopeBytes: 16_777_216,
+      maxVoxelsPerTransaction: 1_000_000,
       maxHistoryEntries: 512,
       maxHistoryInverseBytes: 268_435_456,
     });
@@ -539,6 +540,7 @@ describe("undo and redo", () => {
       maxCommandsPerTransaction: 1_024,
       maxCommandPayloadBytes: 1_048_576,
       maxTransactionEnvelopeBytes: 16_777_216,
+      maxVoxelsPerTransaction: 1_000_000,
       maxHistoryEntries: 2,
       maxHistoryInverseBytes: 268_435_456,
     });
@@ -568,6 +570,7 @@ describe("undo and redo", () => {
       maxCommandsPerTransaction: 1_024,
       maxCommandPayloadBytes: 200,
       maxTransactionEnvelopeBytes: 16_777_216,
+      maxVoxelsPerTransaction: 1_000_000,
       maxHistoryEntries: 512,
       maxHistoryInverseBytes: 268_435_456,
     });

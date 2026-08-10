@@ -19,6 +19,14 @@ export interface CommandLimits {
   readonly maxCommandsPerTransaction: number;
   readonly maxCommandPayloadBytes: number;
   readonly maxTransactionEnvelopeBytes: number;
+  /**
+   * ADR-0009: voxels changed by one Transaction (net after dedup and
+   * no-op filtering, mirroring the volume-level semantic bound). Enforced
+   * cumulatively across every command and volume of the transaction
+   * (issue #92), not per volume or per command. Per-operation inspection
+   * remains bounded by the volume's per-operation limit.
+   */
+  readonly maxVoxelsPerTransaction: number;
   readonly maxHistoryEntries: number;
   readonly maxHistoryInverseBytes: number;
 }
@@ -28,6 +36,7 @@ export const DEFAULT_COMMAND_LIMITS: CommandLimits = Object.freeze({
   maxCommandsPerTransaction: 1_024,
   maxCommandPayloadBytes: 1_048_576,
   maxTransactionEnvelopeBytes: 16_777_216,
+  maxVoxelsPerTransaction: 1_000_000,
   maxHistoryEntries: 512,
   maxHistoryInverseBytes: 268_435_456,
 });
