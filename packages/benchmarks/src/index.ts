@@ -49,6 +49,7 @@ export {
   emptyTrendHistory,
   flattenReport,
   isTrendRegression,
+  sameNamedHardware,
   type BenchmarkTrendHistory,
   type TrendComparison,
   type TrendRow,

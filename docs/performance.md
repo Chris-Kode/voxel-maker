@@ -86,6 +86,12 @@ version). A value regressing beyond tolerance (+20% relative and > 2 ms
 absolute) fails the run, so regressions are detected against retained
 evidence on the same hardware, not only against absolute thresholds.
 
+A run whose named hardware differs from the latest baseline (for
+example a different runner CPU generation on the same `ci-smoke` tier)
+never compares against it — the tier alone is not the hardware
+identity. It appends its row as a fresh baseline instead, so hardware
+rotation cannot masquerade as a regression.
+
 ## Running
 
 ```sh

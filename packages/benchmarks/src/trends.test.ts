@@ -6,6 +6,7 @@ import {
   emptyTrendHistory,
   flattenReport,
   isTrendRegression,
+  sameNamedHardware,
   type BenchmarkTrendHistory,
 } from "./trends.js";
 import type { BenchmarkReport, HardwareInfo } from "./report.js";
@@ -274,6 +275,40 @@ describe("compareWithTrends / appendTrendRow", () => {
       (c) => c.key === "compact.100000.command.p95",
     );
     expect(commit?.regressed).toBe(true);
+  });
+
+  it("starts a fresh baseline across different named hardware in the same tier", () => {
+    // GitHub-hosted ci-smoke runners rotate CPU generations (e.g.
+    // EPYC 7763 -> EPYC 9V74); tier alone must never trigger a
+    // regression comparison against unrelated hardware.
+    const history = appendTrendRow(emptyTrendHistory(), report);
+    const otherCpu: BenchmarkReport = {
+      ...report,
+      date: "2025-03-01T00:00:00.000Z",
+      hardware: { ...hardware, cpuModel: "AMD EPYC 9V74 80-Core Processor" },
+      scenes: {
+        ...report.scenes,
+        compact: {
+          ...report.scenes.compact,
+          "100000": {
+            ...(report.scenes.compact["100000"] as SceneMeasurements),
+            command: {
+              ...(report.scenes.compact["100000"] as SceneMeasurements).command,
+              p95: 40,
+            },
+          },
+        },
+      },
+    };
+    expect(sameNamedHardware(report.hardware, otherCpu.hardware)).toBe(false);
+    expect(compareWithTrends(otherCpu, history)).toEqual([]);
+  });
+
+  it("compares when every named-hardware field matches", () => {
+    expect(sameNamedHardware(report.hardware, { ...hardware })).toBe(true);
+    expect(sameNamedHardware(report.hardware, { ...hardware, cores: 8 })).toBe(
+      false,
+    );
   });
 
   it("compares only against the latest row", () => {

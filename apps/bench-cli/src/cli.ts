@@ -6,6 +6,7 @@ import {
   appendTrendRow,
   compareWithTrends,
   emptyTrendHistory,
+  sameNamedHardware,
   runBenchmarks,
   BENCHMARK_SCENE_KINDS,
   type BenchmarkSceneKind,
@@ -223,6 +224,19 @@ async function main(): Promise<number> {
   if (options.trends !== undefined) {
     const trendsPath = resolve(options.trends);
     const history = await loadTrends(trendsPath);
+    const latest = history.rows[history.rows.length - 1];
+    if (
+      latest !== undefined &&
+      !sameNamedHardware(report.hardware, latest.hardware)
+    ) {
+      // A different machine class never regresses against unrelated
+      // hardware; the appended row below becomes the fresh baseline.
+      console.log("");
+      console.log(`trend baseline: ${latest.date}`);
+      console.log(
+        `[skip] named hardware changed since baseline (${latest.hardware.cpuModel} -> ${report.hardware.cpuModel}); starting a fresh baseline`,
+      );
+    }
     const comparisons = compareWithTrends(report, history);
     const regressions = comparisons.filter(
       (comparison) => comparison.regressed,

@@ -96,6 +96,24 @@ export function isTrendRegression(
   return delta / previous > tolerance.relative;
 }
 
+/**
+ * True when two runs share the same named-hardware identity (CPU model,
+ * platform, arch, cores, memory, Node version — the fields a trend row
+ * records). The tier alone is NOT the identity: on a shared CI pool the
+ * same tier (e.g. ci-smoke) is served by different CPU generations, and
+ * comparing across them would report hardware noise as regressions.
+ */
+export function sameNamedHardware(a: HardwareInfo, b: HardwareInfo): boolean {
+  return (
+    a.cpuModel === b.cpuModel &&
+    a.platform === b.platform &&
+    a.arch === b.arch &&
+    a.cores === b.cores &&
+    a.totalMemoryGiB === b.totalMemoryGiB &&
+    a.nodeVersion === b.nodeVersion
+  );
+}
+
 /** Compares a report against the latest row of a trend history. */
 export function compareWithTrends(
   report: BenchmarkReport,
@@ -104,10 +122,11 @@ export function compareWithTrends(
 ): readonly TrendComparison[] {
   const latest = history.rows[history.rows.length - 1];
   if (latest === undefined) return [];
-  // Retained trends are only comparable on the same named hardware tier;
-  // a different machine class gets a fresh baseline, never a false
-  // regression against unrelated hardware.
-  if (latest.hardware.tier !== report.hardware.tier) return [];
+  // Retained trends are only comparable on the same named hardware; a
+  // different machine class (CPU model, platform, cores, ...) gets a
+  // fresh baseline, never a false regression against unrelated
+  // hardware. The tier is not enough: ci-smoke covers every runner CPU.
+  if (!sameNamedHardware(report.hardware, latest.hardware)) return [];
   const current = flattenReport(report);
   const comparisons: TrendComparison[] = [];
   for (const key of Object.keys(latest.values)) {
