@@ -4,7 +4,10 @@ import {
   type VoxelDocument,
 } from "@voxel-maker/model";
 import { WorkspaceError, type VolumeId } from "@voxel-maker/shared";
-import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
+import {
+  CHUNK_VOXEL_COUNT,
+  type VoxelVolumeReadView,
+} from "@voxel-maker/voxel";
 
 const encoder = new TextEncoder();
 
@@ -66,15 +69,18 @@ export function canonicalAssetSemanticBytes(
       }
       const chunk = volume.getChunk(coordinate);
       if (chunk === undefined) continue;
-      if (chunk.length > 0x7fff_ffff) {
+      // The frozen v1 frame carries exactly 4096 unsigned-16 values
+      // (8,192 bytes); a chunk of any other size cannot be hashed
+      // compatibly and is rejected before allocation (issue #85).
+      if (chunk.byteLength !== CHUNK_VOXEL_COUNT * 2) {
         throw new WorkspaceError({
-          family: "limit",
+          family: "validation",
           code: "INVALID_CHUNK_LENGTH",
-          message: "Chunk payload cannot be framed as unsigned 32-bit",
+          message: `Chunk payload must hold exactly ${String(CHUNK_VOXEL_COUNT)} unsigned 16-bit voxels`,
           context: { volumeId, coordinate },
         });
       }
-      const payload = new Uint8Array(chunk.byteLength * 2);
+      const payload = new Uint8Array(chunk.byteLength);
       const view = new DataView(payload.buffer);
       for (let index = 0; index < chunk.length; index += 1) {
         view.setUint16(index * 2, chunk[index] as number, true);

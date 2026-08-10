@@ -51,44 +51,44 @@ const PINNED_HASHES: Readonly<
   Record<RigScenarioId, { readonly input: string; readonly output: string }>
 > = {
   "chest-lid-open": {
-    input: "db8970ad34b10d4b5a02aad0feefefcd41770dfb639d0f282a0c1f4063a382c2",
-    output: "9c588f40d7687792c786e4eb340887fcee5d243fa447903410458790d0a31974",
+    input: "7c4f45313bbdd993a39a88554b46a30125ae2840b9b8f291e051f5abe92b6571",
+    output: "902a94834e549f6e8093b1018eb1dcceb7de109a56c4ae628241c0a8d57e17e7",
   },
   "wheel-spin": {
-    input: "8483465f3e6352d36e88c20e8fd5f7c4710c000037482c873b522cbbbfe3dfc2",
-    output: "fb35a4192b7ac276163fd7a7aa62980f047fc5735980ed5abb3c6ae10b482d49",
+    input: "51653543ae9edbc78cad98718c5bee6519428ad056036425590826d1556a54ec",
+    output: "3dfdb653d2f6b13ddd96901d5020dafebfa8715b869cbd6c5709b7ee442ee267",
   },
   "wings-flap": {
-    input: "c2aaada854108e64340e129425253ec2cb44900d2cec037d7e3ea91e633a2be1",
-    output: "33fe71b6bfc350c3b8d69f815d2208cc28fe71ed2faee4e9999fe47029973dec",
+    input: "9d2e16bfe8942ba54046ce7ba91d524f53370121a47c0b0de03776117d5940df",
+    output: "d595167d80e3c4989259a39ab4c7034780785d45c1143112de0a86e4f4ae85ab",
   },
   "arm-reach": {
-    input: "09d52f19650fafb06f4313b9acfd91b7396bb0044f8c6157519a58512387ec84",
-    output: "6a096ce9b7f6abd212eeb701c02f21e17624fd3bee62a55206e2da062956e777",
+    input: "accf70249b2331ac801bd9d21e3a10296712a9c42ea2f5ec0be53346a52c92bd",
+    output: "e8b6306dfc5b66127b1ca18aac8ef3a40cc8a10afce20ad8f0ed72457d5c6974",
   },
   "abstract-rig": {
-    input: "d6846f9a1130694f24a140701d5acf633ab55253601410511d15c83f8507458b",
-    output: "df2aaf8eead705bdc651945ee4eea8667f8e45d22bc3d00b59673a8ccf2fea8e",
+    input: "03997bc3fe8995c9740cada6b57903427b5381e696bab979a3842f9759e72847",
+    output: "865c43ee7bb16f3dd980025d6c7470936ef226b0660a6712c03e0e7e58074f29",
   },
   "chest-farther": {
-    input: "6e855203914068daf3355422470bbbc4b83e1e39265e4fea400ac2f51a55aad4",
-    output: "cc784ecd29d3ef43423e7faa7ed4c8ac4138fa7d98679acb413edc9707e4280c",
+    input: "a00c53391d94dcdec7770021867f7185dfde9e724fdaa3ca691dbef0b4adf323",
+    output: "de2d416bd9eabfa9df5ab355be017309404f0537d3b1b08fec4053a791ff478d",
   },
   "wheel-slower": {
-    input: "c1c6d6822dbb8d69f2d4426933710d1641675c4b9a930a06ac866af4041254ab",
-    output: "cd913036d776e5e8dace2ec12856ce23f4774409f4aac480e3505c699fb063e1",
+    input: "c8752e3b4e8a2344d2c45a8c7a2c087aff55b509a9b2ed9239e72a64e2bd72ac",
+    output: "db6e5de15ea280fa221b61aaf244fc2101eb5114525db9981eb2fecec559d063",
   },
   "wings-one": {
-    input: "55ae9cdca95e5749fc5c9567dbc73b580c57a94652cd8bf329f8989521bfb7d8",
-    output: "d818278f232361aa5b5ea38b47fe418b0b44aec2094325232414d17aae424bf4",
+    input: "39a4d73597223d867a24e1928e27dd2ef421b834a8d8a2fb9fb76460bfadb3e5",
+    output: "517ff1d4f84dbdee8459e48352003b82884bd194220574f0eedd32769411cc69",
   },
   "arm-elbow-limit": {
-    input: "d3ef296ee2172feb08cfec0e17fac144b63449c4414b88be95a7806ef31dac7d",
-    output: "9466f2834c9293f66921a77fb4149fd2368cd8acc52fcc5004b6e0443bda5dc2",
+    input: "06ccd07ded654371fdaca13fd470591202d4b79375a526f372e323d3cb2d4b2e",
+    output: "6244ac6140a128d75345e7e20de4de23c9786de660d8a76255704cb3bebcd5c2",
   },
   "wheel-faster": {
-    input: "c1c6d6822dbb8d69f2d4426933710d1641675c4b9a930a06ac866af4041254ab",
-    output: "1a1b99b4c688a89f12dcebdbead49833ce340f8d23724a3ad324727dc9531643",
+    input: "c8752e3b4e8a2344d2c45a8c7a2c087aff55b509a9b2ed9239e72a64e2bd72ac",
+    output: "04160e45dc01c5255b6872e00f19fc690f446ec1d83f673d706dfa2d888f56c7",
   },
 };
 
