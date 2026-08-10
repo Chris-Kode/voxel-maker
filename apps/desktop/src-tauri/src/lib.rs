@@ -309,7 +309,6 @@ fn recent_projects_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, St
         .map_err(|error| error.to_string())
 }
 
-
 /// OS-keychain credential commands (plan S12.4, ADR-0010, ticket #34): the
 /// webview never sees a stored secret except through its own
 /// `credential_get` call; keys are scoped by service + account (the agent
@@ -335,7 +334,9 @@ fn credential_save(service: String, account: String, value: String) -> Result<()
         return Err("credential value is empty or exceeds the size limit".to_string());
     }
     let entry = keyring::Entry::new(&service, &account).map_err(|error| error.to_string())?;
-    entry.set_password(&value).map_err(|error| error.to_string())
+    entry
+        .set_password(&value)
+        .map_err(|error| error.to_string())
 }
 
 /// Reads one credential from the OS keychain; `None` when absent.

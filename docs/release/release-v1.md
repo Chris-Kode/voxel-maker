@@ -31,10 +31,12 @@ scripts and templates (Windows, Linux — see
 ## Release artifacts and checksums
 
 `pnpm release:package` builds the desktop bundle for the current
-platform, collects every installer, adds the headless CLIs, writes
-`SHASUMS256.txt` (SHA-256 over the exact artifact bytes) and
-`manifest.json` (version, platform, arch, git commit, built-at,
-artifact list, bundle status) into `release/artifacts/<version>/`.
+platform, collects every installer, adds the headless CLIs, generates
+the Cargo SBOM (`sbom.cdx.json`, CycloneDX JSON over the Tauri crate's
+locked dependency tree — issue #74), writes `SHASUMS256.txt` (SHA-256
+over the exact artifact bytes) and `manifest.json` (version, platform,
+arch, git commit, built-at, artifact list, bundle status, SBOM status)
+into `release/artifacts/<version>/`.
 
 On a tag push, the release workflow publishes the three platform sets
 into one GitHub release. GitHub release assets share one flat name

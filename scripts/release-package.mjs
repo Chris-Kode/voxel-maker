@@ -22,8 +22,14 @@
  * Output layout:
  *   release/artifacts/<version>/
  *     <installers and bundles>
+ *     sbom.cdx.json          (Cargo CycloneDX SBOM, issue #74)
  *     SHASUMS256.txt
  *     manifest.json
+ *
+ * The Cargo SBOM is mandatory release evidence (issue #74): a missing
+ * or failing SBOM generation is fatal unless the explicit local-only
+ * flag is set, and the failure is then recorded in the manifest under
+ * `sbom.reason` (the same exception pattern as the native bundle).
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -39,6 +45,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeChecksums } from "./release-checksums.mjs";
+import { generateCargoSbom, SBOM_FILE } from "./check-cargo-sbom.mjs";
 
 /** Installer/bundle file name extensions that are publishable artifacts. */
 const INSTALLER_KINDS = [
@@ -434,6 +441,44 @@ export async function packageRelease({
   }
   await rm(bundleDirectory, { recursive: true, force: true });
 
+  // Cargo SBOM (issue #74, plan §11.2 "SBOM/license generation"): the
+  // CycloneDX SBOM over the Tauri crate's locked dependency tree is
+  // mandatory release evidence and ships inside the artifact set,
+  // checksummed and recorded in the manifest. A missing or failing SBOM
+  // generation is fatal unless the explicit local-only flag is set
+  // (the same exception pattern as the native bundle): a release
+  // without dependency provenance must never be published.
+  let sbom = { ok: false, reason: null };
+  try {
+    const sbomPath = generateCargoSbom({
+      crateDir: join(desktopDirectory, "src-tauri"),
+      outDir: outDirectory,
+      spawn,
+      log,
+    });
+    const sbomInfo = await stat(sbomPath);
+    artifacts.push({ name: SBOM_FILE, bytes: sbomInfo.size });
+    sbom = {
+      ok: true,
+      file: SBOM_FILE,
+      format: "CycloneDX JSON",
+      tool: "cargo-cyclonedx",
+    };
+    log.log(
+      `[release-package] SBOM artifact ${SBOM_FILE} (${sbomInfo.size} bytes)`,
+    );
+  } catch (error) {
+    sbom.reason = error.message;
+    if (!allowNoBundle) {
+      throw new Error(
+        `Cargo SBOM generation failed and is fatal: ${error.message}`,
+      );
+    }
+    log.error(
+      `[release-package] continuing without a Cargo SBOM (local-only exception): ${error.message}`,
+    );
+  }
+
   const manifest = {
     release: version,
     platform,
@@ -447,6 +492,12 @@ export async function packageRelease({
       artifacts: bundle.artifacts,
       expectedInstallers,
       installerKinds,
+    },
+    sbom: {
+      ok: sbom.ok,
+      ...(sbom.ok
+        ? { file: sbom.file, format: sbom.format, tool: sbom.tool }
+        : { reason: sbom.reason }),
     },
     artifacts: artifacts.sort((a, b) => a.name.localeCompare(b.name)),
     checksums: {

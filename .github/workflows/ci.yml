@@ -20,10 +20,30 @@ jobs:
         with:
           node-version: 20.19.0
           cache: pnpm
+      - name: Install Rust toolchain
+        # Issue #74: the mandatory Rust gates (fmt/clippy/tests) are part
+        # of `pnpm check`, so PR CI installs the toolchain up front.
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux bundling dependencies
+        # The Tauri crate links WebKitGTK on Linux; the same packages the
+        # release workflow installs are needed to compile it in PR CI.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+      - name: Install Cargo security tooling
+        # Issue #74: cargo-audit (vulnerabilities), cargo-deny (license
+        # allowlist), cargo-cyclonedx (SBOM) back the Cargo-side gates.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-cyclonedx
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm check:security
       - run: pnpm check:audit
+      - run: pnpm check:rust:audit
+      - run: pnpm check:rust:licenses
+      - run: pnpm check:rust:sbom
       # Ticket #45: CI smoke thresholds detect gross scale/performance
       # regressions on every PR (broad thresholds; the named reference
       # and low tiers are qualified on their own hardware).

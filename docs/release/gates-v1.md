@@ -15,11 +15,15 @@ and passed on the recorded commit; each row names the command or suite.
 | Formatting / lint | `pnpm format`, `pnpm lint` | executed locally, part of `pnpm check` |
 | Dependency boundary / cycle | `pnpm check:boundaries` (`check-boundaries.mjs` + depcruise) | executed locally, part of `pnpm check` |
 | Strict typecheck all packages | `pnpm typecheck` | executed locally, part of `pnpm check` |
+| Rust fmt / clippy / tests (issue #74) | `pnpm check:rust` (`cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked` in `apps/desktop/src-tauri`) | executed locally, part of `pnpm check`; enforced per PR by CI (toolchain + Linux bundling deps installed in `.github/workflows/ci.yml`) |
 | Unit/property/integration tests | `pnpm test` (node --test scripts + turbo vitest) | executed locally, part of `pnpm check` |
 | Registered-command conformance | command-conformance suite (packages/commands) | executed locally, part of `pnpm test` |
 | Package + desktop web build | `pnpm build` | executed locally, part of `pnpm check` |
 | Schema/format golden diff approval | golden fixtures in model/formats/animation/interchange tests | executed locally, part of `pnpm test`; unchanged by this release |
 | Dependency license/security scan | `pnpm check:security` (licenses, native capabilities, secrets), `pnpm check:audit` | executed locally (exit 0) on the release commit |
+| Cargo vulnerability audit (issue #74) | `pnpm check:rust:audit` (`cargo audit --json`, high/critical fail closed) | added after the release commit; enforced per PR by CI and in the release workflow |
+| Cargo license allowlist (issue #74) | `pnpm check:rust:licenses` (`cargo deny check licenses` against `apps/desktop/src-tauri/deny.toml`) | added after the release commit; enforced per PR by CI and in the release workflow |
+| Cargo SBOM generation (issue #74) | `pnpm check:rust:sbom` (`cargo cyclonedx`, CycloneDX JSON) | added after the release commit; enforced per PR by CI; the SBOM ships inside the release artifact set |
 | Benchmark smoke with regression threshold | `pnpm bench:smoke` (CI) | executed locally: 227 measured values, zero gate failures |
 | No checked-in secrets | `check-secrets.mjs` | executed locally, part of `check:security` |
 | Genericity gate | `pnpm check:genericity` (new in #46) | executed locally, part of `pnpm check` |
@@ -30,7 +34,11 @@ All local evidence was produced on macOS (Apple silicon, Node 22) in the
 release worktree at commit `8c209ca` (plus the follow-up review fixes),
 with `pnpm check`, `pnpm check:security`, `pnpm check:audit`, and
 `pnpm bench:smoke` all exiting 0, and `pnpm release:package` producing
-the artifact set with verified checksums.
+the artifact set with verified checksums. The issue #74 gates
+(`pnpm check:rust`, `pnpm check:rust:audit`, `pnpm check:rust:licenses`,
+`pnpm check:rust:sbom`) were added after that release and are enforced
+per PR by CI and in the release workflow; the release artifact set now
+also ships the Cargo SBOM (`sbom.cdx.json`).
 
 ## Scheduled / nightly gates (plan §10.2)
 

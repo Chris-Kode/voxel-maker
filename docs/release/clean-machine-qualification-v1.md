@@ -31,6 +31,7 @@ release workflow.
 | Step | macOS (this machine) | Windows | Linux |
 |---|---|---|---|
 | Headless build + full check suite (`pnpm check`, `check:security`, `check:audit`) | ✅ executed (CI + local) | ✅ CI (ubuntu runner = Linux) | ✅ CI |
+| Rust gates (`pnpm check:rust`, `check:rust:audit`, `check:rust:licenses`, `check:rust:sbom`) | ✅ executed (local + CI) | ✅ CI | ✅ CI |
 | Release smoke (create/edit/rig/animate/save/recover/import/export/AI-offline) | ✅ executed | ✅ CI | ✅ CI |
 | Native `tauri build` (installer produced) | ✅ executed (see below) | ✅ CI scheduled/tag workflow | ✅ CI scheduled/tag workflow |
 | Checksums + manifest for the artifact set | ✅ executed | ✅ CI | ✅ CI |
@@ -46,9 +47,14 @@ release workflow.
   entrypoints, demo traces, genericity gate, release smoke) — green.
 - `pnpm check:security` — green (native capabilities, licenses, secrets).
 - `pnpm check:audit` — green (dependency audit).
+- `pnpm check:rust` — green (cargo fmt/clippy/tests, issue #74).
+- `pnpm check:rust:audit` — green (cargo audit, issue #74).
+- `pnpm check:rust:licenses` — green (cargo deny license allowlist, issue #74).
+- `pnpm check:rust:sbom` — green (CycloneDX SBOM generation, issue #74).
 - `pnpm bench:smoke` — green (scale/performance regression thresholds).
 - `pnpm release:package` — produces the macOS artifact set (`.app`,
-  `.dmg`) plus headless CLIs, `SHASUMS256.txt`, `manifest.json`.
+  `.dmg`) plus headless CLIs, the Cargo SBOM (`sbom.cdx.json`, issue
+  #74), `SHASUMS256.txt`, `manifest.json`.
 - `pnpm release:verify-checksums` — green.
 
 ## Mechanical steps for Windows and Linux (approved exception)

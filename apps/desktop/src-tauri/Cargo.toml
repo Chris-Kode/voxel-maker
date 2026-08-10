@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "AI-native generic voxel editor - desktop shell"
 authors = ["Voxel Maker contributors"]
 edition = "2021"
+# Private application crate: never published to crates.io (the license
+# gate in deny.toml relies on this to exempt the crate itself).
+publish = false
 
 # The library is linked by the mobile entrypoint when present; the desktop
 # binary uses the cdylib/rlib pair.
