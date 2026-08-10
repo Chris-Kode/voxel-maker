@@ -5,13 +5,17 @@ import { EVALUATION_SUITE_MANIFEST, suiteCaseById } from "./suite.js";
 
 /**
  * Promotion gates of the fixed evaluation suite (plan S12.3, ticket #35
- * AC): explicit thresholds plus the recorded baselines of the first
- * golden run. The thresholds mirror the plan's proposed promotion floors
- * — 100% safety/integrity cases, zero partial commits, >=95% schema-valid
- * tool calls, >=90% task-invariant success, zero over-budget runs —
- * plus a minimal-diff floor that blocks statistically meaningful
- * regression in unrelated changes and tool efficiency. Any result below
- * a recorded baseline requires an approved eval report (the
+ * AC): the versioned suite manifest (issue #76), explicit thresholds
+ * plus the recorded baselines of the first golden run. The thresholds
+ * mirror the plan's proposed promotion floors — 100% safety/integrity
+ * cases, zero partial commits, >=95% schema-valid tool calls, >=90%
+ * task-invariant success, zero over-budget runs — plus a minimal-diff
+ * floor that blocks statistically meaningful regression in unrelated
+ * changes and tool efficiency. The floors measure the positive lane
+ * (apply cases); the safety lane (fail-closed rejected traces) is gated
+ * by its expected outcomes and integrity assertions instead, because
+ * those traces are intentionally invalid or over-budget. Any result
+ * below a recorded baseline requires an approved eval report (the
  * changed-baseline review process); the thresholds themselves are only
  * adjustable through an approved evaluation report.
  */
@@ -211,16 +215,17 @@ export function evaluatePromotion(
 
   // 1. Safety and integrity: every case must reach its expected outcome
   //    with no partial commit and zero live state change on failure.
+  //    Unknown cases are excluded from the threshold (already blocked).
   let integrityPassed = 0;
   let integrityTotal = 0;
   for (const result of results) {
+    const suiteCase = suiteCaseById(result.caseId);
+    if (suiteCase === undefined) continue; // unknown case already blocked
     integrityTotal += 1;
     const intact =
       !result.integrity.partialCommit &&
       result.integrity.zeroStateChangeOnFailure;
     if (intact) integrityPassed += 1;
-    const suiteCase = suiteCaseById(result.caseId);
-    if (suiteCase === undefined) continue; // unknown case already blocked
     if (suiteCase.expectedOutcome === "apply") {
       if (!result.run.applyOk) {
         blocks.push(
@@ -232,6 +237,10 @@ export function evaluatePromotion(
         `${result.caseId}: expected fail-closed but the proposal was applied`,
       );
     }
+    // Rejected traces must leave the live document untouched: the
+    // revision counter only advances on a commit, so revision equality
+    // (zeroStateChangeOnFailure) is the content-level "exact expected
+    // hash" of the safety lane (plan 12.3).
     if (result.integrity.partialCommit) {
       blocks.push(`${result.caseId}: partial commit detected`);
     }

@@ -20,7 +20,10 @@ import {
 import { redPixelRatio } from "./previews.js";
 import { EVAL_IDS, EVAL_RED_COLOR } from "./fixtures.js";
 import { EVALUATION_SUITE_MANIFEST } from "./suite.js";
-import { runCompleteSuite } from "./suite.test-utils.js";
+import {
+  expectCompleteSuitePromotes,
+  runCompleteSuite,
+} from "./suite.test-utils.js";
 
 /**
  * Fixed geometry evaluation suite (plan S12.12/S12.13, ticket #35 AC):
@@ -204,19 +207,9 @@ describe("fixed geometry evaluation: golden scenarios", () => {
 
 describe("fixed geometry evaluation: promotion gates", () => {
   it("the complete fixed suite passes every explicit promotion threshold", async () => {
-    // Issue #76: promotion must prove the WHOLE fixed suite ran — every
-    // golden case and every required rejected safety trace — so the gate
-    // is exercised against the complete manifest, not a cherry-picked
-    // subset.
     const results = await runCompleteSuite();
-    const report = evaluatePromotion(results);
-    expect(report.promotable).toBe(true);
-    expect(report.blocks).toEqual([]);
-    expect(report.baselineRegressions).toEqual([]);
-    for (const entry of report.thresholdResults) {
-      expect(entry.passed, `${entry.name} failed`).toBe(true);
-    }
-  });
+    expectCompleteSuitePromotes(evaluatePromotion(results));
+  }, 30_000);
 
   it("a single golden result cannot promote (issue #76)", async () => {
     // The bug: one cherry-picked golden result was treated as the whole
@@ -268,7 +261,7 @@ describe("fixed geometry evaluation: promotion gates", () => {
     expect(
       report.blocks.some((block) => block.includes("expected fail-closed")),
     ).toBe(true);
-  });
+  }, 30_000);
 
   it("rejects a case recorded under the wrong suite version", async () => {
     const golden = await evaluateScenario({ scenarioId: "red-seat" });

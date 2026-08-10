@@ -1,6 +1,8 @@
+import { expect } from "vitest";
 import type { DeterministicStep } from "@voxel-maker/agent";
 import { EVAL_IDS } from "./fixtures.js";
 import { evaluateScenario, type GeometryEvalResult } from "./harness.js";
+import type { PromotionReport } from "./promotion.js";
 import { EVALUATION_SUITE_MANIFEST, type SuiteCase } from "./suite.js";
 
 /**
@@ -174,4 +176,20 @@ export async function runCompleteSuite(): Promise<GeometryEvalResult[]> {
     results.push(await runSuiteCase(suiteCase));
   }
   return results;
+}
+
+/**
+ * Asserts the promotion report of the complete suite run: promotable,
+ * no blocks, no baseline regressions, every threshold passed. Issue #76:
+ * promotion must prove the WHOLE fixed suite ran — every golden case and
+ * every required rejected safety trace — so the gate is exercised
+ * against the complete manifest, not a cherry-picked subset.
+ */
+export function expectCompleteSuitePromotes(report: PromotionReport): void {
+  expect(report.promotable).toBe(true);
+  expect(report.blocks).toEqual([]);
+  expect(report.baselineRegressions).toEqual([]);
+  for (const entry of report.thresholdResults) {
+    expect(entry.passed, `${entry.name} failed`).toBe(true);
+  }
 }
