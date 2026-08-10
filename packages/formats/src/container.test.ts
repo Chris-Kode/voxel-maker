@@ -396,6 +396,23 @@ describe("readVxlProject", () => {
     );
   });
 
+  it("rejects container entry names above a lowered byte limit", () => {
+    // Issue #98 end to end: a caller that lowers maxEntryNameBytes must get
+    // the ZIP codec's stable limit error instead of a silently accepted
+    // container whose entry names exceed the lowered profile.
+    const bytes = writeDemo();
+    expectErrorCode(
+      () =>
+        readVxlProject(bytes, {
+          containerLimits: {
+            ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+            maxEntryNameBytes: 4,
+          },
+        }),
+      "ENTRY_NAME_LIMIT_EXCEEDED",
+    );
+  });
+
   it("seedReadView answers voxel queries inside chunks", () => {
     const loaded = readVxlProject(writeDemo());
     const body = loaded.volumes.get(BODY);
