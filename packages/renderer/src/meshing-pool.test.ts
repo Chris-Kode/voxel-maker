@@ -589,6 +589,260 @@ describe("worker executor", () => {
     expect(failures).toHaveLength(1);
     pool.dispose();
   });
+
+  /**
+   * Fake worker that performs REAL `structuredClone` with the actual
+   * transfer list (so posted buffers really detach, like a Web Worker)
+   * and answers every attempt synchronously. `errorsBeforeSuccess` makes
+   * the first attempts fail with a `meshing-error` response;
+   * `throwFirstDispatch` makes the first `postMessage` itself throw (a
+   * dead worker or non-transferable payload).
+   */
+  function createTransferWorker(
+    options: {
+      readonly errorsBeforeSuccess?: number;
+      readonly throwFirstDispatch?: boolean;
+    } = {},
+  ): {
+    readonly worker: MeshingWorkerLike;
+    readonly postedValuesByteLengths: number[];
+    readonly dispatchCalls: number;
+  } {
+    const errorsBeforeSuccess = options.errorsBeforeSuccess ?? 0;
+    const state: {
+      postedValuesByteLengths: number[];
+      dispatchCalls: number;
+    } = { postedValuesByteLengths: [], dispatchCalls: 0 };
+    let failures = 0;
+    let onmessage: ((event: { readonly data: unknown }) => void) | null = null;
+    return {
+      worker: {
+        postMessage(message, transfer) {
+          state.dispatchCalls += 1;
+          if (
+            options.throwFirstDispatch === true &&
+            state.dispatchCalls === 1
+          ) {
+            throw new DOMException(
+              "Cannot transfer object of unsupported type.",
+              "DataCloneError",
+            );
+          }
+          const buffers = (transfer ?? []).map((item) =>
+            ArrayBuffer.isView(item) ? item.buffer : item,
+          );
+          const clone = structuredClone(message, {
+            transfer: buffers,
+          }) as { readonly requestId: number; readonly input: ChunkMeshInput };
+          state.postedValuesByteLengths.push(clone.input.values.byteLength);
+          if (failures < errorsBeforeSuccess) {
+            failures += 1;
+            onmessage?.({
+              data: {
+                kind: "meshing-error",
+                requestId: clone.requestId,
+                message: "flaky worker",
+              },
+            });
+            return;
+          }
+          onmessage?.({
+            data: {
+              kind: "meshing-result",
+              requestId: clone.requestId,
+              result: handleMeshingRequest(clone.input),
+            },
+          });
+        },
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(handler) {
+          onmessage = handler;
+        },
+        terminate() {
+          onmessage = null;
+        },
+      },
+      postedValuesByteLengths: state.postedValuesByteLengths,
+      get dispatchCalls() {
+        return state.dispatchCalls;
+      },
+    };
+  }
+
+  it("recovers a transferred worker error with fresh full-length buffers", () => {
+    // Regression for ticket #62: the first postMessage detaches the
+    // transferred input buffers, so a retry must receive a fresh copy —
+    // never the detached buffers of the previous attempt.
+    const fake = createTransferWorker({ errorsBeforeSuccess: 1 });
+    const results: ChunkMeshOutput[] = [];
+    const failures: ChunkMeshInput[] = [];
+    const pool = createMeshingPool({
+      executor: createWorkerMeshingExecutor(fake.worker),
+      callbacks: {
+        onResult: (result) => results.push(result),
+        onFailure: (input) => failures.push(input),
+        onRejected: () => undefined,
+      },
+      maxConcurrent: 1,
+      maxRetries: 2,
+    });
+    const handle = pool.submit(input({ revision: 2 }));
+    void handle;
+    // Both attempts must have posted full-length core buffers: the first
+    // transfer detached the first attempt's copy, and the retry carried
+    // a fresh copy instead of the detached buffers.
+    expect(fake.postedValuesByteLengths).toEqual([
+      CHUNK_VOXEL_COUNT * Uint16Array.BYTES_PER_ELEMENT,
+      CHUNK_VOXEL_COUNT * Uint16Array.BYTES_PER_ELEMENT,
+    ]);
+    expect(failures).toHaveLength(0);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.revision).toBe(2);
+    expect(pool.diagnostics.inFlight).toBe(0);
+    expect(pool.diagnostics.failed).toBe(0);
+    pool.dispose();
+  });
+
+  it("posts a copy so the job's input buffers are never detached", () => {
+    const fake = createTransferWorker();
+    const executor = createWorkerMeshingExecutor(fake.worker);
+    const outcomes: MeshingOutcome[] = [];
+    const jobInput = input({ revision: 6 });
+    const job: MeshingJob = {
+      requestId: 21,
+      input: jobInput,
+      cancelled: false,
+      done: false,
+      retries: 0,
+    };
+    executor.start(job, (value) => outcomes.push(value));
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.ok).toBe(true);
+    // The transfer detached the posted copy; the job's own buffers must
+    // still be intact so retries and failure reporting can use them.
+    expect(jobInput.values.byteLength).toBe(
+      CHUNK_VOXEL_COUNT * Uint16Array.BYTES_PER_ELEMENT,
+    );
+    expect(jobInput.halo.faces.byteLength).toBeGreaterThan(0);
+    expect(jobInput.halo.edges.byteLength).toBeGreaterThan(0);
+    expect(jobInput.halo.corners.byteLength).toBeGreaterThan(0);
+    executor.dispose();
+  });
+
+  it("reports a synchronous dispatch error without wedging a slot", () => {
+    // A dead or hostile worker makes postMessage throw (e.g. trying to
+    // transfer a detached buffer). The pool must exhaust retries through
+    // onFailure with no in-flight jobs and no uncaught throw.
+    const worker: MeshingWorkerLike = {
+      postMessage() {
+        throw new DOMException(
+          "Cannot transfer object of unsupported type.",
+          "DataCloneError",
+        );
+      },
+      onmessage: null,
+      terminate() {
+        // No-op: the executor never reached a usable worker.
+      },
+    };
+    const failures: ChunkMeshInput[] = [];
+    const results: ChunkMeshOutput[] = [];
+    const pool = createMeshingPool({
+      executor: createWorkerMeshingExecutor(worker),
+      callbacks: {
+        onResult: (result) => results.push(result),
+        onFailure: (input) => failures.push(input),
+        onRejected: () => undefined,
+      },
+      maxConcurrent: 1,
+      maxRetries: 2,
+    });
+    const handle = pool.submit(input({ revision: 4 }));
+    void handle;
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.revision).toBe(4);
+    expect(results).toHaveLength(0);
+    expect(pool.diagnostics.failed).toBe(1);
+    expect(pool.diagnostics.inFlight).toBe(0);
+    pool.dispose();
+  });
+
+  it("reports a failure when the input buffers were already detached", () => {
+    // A caller that already transferred its buffers away leaves the
+    // executor unable to copy them; the pool must fail bounded through
+    // onFailure with no in-flight jobs and no uncaught throw. The input
+    // uses dedicated buffers: `input()` shares the module-level default
+    // arrays, and detaching those would contaminate later tests.
+    const jobInput: ChunkMeshInput = {
+      ...DEFAULT_INPUT,
+      revision: 8,
+      values: new Uint16Array(CHUNK_VOXEL_COUNT),
+      halo: emptyHalo(),
+    };
+    const transferred = structuredClone(
+      {
+        values: jobInput.values,
+        faces: jobInput.halo.faces,
+        edges: jobInput.halo.edges,
+        corners: jobInput.halo.corners,
+      },
+      {
+        transfer: [
+          jobInput.values.buffer,
+          jobInput.halo.faces.buffer,
+          jobInput.halo.edges.buffer,
+          jobInput.halo.corners.buffer,
+        ],
+      },
+    );
+    void transferred;
+    const fake = createFakeWorker();
+    const failures: ChunkMeshInput[] = [];
+    const pool = createMeshingPool({
+      executor: createWorkerMeshingExecutor(fake.worker),
+      callbacks: {
+        onResult: () => undefined,
+        onFailure: (input) => failures.push(input),
+        onRejected: () => undefined,
+      },
+      maxConcurrent: 1,
+      maxRetries: 2,
+    });
+    const handle = pool.submit(jobInput);
+    void handle;
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.revision).toBe(8);
+    expect(fake.posted).toHaveLength(0);
+    expect(pool.diagnostics.failed).toBe(1);
+    expect(pool.diagnostics.inFlight).toBe(0);
+    pool.dispose();
+  });
+
+  it("recovers when the first dispatch itself throws", () => {
+    const fake = createTransferWorker({ throwFirstDispatch: true });
+    const results: ChunkMeshOutput[] = [];
+    const failures: ChunkMeshInput[] = [];
+    const pool = createMeshingPool({
+      executor: createWorkerMeshingExecutor(fake.worker),
+      callbacks: {
+        onResult: (result) => results.push(result),
+        onFailure: (input) => failures.push(input),
+        onRejected: () => undefined,
+      },
+      maxConcurrent: 1,
+      maxRetries: 2,
+    });
+    const handle = pool.submit(input({ revision: 5 }));
+    void handle;
+    expect(fake.dispatchCalls).toBe(2);
+    expect(failures).toHaveLength(0);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.revision).toBe(5);
+    expect(pool.diagnostics.inFlight).toBe(0);
+    pool.dispose();
+  });
 });
 
 describe("meshing key", () => {

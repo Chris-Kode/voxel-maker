@@ -1,5 +1,6 @@
 import { handleMeshingRequest } from "./meshing-worker.js";
 import {
+  copyChunkMeshInput,
   meshingRequestTransfer,
   parseMeshingResponseMessage,
   type MeshingWorkerRequestMessage,
@@ -18,9 +19,13 @@ import type {
  *   and test path. It still receives only copied immutable input and its
  *   result still flows through the pool's stale/cancel/retry lifecycle.
  * - The worker executor posts a transferred request to a real Web Worker
- *   and resolves through its messages. The worker's scope glue lives in
- *   `meshing-worker.ts`; the desktop composition root supplies the worker
- *   so the renderer package stays environment-agnostic.
+ *   and resolves through its messages. Each attempt posts a fresh copy of
+ *   the input (the transfer detaches whatever it posts, so retries must
+ *   never reuse the previous attempt's buffers — ticket #62), and a
+ *   synchronous `postMessage` failure is reported like any other failed
+ *   attempt instead of throwing through the pool. The worker's scope glue
+ *   lives in `meshing-worker.ts`; the desktop composition root supplies
+ *   the worker so the renderer package stays environment-agnostic.
  */
 
 /** Error message for a response that failed protocol validation. */
@@ -92,13 +97,37 @@ export function createWorkerMeshingExecutor(
 
   return {
     start(job: MeshingJob, finish: (outcome: MeshingOutcome) => void): void {
-      const request: MeshingWorkerRequestMessage = {
-        kind: "meshing-request",
-        requestId: job.requestId,
-        input: job.input,
+      // Every attempt transfers buffers it owns (ticket #62): the first
+      // postMessage detaches whatever it transfers, so a retry must post
+      // a fresh copy — never the previous attempt's detached buffers, and
+      // never `job.input` itself.
+      const attempt = { finished: false };
+      const done = (outcome: MeshingOutcome): void => {
+        if (attempt.finished) return;
+        attempt.finished = true;
+        finish(outcome);
       };
-      pending.set(job.requestId, { request, finish });
-      worker.postMessage(request, meshingRequestTransfer(job.input));
+      try {
+        const input = copyChunkMeshInput(job.input);
+        const request: MeshingWorkerRequestMessage = {
+          kind: "meshing-request",
+          requestId: job.requestId,
+          input,
+        };
+        pending.set(job.requestId, { request, finish: done });
+        worker.postMessage(request, meshingRequestTransfer(input));
+      } catch (error) {
+        // Synchronous dispatch failure (dead worker, or a payload the
+        // platform refuses to copy or transfer): report it like any other
+        // failed attempt so the pool retries or fails bounded instead of
+        // wedging the slot with an uncaught throw. The flag skips the
+        // report when a synchronous response inside postMessage already
+        // resolved this attempt (e.g. a retry now owns the pending slot).
+        if (!attempt.finished) {
+          pending.delete(job.requestId);
+          done({ ok: false, error });
+        }
+      }
     },
     dispose(): void {
       worker.onmessage = null;
