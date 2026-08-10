@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +32,7 @@ const MINIMAL_ARGS = [
   "--animation-frames",
   "1",
   "--no-progress",
-];
+] as const;
 
 interface CliRun {
   status: number | null;
@@ -38,7 +44,7 @@ function runCli(args: readonly string[], cwd: string): CliRun {
   const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
     cwd,
     encoding: "utf8",
-    timeout: 120_000,
+    timeout: 180_000,
   });
   return {
     status: result.status,
@@ -103,4 +109,56 @@ describe("bench CLI output-path validation (issue #58)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("bench CLI numeric option validation (ticket #57)", () => {
+  it.each([
+    ["--samples", "nonsense"],
+    ["--samples", "1.5"],
+    ["--samples", "0"],
+    ["--samples", "-3"],
+    ["--save-load-runs", "nonsense"],
+    ["--save-load-runs", "0"],
+    ["--preview-samples", "nonsense"],
+    ["--preview-samples", "0"],
+    ["--preview-size", "nonsense"],
+    ["--preview-size", "0"],
+    ["--animation-frames", "nonsense"],
+    ["--animation-frames", "0"],
+    ["--sizes", "100000,bogus"],
+  ] as const)(
+    "rejects %s %s with a nonzero exit before fixture allocation or output",
+    (flag, value) => {
+      const dir = mkdtempSync(join(tmpdir(), "bench-cli-reject-"));
+      const jsonPath = join(dir, "out.json");
+      const result = runCli(
+        [...MINIMAL_ARGS, flag, value, "--json", jsonPath],
+        dir,
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("report written");
+      expect(result.stderr).toContain("positive integer");
+      expect(existsSync(jsonPath)).toBe(false);
+      rmSync(dir, { recursive: true, force: true });
+    },
+  );
+
+  it("accepts positive integer counts and writes numeric JSON options", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-cli-ok-"));
+    const jsonPath = join(dir, "out.json");
+    const result = runCli([...MINIMAL_ARGS, "--json", jsonPath], dir);
+    expect(result.status).toBe(0);
+    expect(existsSync(jsonPath)).toBe(true);
+    const report = JSON.parse(readFileSync(jsonPath, "utf8")) as {
+      readonly options: {
+        readonly samples: unknown;
+        readonly saveLoadRuns: unknown;
+      };
+    };
+    // The report contract declares numbers: NaN counts must never
+    // serialize as JSON null (ticket #57).
+    expect(report.options.samples).toBe(1);
+    expect(report.options.saveLoadRuns).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  }, 180_000);
 });

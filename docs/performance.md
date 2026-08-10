@@ -101,6 +101,15 @@ pnpm bench:local   # 100k/500k local qualification run
 node apps/bench-cli/dist/cli.js --help
 ```
 
+Every numeric option (`--sizes`, `--samples`, `--save-load-runs`,
+`--preview-samples`, `--preview-size`, `--animation-frames`) must be a
+positive integer. A malformed, zero, or negative value exits non-zero
+with an argument error before any fixture allocation or output write
+(ticket #57); a mistyped count can never certify zero-sample gates. As a
+defensive second layer, gate evaluation fails any required metric whose
+summary carries zero samples instead of treating empty summaries as
+measurements.
+
 On a named tier machine, qualify with:
 
 ```sh

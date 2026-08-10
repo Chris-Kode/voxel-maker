@@ -324,3 +324,128 @@ describe("runBenchmarks smoke path", () => {
     expect(outcome.gatesPass).toBe(true);
   }, 120_000);
 });
+
+describe("zero-sample gate defense (ticket #57)", () => {
+  /** The empty summary `summarize([])` produces for a zero-count run. */
+  const EMPTY_SUMMARY = {
+    samples: 0,
+    mean: 0,
+    min: 0,
+    max: 0,
+    p50: 0,
+    p90: 0,
+    p95: 0,
+    p99: 0,
+  } as const;
+
+  /** Report whose compact 100k scene metrics all carry empty summaries. */
+  function zeroSampleReport(): BenchmarkReport {
+    const report = sceneReport({});
+    const scene = report.scenes.compact["100000"];
+    if (scene === undefined) throw new Error("test scene missing");
+    return {
+      ...report,
+      scenes: {
+        ...report.scenes,
+        compact: {
+          "100000": {
+            ...scene,
+            command: EMPTY_SUMMARY,
+            remesh: EMPTY_SUMMARY,
+            queueWait: EMPTY_SUMMARY,
+            flush: EMPTY_SUMMARY,
+            save: { ...scene.save, summary: EMPTY_SUMMARY },
+            load: { ...scene.load, summary: EMPTY_SUMMARY },
+            inputToPreview95Ms: 0,
+          },
+        },
+      },
+    };
+  }
+
+  it("fails scene latency gates whose summary has zero samples", () => {
+    const results = evaluateGates(zeroSampleReport(), "reference");
+    for (const id of [
+      "commit.p95.100k.compact",
+      "remesh.p95.100k.compact",
+      "flush.p95.100k.compact",
+      "inputToPreview.p95.100k.compact",
+    ]) {
+      const gate = results.find((result) => result.id === id);
+      expect(gate, id).toBeDefined();
+      expect(gate?.pass, id).toBe(false);
+      expect(gate?.skipped, id).toBe(false);
+      expect(gate?.samples, id).toBe(0);
+    }
+    expect(summarizeGates("reference", results).allPass).toBe(false);
+  });
+
+  it("fails save/load gates whose summaries have zero samples", () => {
+    const results = evaluateGates(zeroSampleReport(), "reference");
+    for (const id of ["save.p95.100k", "load.p95.100k"]) {
+      const gate = results.find((result) => result.id === id);
+      expect(gate, id).toBeDefined();
+      expect(gate?.pass, id).toBe(false);
+      expect(gate?.skipped, id).toBe(false);
+      expect(gate?.samples, id).toBe(0);
+    }
+  });
+
+  it("fails animation gates whose row evaluated zero frames", () => {
+    const report = zeroSampleReport();
+    const row = report.animation[0];
+    if (row === undefined) throw new Error("test animation row missing");
+    const zeroFrame = {
+      ...report,
+      animation: [
+        {
+          ...row,
+          frames: 0,
+          frameMs: EMPTY_SUMMARY,
+        },
+      ],
+    };
+    const results = evaluateGates(zeroFrame, "reference");
+    for (const id of [
+      "animation.frame.p95.10k",
+      "animation.frame.p99.10k",
+      "animation.noMutation.10k",
+    ]) {
+      const gate = results.find((result) => result.id === id);
+      expect(gate, id).toBeDefined();
+      expect(gate?.pass, id).toBe(false);
+      expect(gate?.skipped, id).toBe(false);
+      expect(gate?.samples, id).toBe(0);
+    }
+  });
+
+  it("reports sample counts on summary-backed gate results", () => {
+    const results = evaluateGates(sceneReport({}), "reference");
+    const gate = results.find(
+      (result) => result.id === "commit.p95.100k.compact",
+    );
+    expect(gate?.samples).toBe(100);
+    expect(gate?.pass).toBe(true);
+    // Memory gates are direct measurements, not sample summaries.
+    const memory = results.find((result) => result.id === "memory.peak.1m");
+    expect(memory?.samples).toBeUndefined();
+  });
+
+  it("never certifies a zero-sample runner outcome", async () => {
+    const outcome = await runBenchmarks({
+      tier: "ci-smoke",
+      sizes: [100_000],
+      kinds: ["compact"],
+      samples: 0,
+      saveLoadRuns: 0,
+      previewSamples: 0,
+      previewSize: 64,
+      animationFrames: 0,
+    });
+    expect(outcome.gatesPass).toBe(false);
+    const zeroSample = outcome.gates.filter((gate) => gate.samples === 0);
+    expect(zeroSample.length).toBeGreaterThan(0);
+    // Every zero-sample gate FAILS; none is skipped or certified.
+    expect(zeroSample.every((gate) => !gate.pass && !gate.skipped)).toBe(true);
+  }, 120_000);
+});

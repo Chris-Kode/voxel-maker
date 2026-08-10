@@ -1,4 +1,9 @@
-import type { BenchmarkReport, HardwareInfo, TierName } from "./report.js";
+import type {
+  BenchmarkReport,
+  HardwareInfo,
+  MeasurementSummary,
+  TierName,
+} from "./report.js";
 
 /**
  * Hardware tiers and gate thresholds (ADR-0008, ticket #45). The named
@@ -21,6 +26,13 @@ export interface GateDefinition {
   readonly limit: number;
   /** Extracts the measured value; undefined means "not applicable". */
   readonly measure: (report: BenchmarkReport) => number | undefined;
+  /**
+   * Extracts the number of samples underlying the measured value;
+   * undefined when the gate has no sample-based measurement. A
+   * present-but-empty summary (0 samples) is zeros, not a measurement,
+   * and must never certify a gate (ticket #57).
+   */
+  readonly samples?: (report: BenchmarkReport) => number | undefined;
 }
 
 /** The outcome of one gate on one report. */
@@ -32,6 +44,8 @@ export interface GateResult {
   readonly limit: number;
   /** Measured value; undefined when the measurement was skipped. */
   readonly measured: number | undefined;
+  /** Samples underlying the measurement; undefined when not applicable. */
+  readonly samples: number | undefined;
   /** True when measured <= limit (or the gate was skipped). */
   readonly pass: boolean;
   readonly skipped: boolean;
@@ -47,6 +61,17 @@ export interface GateSummary {
   readonly allPass: boolean;
 }
 
+/** One scene metric summary, or undefined when the scene/metric is absent. */
+function sceneSummary(
+  report: BenchmarkReport,
+  kind: string,
+  size: number,
+  metric: "command" | "remesh" | "queueWait" | "flush" | "preview",
+): MeasurementSummary | undefined {
+  const scenes = report.scenes[kind as keyof typeof report.scenes];
+  return scenes[String(size)]?.[metric];
+}
+
 /** Reads a p95 summary value of one scene metric. */
 function sceneP95(
   report: BenchmarkReport,
@@ -54,10 +79,34 @@ function sceneP95(
   size: number,
   metric: "command" | "remesh" | "queueWait" | "flush" | "preview",
 ): number | undefined {
-  const scenes = report.scenes[kind as keyof typeof report.scenes];
-  const scene = scenes[String(size)];
-  const summary = scene?.[metric];
-  return summary === undefined ? undefined : summary.p95;
+  return sceneSummary(report, kind, size, metric)?.p95;
+}
+
+/** Accumulates the minimum sample count seen so far (undefined = none). */
+function minOrUndefined(
+  current: number | undefined,
+  samples: number,
+): number | undefined {
+  return current === undefined ? samples : Math.min(current, samples);
+}
+
+/**
+ * Minimum sample count of the scene summaries included in a mean gate.
+ * One empty summary contaminates the mean with a bogus zero, so any
+ * zero-sample component fails the gate (ticket #57).
+ */
+function meanSceneSamples(
+  report: BenchmarkReport,
+  size: number,
+  metric: "command" | "remesh" | "queueWait" | "flush",
+): number | undefined {
+  let minimum: number | undefined;
+  for (const kind of Object.keys(report.scenes)) {
+    const summary = sceneSummary(report, kind, size, metric);
+    if (summary === undefined) continue;
+    minimum = minOrUndefined(minimum, summary.samples);
+  }
+  return minimum;
 }
 
 /** Mean over all measured kinds of one size of one metric percentile. */
@@ -70,9 +119,7 @@ function meanScenePercentile(
   let total = 0;
   let count = 0;
   for (const kind of Object.keys(report.scenes)) {
-    const scenes = report.scenes[kind as keyof typeof report.scenes];
-    const scene = scenes[String(size)];
-    const summary = scene?.[metric];
+    const summary = sceneSummary(report, kind, size, metric);
     const value = summary?.[percentileName];
     if (value !== undefined) {
       total += value;
@@ -108,6 +155,82 @@ function meanSaveLoadP95(
     }
   }
   return count === 0 ? undefined : total / count;
+}
+
+/** Minimum sample count of the save/load summaries included in a mean. */
+function meanSaveLoadSamples(
+  report: BenchmarkReport,
+  size: number,
+  metric: "save" | "load",
+): number | undefined {
+  let minimum: number | undefined;
+  for (const kind of Object.keys(report.scenes)) {
+    const scene =
+      report.scenes[kind as keyof typeof report.scenes][String(size)];
+    if (scene === undefined) continue;
+    const samples = scene[metric].summary.samples;
+    minimum = minOrUndefined(minimum, samples);
+  }
+  return minimum;
+}
+
+/**
+ * Minimum sample count of the summaries behind a composite
+ * input-to-preview measurement (command + remesh + flush).
+ */
+function inputToPreviewSamples(
+  report: BenchmarkReport,
+  kind: string,
+  size: number,
+): number | undefined {
+  const command = sceneSummary(report, kind, size, "command");
+  const remesh = sceneSummary(report, kind, size, "remesh");
+  const flush = sceneSummary(report, kind, size, "flush");
+  if (command === undefined || remesh === undefined || flush === undefined) {
+    return undefined;
+  }
+  return Math.min(command.samples, remesh.samples, flush.samples);
+}
+
+/** Minimum composite sample count over the scenes of a mean gate. */
+function meanInputToPreviewSamples(
+  report: BenchmarkReport,
+  size: number,
+): number | undefined {
+  let minimum: number | undefined;
+  for (const kind of Object.keys(report.scenes)) {
+    const scene =
+      report.scenes[kind as keyof typeof report.scenes][String(size)];
+    if (scene === undefined || scene.inputToPreview95Ms === undefined) {
+      continue;
+    }
+    const samples = inputToPreviewSamples(report, kind, size);
+    if (samples === undefined) continue;
+    minimum = minOrUndefined(minimum, samples);
+  }
+  return minimum;
+}
+
+/** Evaluation frames of one animation track-count row. */
+function animationSamples(
+  report: BenchmarkReport,
+  trackCount: number,
+): number | undefined {
+  const row = report.animation.find((entry) => entry.trackCount === trackCount);
+  return row === undefined ? undefined : row.frames;
+}
+
+/** Minimum export sample count over the 100k scenes of the smoke gate. */
+function exportSamples(report: BenchmarkReport): number | undefined {
+  let minimum: number | undefined;
+  for (const kind of Object.keys(report.scenes)) {
+    const summary =
+      report.scenes[kind as keyof typeof report.scenes]["100000"]?.export
+        .summary;
+    if (summary === undefined) continue;
+    minimum = minOrUndefined(minimum, summary.samples);
+  }
+  return minimum;
 }
 
 /** Peak RSS over every measured scene (MiB). */
@@ -157,6 +280,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
         limit: 8,
         measure: (report: BenchmarkReport) =>
           sceneP95(report, kind, 100_000, "command"),
+        samples: (report: BenchmarkReport) =>
+          sceneSummary(report, kind, 100_000, "command")?.samples,
       }) as GateDefinition,
   ),
   // Localized face-cull remesh p95 under 30 ms in a worker.
@@ -169,6 +294,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
         limit: 30,
         measure: (report: BenchmarkReport) =>
           sceneP95(report, kind, 100_000, "remesh"),
+        samples: (report: BenchmarkReport) =>
+          sceneSummary(report, kind, 100_000, "remesh")?.samples,
       }) as GateDefinition,
   ),
   // Main-thread per-frame pipeline cost stays inside the 16.7 ms frame
@@ -182,6 +309,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
         limit: 16.7,
         measure: (report: BenchmarkReport) =>
           sceneP95(report, kind, 100_000, "flush"),
+        samples: (report: BenchmarkReport) =>
+          sceneSummary(report, kind, 100_000, "flush")?.samples,
       }) as GateDefinition,
   ),
   // Input-to-preview composite p95: the headless viewport pipeline
@@ -200,6 +329,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
           const scene = report.scenes[kind]["100000"];
           return scene === undefined ? undefined : scene.inputToPreview95Ms;
         },
+        samples: (report: BenchmarkReport) =>
+          inputToPreviewSamples(report, kind, 100_000),
       }) as GateDefinition,
   ),
   // Canonical 100k save and load within 2 seconds each.
@@ -212,6 +343,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 100_000, "save");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 100_000, "save"),
   }) as GateDefinition,
   Object.freeze({
     id: "load.p95.100k",
@@ -222,6 +355,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 100_000, "load");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 100_000, "load"),
   }) as GateDefinition,
   // Editing produces no repeated main-thread task longer than 50 ms on
   // the 100k interactive target (ADR-0008).
@@ -236,6 +371,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
           const scene = report.scenes[kind]["100000"];
           return scene === undefined ? undefined : scene.flush.p99;
         },
+        samples: (report: BenchmarkReport) =>
+          sceneSummary(report, kind, 100_000, "flush")?.samples,
       }) as GateDefinition,
   ),
   // 500k fixture stays inside a 30 FPS frame budget.
@@ -246,6 +383,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 33.3,
     measure: (report: BenchmarkReport) =>
       meanSceneP95(report, 500_000, "flush"),
+    samples: (report: BenchmarkReport) =>
+      meanSceneSamples(report, 500_000, "flush"),
   }) as GateDefinition,
   Object.freeze({
     id: "flush.p99.500k",
@@ -254,6 +393,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 50,
     measure: (report: BenchmarkReport) =>
       meanScenePercentile(report, 500_000, "flush", "p99"),
+    samples: (report: BenchmarkReport) =>
+      meanSceneSamples(report, 500_000, "flush"),
   }) as GateDefinition,
   // 1M fixture: opens within 10 seconds, navigable at 20 FPS, memory < 2 GiB.
   Object.freeze({
@@ -265,6 +406,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 1_000_000, "save");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 1_000_000, "save"),
   }) as GateDefinition,
   Object.freeze({
     id: "load.p95.1m",
@@ -275,6 +418,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 1_000_000, "load");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 1_000_000, "load"),
   }) as GateDefinition,
   Object.freeze({
     id: "flush.p95.1m",
@@ -283,6 +428,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 50,
     measure: (report: BenchmarkReport) =>
       meanSceneP95(report, 1_000_000, "flush"),
+    samples: (report: BenchmarkReport) =>
+      meanSceneSamples(report, 1_000_000, "flush"),
   }) as GateDefinition,
   Object.freeze({
     id: "memory.peak.1m",
@@ -298,6 +445,7 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     unit: "ms",
     limit: 16.7,
     measure: (report: BenchmarkReport) => animationP95(report, 10_000),
+    samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
   }) as GateDefinition,
   Object.freeze({
     id: "animation.frame.p99.10k",
@@ -308,6 +456,7 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       const row = report.animation.find((entry) => entry.trackCount === 10_000);
       return row === undefined ? undefined : row.frameMs.p99;
     },
+    samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
   }) as GateDefinition,
   Object.freeze({
     id: "animation.noMutation.10k",
@@ -315,6 +464,7 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     unit: "boolean",
     limit: 0,
     measure: revisionStability,
+    samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
   }) as GateDefinition,
 ]);
 
@@ -327,6 +477,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 33.3,
     measure: (report: BenchmarkReport) =>
       meanSceneP95(report, 100_000, "flush"),
+    samples: (report: BenchmarkReport) =>
+      meanSceneSamples(report, 100_000, "flush"),
   }) as GateDefinition,
   Object.freeze({
     id: "inputToPreview.p95.100k.low",
@@ -347,6 +499,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
       }
       return count === 0 ? undefined : total / count;
     },
+    samples: (report: BenchmarkReport) =>
+      meanInputToPreviewSamples(report, 100_000),
   }) as GateDefinition,
   Object.freeze({
     id: "save.p95.100k.low",
@@ -357,6 +511,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 100_000, "save");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 100_000, "save"),
   }) as GateDefinition,
   Object.freeze({
     id: "load.p95.100k.low",
@@ -367,6 +523,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 100_000, "load");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 100_000, "load"),
   }) as GateDefinition,
   Object.freeze({
     id: "memory.peak.low",
@@ -386,6 +544,8 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 200,
     measure: (report: BenchmarkReport) =>
       meanSceneP95(report, 100_000, "command"),
+    samples: (report: BenchmarkReport) =>
+      meanSceneSamples(report, 100_000, "command"),
   }) as GateDefinition,
   Object.freeze({
     id: "remesh.p95.100k.smoke",
@@ -394,6 +554,8 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 1000,
     measure: (report: BenchmarkReport) =>
       meanSceneP95(report, 100_000, "remesh"),
+    samples: (report: BenchmarkReport) =>
+      meanSceneSamples(report, 100_000, "remesh"),
   }) as GateDefinition,
   Object.freeze({
     id: "flush.p95.100k.smoke",
@@ -402,6 +564,8 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 200,
     measure: (report: BenchmarkReport) =>
       meanSceneP95(report, 100_000, "flush"),
+    samples: (report: BenchmarkReport) =>
+      meanSceneSamples(report, 100_000, "flush"),
   }) as GateDefinition,
   Object.freeze({
     id: "save.p95.100k.smoke",
@@ -412,6 +576,8 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 100_000, "save");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 100_000, "save"),
   }) as GateDefinition,
   Object.freeze({
     id: "load.p95.100k.smoke",
@@ -422,6 +588,8 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
       const ms = meanSaveLoadP95(report, 100_000, "load");
       return ms === undefined ? undefined : ms / 1000;
     },
+    samples: (report: BenchmarkReport) =>
+      meanSaveLoadSamples(report, 100_000, "load"),
   }) as GateDefinition,
   Object.freeze({
     id: "export.p95.100k.smoke",
@@ -442,6 +610,7 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
       }
       return count === 0 ? undefined : total / count / 1000;
     },
+    samples: (report: BenchmarkReport) => exportSamples(report),
   }) as GateDefinition,
   Object.freeze({
     id: "memory.peak.smoke",
@@ -472,6 +641,7 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
     unit: "ms",
     limit: 200,
     measure: (report: BenchmarkReport) => animationP95(report, 10_000),
+    samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
   }) as GateDefinition,
   Object.freeze({
     id: "animation.noMutation.smoke",
@@ -479,6 +649,7 @@ const CI_SMOKE_GATES: readonly GateDefinition[] = Object.freeze([
     unit: "boolean",
     limit: 0,
     measure: revisionStability,
+    samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
   }) as GateDefinition,
 ]);
 
@@ -554,6 +725,12 @@ export function evaluateGates(
   return definitions.map((gate) => {
     const measured = gate.measure(report);
     const skipped = measured === undefined;
+    const samples = gate.samples?.(report);
+    // A present-but-empty summary is zeros, not a measurement: it must
+    // never certify a gate (ticket #57). A zero-sample metric FAILS so
+    // an accidental zero-count run can never produce green release
+    // evidence.
+    const zeroSample = !skipped && samples === 0;
     return {
       id: gate.id,
       label: gate.label,
@@ -561,7 +738,8 @@ export function evaluateGates(
       unit: gate.unit,
       limit: gate.limit,
       measured,
-      pass: skipped || measured <= gate.limit,
+      samples,
+      pass: skipped || (!zeroSample && measured <= gate.limit),
       skipped,
     };
   });
