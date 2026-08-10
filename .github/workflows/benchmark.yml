@@ -5,13 +5,6 @@ on:
     # Nightly full benchmark (UTC); ad-hoc via workflow_dispatch.
     - cron: "17 3 * * *"
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "packages/**"
-      - "apps/bench-cli/**"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/benchmark.yml"
 
 permissions:
   contents: write
