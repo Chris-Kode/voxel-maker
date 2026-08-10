@@ -181,6 +181,153 @@ describe("bench CLI numeric option validation (ticket #57)", () => {
         readonly rows: readonly unknown[];
       };
       expect(appended.rows).toHaveLength(2);
+      // The fresh baseline row passed its gates, so it is marked as a
+      // baseline candidate (issue #73).
+      expect((appended.rows[1] as { readonly passed: boolean }).passed).toBe(
+        true,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it("keeps failing against the last passing baseline after a failed row (issue #73)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-cli-issue-73-"));
+    try {
+      const trendsPath = join(dir, "trends.json");
+      // Run 1 establishes a passing baseline with real measurements.
+      const first = runCli([...MINIMAL_ARGS, "--trends", trendsPath], dir);
+      expect(first.status).toBe(0);
+      const afterFirst = JSON.parse(readFileSync(trendsPath, "utf8")) as {
+        readonly schemaVersion: number;
+        readonly rows: ReadonlyArray<{
+          readonly date: string;
+          readonly hardware: {
+            readonly cpuModel: string;
+            readonly platform: string;
+            readonly arch: string;
+            readonly cores: number;
+            readonly totalMemoryGiB: number;
+            readonly nodeVersion: string;
+          };
+          readonly values: Readonly<Record<string, number>>;
+          readonly passed: boolean;
+        }>;
+      };
+      expect(afterFirst.schemaVersion).toBe(2);
+      expect(afterFirst.rows).toHaveLength(1);
+      expect(afterFirst.rows[0]?.passed).toBe(true);
+      const hardware = afterFirst.rows[0]?.hardware;
+      const values = afterFirst.rows[0]?.values;
+      expect(hardware).toBeDefined();
+      expect(values).toBeDefined();
+      // Deflate the passing baseline so the next real run regresses,
+      // and append a failed row (the workflow's failure path) with
+      // inflated values that would mask the regression if the failed
+      // row became the baseline.
+      const deflated = Object.fromEntries(
+        Object.entries(values as Record<string, number>).map(([key, v]) => [
+          key,
+          v / 2,
+        ]),
+      );
+      const inflated = Object.fromEntries(
+        Object.entries(values as Record<string, number>).map(([key, v]) => [
+          key,
+          v * 1.5,
+        ]),
+      );
+      writeFileSync(
+        trendsPath,
+        JSON.stringify({
+          schemaVersion: 2,
+          rows: [
+            {
+              date: "2025-01-01T00:00:00.000Z",
+              hardware,
+              values: deflated,
+              passed: true,
+            },
+            {
+              date: "2025-01-02T00:00:00.000Z",
+              hardware,
+              values: inflated,
+              passed: false,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      const second = runCli([...MINIMAL_ARGS, "--trends", trendsPath], dir);
+
+      // The identical real measurements still regress against the last
+      // passing baseline; the failed row must not mask them.
+      expect(second.status).toBe(1);
+      expect(second.stdout).toContain("REGRESSED");
+      const afterSecond = JSON.parse(readFileSync(trendsPath, "utf8")) as {
+        readonly rows: ReadonlyArray<{ readonly passed: boolean }>;
+      };
+      expect(afterSecond.rows).toHaveLength(3);
+      expect(afterSecond.rows[2]?.passed).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it("migrates a v1 history and never uses its rows as baselines (issue #73)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-cli-issue-73-migrate-"));
+    try {
+      const trendsPath = join(dir, "trends.json");
+      // Run 1 establishes the runner's real named hardware.
+      const first = runCli([...MINIMAL_ARGS, "--trends", trendsPath], dir);
+      expect(first.status).toBe(0);
+      const afterFirst = JSON.parse(readFileSync(trendsPath, "utf8")) as {
+        readonly rows: ReadonlyArray<{
+          readonly date: string;
+          readonly hardware: unknown;
+          readonly values: Readonly<Record<string, number>>;
+          readonly passed: boolean;
+        }>;
+      };
+      const hardware = afterFirst.rows[0]?.hardware;
+      expect(hardware).toBeDefined();
+      // Rewrite the history as v1 (no pass markers) with a deflated row
+      // on the same hardware: the migrated row must not become a
+      // baseline, so the run starts a fresh baseline instead.
+      writeFileSync(
+        trendsPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          rows: [
+            {
+              date: "2025-01-01T00:00:00.000Z",
+              hardware,
+              values: Object.fromEntries(
+                Object.entries(afterFirst.rows[0]?.values ?? {}).map(
+                  ([key, v]) => [key, v / 2],
+                ),
+              ),
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      const second = runCli([...MINIMAL_ARGS, "--trends", trendsPath], dir);
+
+      expect(second.status).toBe(0);
+      expect(second.stdout).toContain(
+        "[skip] no passing baseline on this named hardware",
+      );
+      const afterSecond = JSON.parse(readFileSync(trendsPath, "utf8")) as {
+        readonly schemaVersion: number;
+        readonly rows: ReadonlyArray<{ readonly passed: boolean }>;
+      };
+      expect(afterSecond.schemaVersion).toBe(2);
+      expect(afterSecond.rows).toHaveLength(2);
+      expect(afterSecond.rows[0]?.passed).toBe(false);
+      expect(afterSecond.rows[1]?.passed).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

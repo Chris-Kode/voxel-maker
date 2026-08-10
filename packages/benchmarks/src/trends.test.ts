@@ -6,6 +6,8 @@ import {
   emptyTrendHistory,
   flattenReport,
   isTrendRegression,
+  latestPassingSameHardwareRow,
+  parseTrendHistory,
   sameNamedHardware,
   type BenchmarkTrendHistory,
 } from "./trends.js";
@@ -185,6 +187,30 @@ const report: BenchmarkReport = {
   durationMs: 1000,
 };
 
+/** A report whose command p95 is `commandP95` (regression fixture). */
+function reportWithCommandP95(
+  date: string,
+  commandP95: number,
+): BenchmarkReport {
+  return {
+    ...report,
+    date,
+    scenes: {
+      ...report.scenes,
+      compact: {
+        ...report.scenes.compact,
+        "100000": {
+          ...(report.scenes.compact["100000"] as SceneMeasurements),
+          command: {
+            ...(report.scenes.compact["100000"] as SceneMeasurements).command,
+            p95: commandP95,
+          },
+        },
+      },
+    },
+  };
+}
+
 describe("flattenReport", () => {
   it("produces stable keys for every trend metric", () => {
     const values = flattenReport(report);
@@ -220,7 +246,7 @@ describe("isTrendRegression", () => {
 
 describe("compareWithTrends / appendTrendRow", () => {
   it("appends one row per report and compares the latest baseline", () => {
-    const history = appendTrendRow(emptyTrendHistory(), report);
+    const history = appendTrendRow(emptyTrendHistory(), report, true);
     expect(history.rows).toHaveLength(1);
     expect(history.rows[0]?.hardware.cpuModel).toBe("Test CPU");
 
@@ -252,7 +278,7 @@ describe("compareWithTrends / appendTrendRow", () => {
   });
 
   it("detects a retained trend regression", () => {
-    const history = appendTrendRow(emptyTrendHistory(), report);
+    const history = appendTrendRow(emptyTrendHistory(), report, true);
     const slower: BenchmarkReport = {
       ...report,
       date: "2025-03-01T00:00:00.000Z",
@@ -281,7 +307,7 @@ describe("compareWithTrends / appendTrendRow", () => {
     // GitHub-hosted ci-smoke runners rotate CPU generations (e.g.
     // EPYC 7763 -> EPYC 9V74); tier alone must never trigger a
     // regression comparison against unrelated hardware.
-    const history = appendTrendRow(emptyTrendHistory(), report);
+    const history = appendTrendRow(emptyTrendHistory(), report, true);
     const otherCpu: BenchmarkReport = {
       ...report,
       date: "2025-03-01T00:00:00.000Z",
@@ -311,12 +337,13 @@ describe("compareWithTrends / appendTrendRow", () => {
     // a severe regression on CPU A is otherwise missed after any CPU B
     // row.
     const history: BenchmarkTrendHistory = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       rows: [
         {
           date: "cpu-a-baseline",
           hardware,
           values: { "compact.100000.command.p95": 4 },
+          passed: true,
         },
         {
           date: "cpu-b-row",
@@ -325,6 +352,7 @@ describe("compareWithTrends / appendTrendRow", () => {
             cpuModel: "AMD EPYC 9V74 80-Core Processor",
           },
           values: { "compact.100000.command.p95": 4 },
+          passed: true,
         },
       ],
     };
@@ -363,13 +391,19 @@ describe("compareWithTrends / appendTrendRow", () => {
 
   it("compares only against the latest row", () => {
     const history: BenchmarkTrendHistory = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       rows: [
-        { date: "old", hardware, values: { "compact.100000.command.p95": 4 } },
+        {
+          date: "old",
+          hardware,
+          values: { "compact.100000.command.p95": 4 },
+          passed: true,
+        },
         {
           date: "latest",
           hardware,
           values: { "compact.100000.command.p95": 5 },
+          passed: true,
         },
       ],
     };
@@ -378,5 +412,167 @@ describe("compareWithTrends / appendTrendRow", () => {
       (c) => c.key === "compact.100000.command.p95",
     );
     expect(commit?.previous).toBe(5);
+  });
+
+  it("never promotes a failed row to the comparison baseline (issue #73)", () => {
+    // A regressed run appends its row as retained evidence but marks it
+    // failed; the identical regression on the next run must still fail
+    // against the last passing baseline instead of passing against the
+    // failed row.
+    const history = appendTrendRow(emptyTrendHistory(), report, true);
+    const regressed = reportWithCommandP95("2025-03-01T00:00:00.000Z", 40);
+    expect(
+      compareWithTrends(regressed, history).find(
+        (c) => c.key === "compact.100000.command.p95",
+      )?.regressed,
+    ).toBe(true);
+    const afterFailure = appendTrendRow(history, regressed, false);
+    const again = reportWithCommandP95("2025-03-02T00:00:00.000Z", 40);
+    const comparisons = compareWithTrends(again, afterFailure);
+    const commit = comparisons.find(
+      (c) => c.key === "compact.100000.command.p95",
+    );
+    expect(commit?.previous).toBe(4);
+    expect(commit?.current).toBe(40);
+    expect(commit?.regressed).toBe(true);
+  });
+
+  it("advances the baseline only after a passing run (issue #73)", () => {
+    const history = appendTrendRow(emptyTrendHistory(), report, true);
+    const regressed = reportWithCommandP95("2025-03-01T00:00:00.000Z", 40);
+    const afterFailure = appendTrendRow(history, regressed, false);
+    const recovered = reportWithCommandP95("2025-03-02T00:00:00.000Z", 4);
+    const afterRecovery = appendTrendRow(afterFailure, recovered, true);
+    const comparisons = compareWithTrends(recovered, afterRecovery);
+    const commit = comparisons.find(
+      (c) => c.key === "compact.100000.command.p95",
+    );
+    // The passing run advanced the baseline: the comparison is now
+    // against the recovered row itself, not the older passing row.
+    expect(commit?.previous).toBe(4);
+    expect(commit?.current).toBe(4);
+    expect(commit?.regressed).toBe(false);
+  });
+});
+
+describe("latestPassingSameHardwareRow", () => {
+  it("skips failed rows when finding the newest passing baseline", () => {
+    const history: BenchmarkTrendHistory = {
+      schemaVersion: 2,
+      rows: [
+        {
+          date: "passed",
+          hardware,
+          values: { "compact.100000.command.p95": 4 },
+          passed: true,
+        },
+        {
+          date: "failed",
+          hardware,
+          values: { "compact.100000.command.p95": 40 },
+          passed: false,
+        },
+      ],
+    };
+    expect(latestPassingSameHardwareRow(history, hardware)?.date).toBe(
+      "passed",
+    );
+  });
+
+  it("returns undefined when only failed rows match the hardware", () => {
+    const history: BenchmarkTrendHistory = {
+      schemaVersion: 2,
+      rows: [
+        {
+          date: "failed",
+          hardware,
+          values: { "compact.100000.command.p95": 40 },
+          passed: false,
+        },
+      ],
+    };
+    expect(latestPassingSameHardwareRow(history, hardware)).toBeUndefined();
+  });
+});
+
+describe("parseTrendHistory", () => {
+  it("migrates v1 rows to v2 as non-baselines (issue #73)", () => {
+    // v1 rows carry no pass marker and may include failed runs the old
+    // format wrongly promoted, so they must never act as baselines.
+    const v1 = {
+      schemaVersion: 1,
+      rows: [
+        {
+          date: "2025-01-01T00:00:00.000Z",
+          hardware,
+          values: { "compact.100000.command.p95": 4 },
+        },
+      ],
+    };
+    const parsed = parseTrendHistory(v1);
+    expect(parsed.schemaVersion).toBe(2);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0]?.passed).toBe(false);
+    expect(parsed.rows[0]?.values["compact.100000.command.p95"]).toBe(4);
+  });
+
+  it("accepts v2 histories unchanged", () => {
+    const v2 = {
+      schemaVersion: 2,
+      rows: [
+        {
+          date: "2025-01-01T00:00:00.000Z",
+          hardware,
+          values: { "compact.100000.command.p95": 4 },
+          passed: true,
+        },
+      ],
+    };
+    expect(parseTrendHistory(v2)).toEqual(v2);
+  });
+
+  it("rejects unknown schema versions", () => {
+    expect(() => parseTrendHistory({ schemaVersion: 99, rows: [] })).toThrow(
+      /schema version/,
+    );
+  });
+
+  it("rejects malformed histories", () => {
+    expect(() =>
+      parseTrendHistory({ schemaVersion: 2, rows: "nope" }),
+    ).toThrow();
+    expect(() => parseTrendHistory(null)).toThrow();
+  });
+
+  it("rejects v2 rows with missing or malformed fields", () => {
+    const base = {
+      schemaVersion: 2,
+      rows: [
+        {
+          date: "2025-01-01T00:00:00.000Z",
+          hardware,
+          values: { "compact.100000.command.p95": 4 },
+          passed: true,
+        },
+      ],
+    };
+    expect(() =>
+      parseTrendHistory({
+        ...base,
+        rows: [{ ...base.rows[0], hardware: undefined }],
+      }),
+    ).toThrow(/hardware/);
+    expect(() =>
+      parseTrendHistory({
+        ...base,
+        rows: [{ ...base.rows[0], values: { x: Number.NaN } }],
+      }),
+    ).toThrow(/finite/);
+    expect(() =>
+      parseTrendHistory({
+        ...base,
+        rows: [{ ...base.rows[0], passed: "yes" }],
+      }),
+    ).toThrow(/passed/);
   });
 });

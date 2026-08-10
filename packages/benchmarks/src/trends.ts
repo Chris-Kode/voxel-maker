@@ -8,18 +8,25 @@ import type {
  * Retained trend evidence (ticket #45 AC): every full benchmark run
  * flattens its gate-relevant measurements into one trend row keyed by
  * `<kind>.<size>.<metric>`, appended to a retained JSON history. The
- * next scheduled run compares against the latest row on the same named
- * hardware and fails when a value regresses beyond tolerance, so
- * regressions are detected against retained evidence rather than only
- * against absolute thresholds.
+ * next scheduled run compares against the latest PASSING row on the
+ * same named hardware and fails when a value regresses beyond
+ * tolerance, so regressions are detected against retained evidence
+ * rather than only against absolute thresholds.
+ *
+ * Baseline promotion (issue #73): a row records whether the run that
+ * produced it passed (`passed: true`). Failed rows stay in the history
+ * as evidence but never become a comparison baseline, so one regressed
+ * run cannot promote itself to the next accepted baseline; the baseline
+ * advances only when a run passes.
  */
 
 /** The latest trend history file format. */
 export interface BenchmarkTrendHistory {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   /**
-   * Rows in chronological order; the newest row on the same named
-   * hardware is the comparison baseline.
+   * Rows in chronological order; the newest PASSING row on the same
+   * named hardware is the comparison baseline (issue #73). Failed rows
+   * are retained evidence only.
    */
   readonly rows: readonly TrendRow[];
 }
@@ -29,6 +36,12 @@ export interface TrendRow {
   readonly date: string;
   readonly hardware: HardwareInfo;
   readonly values: FlattenedValues;
+  /**
+   * True when the run that produced this row passed its gates and trend
+   * comparisons. Only passed rows are eligible as comparison baselines;
+   * a failed row is retained as evidence but never promoted (issue #73).
+   */
+  readonly passed: boolean;
 }
 
 /** Tolerance policy for trend regression detection. */
@@ -123,15 +136,43 @@ export function sameNamedHardware(a: HardwareInfo, b: HardwareInfo): boolean {
  * #64). Rows from other machines (e.g. a rotated CI runner CPU) never
  * become a baseline, so alternating hardware cannot bypass retained
  * trend comparisons; a fresh baseline starts only when no matching row
- * exists.
+ * exists. Pass status is ignored: this finds the latest evidence row,
+ * failed or not.
  */
 export function latestSameHardwareRow(
   history: BenchmarkTrendHistory,
   hardware: HardwareInfo,
 ): TrendRow | undefined {
+  return latestSameHardwareRowWhere(history, hardware, () => true);
+}
+
+/**
+ * Finds the newest PASSING row whose named-hardware identity matches
+ * the given hardware (issue #73). Failed rows are retained evidence
+ * but never baselines: a regressed run must not promote itself to the
+ * next accepted baseline, so repeated regressed runs keep failing until
+ * a passing run advances the baseline.
+ */
+export function latestPassingSameHardwareRow(
+  history: BenchmarkTrendHistory,
+  hardware: HardwareInfo,
+): TrendRow | undefined {
+  return latestSameHardwareRowWhere(history, hardware, (row) => row.passed);
+}
+
+/** Backward search over the chronological history with a row predicate. */
+function latestSameHardwareRowWhere(
+  history: BenchmarkTrendHistory,
+  hardware: HardwareInfo,
+  predicate: (row: TrendRow) => boolean,
+): TrendRow | undefined {
   for (let i = history.rows.length - 1; i >= 0; i -= 1) {
     const row = history.rows[i];
-    if (row !== undefined && sameNamedHardware(hardware, row.hardware)) {
+    if (
+      row !== undefined &&
+      predicate(row) &&
+      sameNamedHardware(hardware, row.hardware)
+    ) {
       return row;
     }
   }
@@ -139,20 +180,23 @@ export function latestSameHardwareRow(
 }
 
 /**
- * Compares a report against the newest retained row on the same named
- * hardware. A different machine class (CPU model, platform, cores, ...)
- * gets a fresh baseline, never a false regression against unrelated
- * hardware; the tier is not enough because ci-smoke covers every runner
- * CPU. When rows alternate between machines, the newest matching row is
- * still found, so a severe regression is never skipped just because a
- * newer row came from another machine.
+ * Compares a report against the newest PASSING row on the same named
+ * hardware (issue #73). A different machine class (CPU model, platform,
+ * cores, ...) gets a fresh baseline, never a false regression against
+ * unrelated hardware; the tier is not enough because ci-smoke covers
+ * every runner CPU. When rows alternate between machines, the newest
+ * matching passing row is still found, so a severe regression is never
+ * skipped just because a newer row came from another machine. Failed
+ * rows never become the baseline, so a regressed run cannot promote
+ * itself: the identical regression keeps failing until a passing run
+ * advances the baseline.
  */
 export function compareWithTrends(
   report: BenchmarkReport,
   history: BenchmarkTrendHistory,
   tolerance: TrendTolerance = DEFAULT_TREND_TOLERANCE,
 ): readonly TrendComparison[] {
-  const latest = latestSameHardwareRow(history, report.hardware);
+  const latest = latestPassingSameHardwareRow(history, report.hardware);
   if (latest === undefined) return [];
   const current = flattenReport(report);
   const comparisons: TrendComparison[] = [];
@@ -171,23 +215,140 @@ export function compareWithTrends(
   return comparisons;
 }
 
-/** Appends one report row to a trend history (immutable copy). */
+/**
+ * Appends one report row to a trend history (immutable copy). `passed`
+ * records whether the run that produced the row passed its gates and
+ * trend comparisons (issue #73): failed rows are retained as evidence
+ * but never become a comparison baseline.
+ */
 export function appendTrendRow(
   history: BenchmarkTrendHistory,
   report: BenchmarkReport,
+  passed: boolean,
 ): BenchmarkTrendHistory {
   const row: TrendRow = {
     date: report.date,
     hardware: report.hardware,
     values: flattenReport(report),
+    passed,
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rows: [...history.rows, row],
   };
 }
 
 /** The empty trend history. */
 export function emptyTrendHistory(): BenchmarkTrendHistory {
-  return { schemaVersion: 1, rows: [] };
+  return { schemaVersion: 2, rows: [] };
+}
+
+/**
+ * Parses and validates a trend history file payload, migrating the v1
+ * format (rows without a pass marker) to v2. v1 rows carry no pass
+ * marker and may include failed runs that the old format wrongly
+ * promoted to baselines (issue #73), so they migrate as non-baselines
+ * (`passed: false`): the next passing run on each named hardware
+ * re-establishes the baseline. Unsupported or malformed payloads throw;
+ * the payload is untrusted file input, never a programmer error.
+ */
+export function parseTrendHistory(parsed: unknown): BenchmarkTrendHistory {
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("trend history must be a JSON object");
+  }
+  const candidate = parsed as {
+    readonly schemaVersion?: unknown;
+    readonly rows?: unknown;
+  };
+  if (candidate.schemaVersion === 1) {
+    const rows = candidate.rows;
+    if (!Array.isArray(rows)) {
+      throw new Error("trend history rows must be an array");
+    }
+    return {
+      schemaVersion: 2,
+      rows: rows.map((row) => ({
+        ...validateTrendRow(row, false),
+        passed: false,
+      })),
+    };
+  }
+  if (candidate.schemaVersion !== 2) {
+    throw new Error(
+      `unsupported trend schema version ${String(candidate.schemaVersion)}; expected 1 or 2`,
+    );
+  }
+  if (!Array.isArray(candidate.rows)) {
+    throw new Error("trend history rows must be an array");
+  }
+  return {
+    schemaVersion: 2,
+    rows: candidate.rows.map((row) => validateTrendRow(row, true)),
+  };
+}
+
+/**
+ * Bounds one untrusted trend row before it is used: every field the
+ * comparison path reads must be present with the right primitive type,
+ * so a malformed file fails with a stable error instead of a raw
+ * TypeError mid-comparison.
+ */
+function validateTrendRow(row: unknown, requirePassed: boolean): TrendRow {
+  if (typeof row !== "object" || row === null) {
+    throw new Error("trend history row must be a JSON object");
+  }
+  const candidate = row as {
+    readonly date?: unknown;
+    readonly hardware?: unknown;
+    readonly values?: unknown;
+    readonly passed?: unknown;
+  };
+  if (typeof candidate.date !== "string") {
+    throw new Error("trend history row must declare a string date");
+  }
+  if (candidate.passed !== undefined && typeof candidate.passed !== "boolean") {
+    throw new Error("trend history row must declare a boolean passed marker");
+  }
+  if (requirePassed && candidate.passed === undefined) {
+    throw new Error("trend history row must declare a boolean passed marker");
+  }
+  const hardware = candidate.hardware;
+  if (typeof hardware !== "object" || hardware === null) {
+    throw new Error("trend history row must declare a hardware object");
+  }
+  const hardwareInfo = hardware as {
+    readonly tier?: unknown;
+    readonly cpuModel?: unknown;
+    readonly platform?: unknown;
+    readonly arch?: unknown;
+    readonly cores?: unknown;
+    readonly totalMemoryGiB?: unknown;
+    readonly nodeVersion?: unknown;
+  };
+  if (
+    typeof hardwareInfo.tier !== "string" ||
+    typeof hardwareInfo.cpuModel !== "string" ||
+    typeof hardwareInfo.platform !== "string" ||
+    typeof hardwareInfo.arch !== "string" ||
+    typeof hardwareInfo.cores !== "number" ||
+    typeof hardwareInfo.totalMemoryGiB !== "number" ||
+    typeof hardwareInfo.nodeVersion !== "string"
+  ) {
+    throw new Error("trend history row must declare complete named hardware");
+  }
+  const values = candidate.values;
+  if (typeof values !== "object" || values === null || Array.isArray(values)) {
+    throw new Error("trend history row must declare a values object");
+  }
+  for (const value of Object.values(values)) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error("trend history values must be finite numbers");
+    }
+  }
+  return {
+    date: candidate.date,
+    hardware: hardwareInfo as HardwareInfo,
+    values: values as FlattenedValues,
+    passed: candidate.passed ?? false,
+  };
 }
