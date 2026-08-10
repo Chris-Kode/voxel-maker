@@ -22,6 +22,7 @@ import {
   canonicalAssetSemanticHash,
   createDocumentStore,
   type DocumentStore,
+  type DocumentStoreRead,
 } from "@voxel-maker/document";
 import {
   CommandBus,
@@ -39,9 +40,13 @@ import {
   type Command,
 } from "@voxel-maker/commands";
 import {
+  createSaveCoordinator,
+  createVxlProjectEncoder,
   decodeJournalFrames,
+  type ProjectStoragePort,
   type RecoveryJournal,
   type RecoveryJournalEvent,
+  type SaveOutcome,
 } from "@voxel-maker/storage";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 import { NodeProjectStorage } from "./node-storage.js";
@@ -126,6 +131,30 @@ export function createTraceRegistry(): CommandRegistry {
   return registry;
 }
 
+/**
+ * Durably writes the current store state to `path` with a plain save
+ * coordinator (issue #66): the anchor write happens BEFORE a recovery
+ * session exists, exactly like the real open flow where the snapshot is
+ * already durable on disk when the session is created over it. The caller
+ * then creates the session with this snapshot as its durable base.
+ */
+export async function saveDurableAnchor(
+  store: DocumentStoreRead,
+  port: ProjectStoragePort,
+  path: string,
+): Promise<SaveOutcome> {
+  const coordinator = createSaveCoordinator({
+    store,
+    port,
+    encoder: createVxlProjectEncoder(),
+  });
+  try {
+    return await coordinator.save(path);
+  } finally {
+    coordinator.dispose();
+  }
+}
+
 /** Immutable volume read views of every document volume (throws when missing). */
 function volumeViews(
   store: DocumentStore,
@@ -197,7 +226,12 @@ export async function runRecoveryTrace(): Promise<string> {
       volumeViews(store),
     );
 
-    // --- attach the recovery session and journal post-snapshot edits ---
+    // --- durably install the snapshot, then attach the recovery session ---
+    // The snapshot save anchors the recovery area before any journal frame.
+    // The write happens BEFORE the session exists, exactly like the real
+    // open flow: the snapshot is already durable on disk when the session
+    // is created over it, so the session starts clean (issue #66).
+    const snapshotOutcome = await saveDurableAnchor(store, port, projectPath);
     // Edits run through the session bus so every commit is journaled.
     const session = createRecoverySession({
       projectPath,
@@ -211,8 +245,6 @@ export async function runRecoveryTrace(): Promise<string> {
     });
     const liveHash = (target: DocumentStore): string =>
       canonicalAssetSemanticHash(target.getDocument(), volumeViews(target));
-    // The snapshot save anchors the recovery area before any journal frame.
-    const snapshotOutcome = await session.save(projectPath);
     const runSession = (
       label: string,
       command: Command,

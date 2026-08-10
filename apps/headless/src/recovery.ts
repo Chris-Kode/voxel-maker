@@ -471,6 +471,26 @@ export function createRecoverySession(
     encoder: createVxlProjectEncoder(),
     snapshotWriteGate,
   });
+  // A freshly opened durable project starts clean (plan S5.14, ticket #22):
+  // when the live snapshot still equals the durable base the journal
+  // extends, record that base as the last confirmed save so an unchanged
+  // same-path save resolves `unchanged` without rewriting the file or
+  // creating a backup (issue #66). Replayed state beyond the base stays
+  // dirty: the coordinator keeps no durable anchor and the next save
+  // writes the recovered state. The caller contract is that the base IS
+  // the durable snapshot on disk (recovery/open flows); a session created
+  // over a matching but never-written snapshot would no-op its first save.
+  const live = captureRevisionSnapshot(store);
+  if (
+    live.revision === options.baseRevision &&
+    live.semanticHash === options.baseSemanticHash
+  ) {
+    saveCoordinator.markDurable(
+      options.baseRevision,
+      options.baseSemanticHash,
+      options.projectPath,
+    );
+  }
   const bus = new CommandBus(
     store,
     registry,

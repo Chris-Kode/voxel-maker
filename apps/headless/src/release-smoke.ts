@@ -80,6 +80,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeProjectStorage } from "./node-storage.js";
 import { createRecoverySession, recoverProject } from "./recovery.js";
+import { saveDurableAnchor } from "./recovery-trace.js";
 import {
   decodeJournalFrames,
   type RecoveryJournal,
@@ -642,6 +643,14 @@ export async function runReleaseSmoke(): Promise<string> {
       harness.store.getDocument(),
       volumeViews(harness.store),
     );
+    // The anchor write happens BEFORE the session exists, exactly like the
+    // real open flow: the snapshot is already durable on disk when the
+    // session is created over it, so the session starts clean (issue #66).
+    const saveOutcome = await saveDurableAnchor(
+      harness.store,
+      port,
+      projectPath,
+    );
     const session = createRecoverySession({
       projectPath,
       port,
@@ -652,7 +661,10 @@ export async function runReleaseSmoke(): Promise<string> {
       baseRevision: anchorRevision,
       baseSemanticHash: anchorHash,
     });
-    const saveOutcome = await session.save(projectPath);
+    // The confirmed anchor is already durable, so the session's own save
+    // would be a no-op; reset the journal base explicitly so the recovery
+    // area is anchored (header present, zero frames) before any edit.
+    await session.journal.resetBase(anchorRevision, anchorHash);
     const projectBytes = await readFile(projectPath);
     const journalAfterSave = decodeJournalFrames(
       (await port.readJournal(projectPath)) ?? new Uint8Array(0),
