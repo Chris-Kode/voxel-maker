@@ -145,6 +145,16 @@ semantic hash equals the hash captured with the snapshot revision.
   original, and only after the migrated asset validated (plan S5.11).
 - Command journals are replayed only when their exact snapshot identity and
   command-version migration chain are supported (recovery, ticket #14).
+- The v1 chunk payload framing is exactly 8,192 bytes (4096 unsigned-16
+  values) and is the only framing this contract has ever defined. A writer
+  bug (issue #85) briefly emitted 16,384-byte chunk frames whose manifest
+  `semanticHash` no conforming reader can reproduce; since no release
+  shipped that framing (no tags, package 0.1.0 unreleased), the corrected
+  writer regenerated the checked-in fixture corpus
+  (`scripts/generate-native-fixtures.mjs`, `fixtures/native/README.md`)
+  instead of adding a reader-side migration. Files written with the buggy
+  framing are rejected by the reader with `SEMANTIC_HASH_MISMATCH` and are
+  never silently accepted or overwritten.
 
 ## Reader preflight summary
 

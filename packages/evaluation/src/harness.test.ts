@@ -139,25 +139,25 @@ describe("fixed geometry evaluation: golden scenarios", () => {
         input:
           "5dc9edadd3fc61bb86445d46573ab01b87436b553b8bb8aaaca4b79737d4ef5f",
         output:
-          "10fbf6dad79072690fdfefd1796a08175ad0b757db92a7668c072429fcfad664",
+          "951ab3feb0948b452a834fd381722bfaa72333e90f934c22e3e843ce3fdd3720",
       },
       "shorter-legs": {
         input:
-          "98bf327cbd8bce0ef4646ec8ba66fcaad9bbd82c9386eb29e426e3e2cd401d5d",
+          "cbee032b8e15e6d5b92692e03c923004db2e5fb76fcd3a313fc8edc209f09a6b",
         output:
-          "cfb3bd8699b53587445f62fd1ff52d46826646a9f86f1b3d77c5cada6b456be0",
+          "6e3c67422bc4ae050148dc24cb4d788772ae82b33266d8ca4374a37e14cb9fa7",
       },
       "red-seat": {
         input:
-          "98bf327cbd8bce0ef4646ec8ba66fcaad9bbd82c9386eb29e426e3e2cd401d5d",
+          "cbee032b8e15e6d5b92692e03c923004db2e5fb76fcd3a313fc8edc209f09a6b",
         output:
-          "8a3fadf7942272e80aca851367564ce369b00d8c321dcc395143cede903a57b7",
+          "f4e7ea936004d189be4762ba5961a7bd8c0e2668c8ecf2ebe4f105dc988b8f64",
       },
       "mirror-left": {
         input:
-          "e10049b7fe43be5bfc5098c1f66f00b673a04d3179d15420e3be12682afb5ce1",
+          "5fcd0a829360e384c21e38da83ab2b0f78a6f89eb61197d8e974e10ee6ee14cb",
         output:
-          "f3d2939a21de06c16c541acfe870a0240607eeeb8938f1cd417be7e178caf11b",
+          "dc3291b7dcd72fd844f66950b1ad6ec2fff05e2815bd098b117d8529184b478f",
       },
     };
     for (const scenarioId of SCENARIO_IDS) {

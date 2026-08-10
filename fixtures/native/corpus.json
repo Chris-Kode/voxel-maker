@@ -4,7 +4,7 @@
   "golden": {
     "file": "golden-roundtrip.vxl",
     "documentJson": "golden-roundtrip.document.json",
-    "semanticHash": "127f625d153cec0927ff8f264c74874ceda0f6125dc11fc94d6fd2fb59ac4280",
+    "semanticHash": "a2d2e1e4059230233a68aa417e4e1ddd9b4eae5290330838c6c22c615f700877",
     "byteLength": 43731,
     "entryCount": 3
   },
