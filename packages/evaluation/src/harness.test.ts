@@ -545,7 +545,7 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
   it("records a cancellation run with zero live changes", async () => {
     const result = await evaluateScenario({
       scenarioId: "chair-create",
-      cancelAfterToolCalls: 1,
+      cancelAfterToolCalls: 2,
     });
     expect(result.run.ok).toBe(false);
     expect(result.run.reason).toBe("canceled");
@@ -599,7 +599,7 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
     const result = await evaluateScenario({
       scenarioId: "chair-create",
       script,
-      cancelAfterToolCalls: 1,
+      cancelAfterToolCalls: 2,
     });
     expect(result.run.ok).toBe(false);
     expect(result.run.reason).toBe("canceled");
@@ -612,6 +612,92 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
     expect(result.run.costUsd).toBe(0.0024);
     expect(result.run.appliedCommands).toBe(0);
     expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
+  });
+
+  it("cancelAfterToolCalls: 0 cancels before the first round with zero activity", async () => {
+    // Issue #80: the documented zero-call cancellation trace must not
+    // send a provider round or execute a tool. Only the initial state
+    // event is emitted; there is no usage, text, or tool activity, and
+    // the recorded tool log and usage stay empty.
+    const events: string[] = [];
+    const result = await evaluateScenario({
+      scenarioId: "chair-create",
+      cancelAfterToolCalls: 0,
+      onEvent: (event) => {
+        events.push(event.kind);
+      },
+    });
+    expect(result.run.ok).toBe(false);
+    expect(result.run.reason).toBe("canceled");
+    expect(result.run.state).toBe("cancel");
+    expect(events).toEqual(["state"]);
+    expect(result.toolLog).toEqual([]);
+    expect(result.run.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
+  });
+
+  it.each([1, 2])(
+    "cancelAfterToolCalls: %i executes exactly %i tool calls before canceling",
+    async (threshold) => {
+      // Issue #80: the threshold is inclusive, so N executed tool calls
+      // are recorded before cancellation (previously N+1).
+      const result = await evaluateScenario({
+        scenarioId: "chair-create",
+        cancelAfterToolCalls: threshold,
+      });
+      expect(result.run.ok).toBe(false);
+      expect(result.run.reason).toBe("canceled");
+      expect(result.toolLog).toHaveLength(threshold);
+    },
+  );
+
+  it("stops before the next call in a multi-call response once the threshold is reached", async () => {
+    // Issue #80: cancellation requested during a response must stop the
+    // loop before another call in the same response is processed.
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "three calls at once",
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "fillBox",
+            arguments: {
+              volumeId: EVAL_IDS.volumeMain,
+              region: { min: [0, 0, 0], max: [1, 1, 1] },
+              material: 1,
+            },
+          },
+          {
+            id: "call_2",
+            name: "fillBox",
+            arguments: {
+              volumeId: EVAL_IDS.volumeMain,
+              region: { min: [1, 0, 0], max: [2, 1, 1] },
+              material: 1,
+            },
+          },
+          {
+            id: "call_3",
+            name: "fillBox",
+            arguments: {
+              volumeId: EVAL_IDS.volumeMain,
+              region: { min: [2, 0, 0], max: [3, 1, 1] },
+              material: 1,
+            },
+          },
+        ],
+      },
+      { text: "never reached" },
+    ];
+    const result = await evaluateScenario({
+      scenarioId: "chair-create",
+      script,
+      cancelAfterToolCalls: 1,
+    });
+    expect(result.run.ok).toBe(false);
+    expect(result.run.reason).toBe("canceled");
+    expect(result.toolLog).toHaveLength(1);
+    expect(result.toolLog[0]?.tool).toBe("fillBox");
   });
 
   it("tracks virtual time and estimated cost through the real pricing path", async () => {

@@ -680,6 +680,37 @@ describe("agent loop: cancellation", () => {
       inputTokens: 2000,
       outputTokens: 200,
     });
+  });
+
+  it("stops before the next call in a multi-call response once canceled", async () => {
+    // Issue #80: cancel() requested from a tool event must stop the
+    // response loop before another call in the same response executes.
+    const h = harness();
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "three calls at once",
+        toolCalls: [
+          fillBoxCall("call_1"),
+          fillBoxCall("call_2"),
+          fillBoxCall("call_3"),
+        ],
+      },
+      { text: "never reached" },
+    ];
+    const holder: { session?: ReturnType<typeof createAgentSession> } = {};
+    const toolEvents: string[] = [];
+    holder.session = h.makeSession(script, {
+      onEvent: (event) => {
+        if (event.kind === "tool") {
+          toolEvents.push(event.tool);
+          holder.session?.cancel();
+        }
+      },
+    });
+    const session = holder.session;
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("canceled");
+    expect(toolEvents).toEqual(["fillBox"]);
     expect(session.preview.closed).toBe(true);
   });
 });

@@ -1142,6 +1142,15 @@ class AgentSessionImpl implements AgentSession {
     let staged = 0;
     let failed = 0;
     for (const call of response.toolCalls) {
+      // Issue #80: a cancellation requested while this response is being
+      // processed (e.g. from a tool event) must stop the loop before
+      // another call in the same response executes.
+      if (this.#cancelRequested || this.#abort.signal.aborted) {
+        return {
+          roundClass: "text",
+          result: this.#canceledResult(),
+        };
+      }
       const reserve = this.#ledger.reserveToolCall();
       if (!reserve.ok) {
         return {
