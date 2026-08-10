@@ -36,6 +36,13 @@ platform, collects every installer, adds the headless CLIs, writes
 `manifest.json` (version, platform, arch, git commit, built-at,
 artifact list, bundle status) into `release/artifacts/<version>/`.
 
+On a tag push, the release workflow publishes the three platform sets
+into one GitHub release. GitHub release assets share one flat name
+namespace, so every published asset is prefixed with its platform and
+architecture (e.g. `macos-arm64-`, `windows-x64-`, `linux-x64-`); the
+checksums and manifest inside each set are regenerated to name the
+published files.
+
 Verify an artifact set with:
 
 ```sh
