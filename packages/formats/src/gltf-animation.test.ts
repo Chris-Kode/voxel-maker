@@ -479,6 +479,64 @@ describe("buildTrackSamples", () => {
     ]);
   });
 
+  it("matches the runtime's hold semantics across the whole clip (issue #99)", () => {
+    // Evaluate the exported LINEAR sampler at regular times and compare
+    // against the runtime policy documented by packages/animation/src/
+    // sample.ts: hold the first value before the first keyframe, lerp
+    // between authored keys, hold the last value after the last keyframe.
+    const track: AnimationTrack = {
+      trackId: trackId("track:issue99:match"),
+      targetNodeId: BODY,
+      interpolation: "linear",
+      keyframes: [
+        {
+          keyframeId: keyframeId("key:issue99:match:0"),
+          time: 1,
+          property: { channel: "translation", value: [10, 0, 0] },
+        },
+        {
+          keyframeId: keyframeId("key:issue99:match:1"),
+          time: 2,
+          property: { channel: "translation", value: [20, 0, 0] },
+        },
+      ],
+    };
+    const samples = buildTrackSamples(track, 4, LOW_LIMITS);
+    const input = [...(samples?.input ?? [])];
+    const output = [...(samples?.output ?? [])];
+    const at = (time: number): readonly number[] => {
+      const upper = input.findIndex((candidate) => candidate > time);
+      if (upper === -1) {
+        return output.slice((input.length - 1) * 3, input.length * 3);
+      }
+      if (upper <= 0) return output.slice(0, 3);
+      const lower = upper - 1;
+      const a = output.slice(lower * 3, lower * 3 + 3);
+      const b = output.slice(upper * 3, upper * 3 + 3);
+      const span = (input[upper] ?? 0) - (input[lower] ?? 0);
+      const u = (time - (input[lower] ?? 0)) / span;
+      return [0, 1, 2].map(
+        (index) => (a[index] ?? 0) + ((b[index] ?? 0) - (a[index] ?? 0)) * u,
+      );
+    };
+    // Runtime policy: [10,0,0] over [0,1], lerp 10->20 over [1,2],
+    // [20,0,0] over [2,4].
+    const expected: readonly (readonly [number, readonly number[]])[] = [
+      [0, [10, 0, 0]],
+      [0.5, [10, 0, 0]],
+      [1, [10, 0, 0]],
+      [1.5, [15, 0, 0]],
+      [2, [20, 0, 0]],
+      [2.5, [20, 0, 0]],
+      [3, [20, 0, 0]],
+      [3.5, [20, 0, 0]],
+      [4, [20, 0, 0]],
+    ];
+    for (const [time, value] of expected) {
+      expect(at(time), `time ${String(time)}`).toEqual(value);
+    }
+  });
+
   it("holds STEP boundaries without changing the interpolation mode (issue #99)", () => {
     const track: AnimationTrack = {
       trackId: trackId("track:issue99:step"),

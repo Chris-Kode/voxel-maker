@@ -94,6 +94,33 @@ function blendValue(
 }
 
 /**
+ * Appends held boundary samples so a sampler covers `[0, clipDuration]`
+ * (issue #99). The runtime holds the first value before the first
+ * keyframe and the last value after the last keyframe
+ * (packages/animation/src/sample.ts), so a sampler over only the
+ * authored times would drop the Clip's leading and trailing hold
+ * intervals. A boundary whose time is already an authored key is
+ * skipped, so input times stay strictly increasing; identical adjacent
+ * values keep LINEAR/STEP segments constant.
+ */
+function addHeldBoundaries(
+  input: number[],
+  output: number[],
+  first: AnimationTrack["keyframes"][number],
+  last: AnimationTrack["keyframes"][number],
+  clipDuration: number,
+): void {
+  if (first.time > 0) {
+    input.unshift(0);
+    output.unshift(...first.property.value);
+  }
+  if (last.time < clipDuration) {
+    input.push(clipDuration);
+    output.push(...last.property.value);
+  }
+}
+
+/**
  * Converts one track to a glTF sampler, or undefined when the track has
  * no keyframes (no motion). `clipDuration` bounds the constant sample of
  * a single-keyframe track.
@@ -125,24 +152,13 @@ export function buildTrackSamples(
   if (track.interpolation === "step" || track.interpolation === "linear") {
     const input: number[] = [];
     const output: number[] = [];
-    const push = (time: number, value: readonly number[]): void => {
-      input.push(time);
-      output.push(...value);
-    };
-    // The runtime holds the first value before the first keyframe and the
-    // last value after the last keyframe (packages/animation/src/sample.ts),
-    // so a sampler over only the authored times would drop the Clip's
-    // leading and trailing hold intervals. Emit held boundary samples at 0
-    // and clipDuration unless an authored key already lies there (issue
-    // #99); identical adjacent values keep LINEAR/STEP segments constant.
-    if (first.time > 0) push(0, first.property.value);
     for (const keyframe of keyframes) {
-      push(keyframe.time, keyframe.property.value);
+      input.push(keyframe.time);
+      output.push(...keyframe.property.value);
     }
     const last = keyframes[keyframes.length - 1];
-    if (last !== undefined && last.time < clipDuration) {
-      push(clipDuration, last.property.value);
-    }
+    if (last !== undefined)
+      addHeldBoundaries(input, output, first, last, clipDuration);
     return {
       input: Float32Array.from(input),
       output: Float32Array.from(output),
@@ -167,13 +183,6 @@ export function buildTrackSamples(
     input.push(time);
     output.push(...value);
   };
-  // The runtime holds the first value before the first keyframe and the
-  // last value after the last keyframe (packages/animation/src/sample.ts),
-  // so the baked sampler must cover [0, clipDuration] with the authored
-  // endpoint values held outside the keyframe range (issue #99). The
-  // leading sample is pushed before the segments so inputs stay strictly
-  // increasing; the trailing sample after the final authored key.
-  if (first.time > 0) push(0, first.property.value);
   for (let index = 0; index < keyframes.length - 1; index += 1) {
     const lower = keyframes[index];
     const upper = keyframes[index + 1];
@@ -196,9 +205,8 @@ export function buildTrackSamples(
   }
   const last = keyframes[keyframes.length - 1];
   if (last !== undefined) push(last.time, last.property.value);
-  if (last !== undefined && last.time < clipDuration) {
-    push(clipDuration, last.property.value);
-  }
+  if (last !== undefined)
+    addHeldBoundaries(input, output, first, last, clipDuration);
   return {
     input: Float32Array.from(input),
     output: Float32Array.from(output),
