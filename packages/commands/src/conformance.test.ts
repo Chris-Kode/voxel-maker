@@ -7,7 +7,10 @@ import {
   type CommandId,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import type { DocumentStoreRead } from "@voxel-maker/document";
+import {
+  createDocumentStore,
+  type DocumentStoreRead,
+} from "@voxel-maker/document";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
 import {
@@ -329,6 +332,74 @@ const volumeCreateSpec: CommandConformanceSpec = {
   },
 };
 runCommandConformanceSuite(volumeCreateSpec, { describe, it, expect });
+
+describe("volume.create append mode material validation (issue #86)", () => {
+  const makeHarness = () => {
+    const document = createVolumeConformanceDocument();
+    const { store, writeCapability } = createDocumentStore({ document });
+    const registry = new CommandRegistry();
+    registerVolumeCommands(registry);
+    const bus = new CommandBus(store, registry, writeCapability);
+    return { store, bus };
+  };
+
+  it("rejects appending entries with undeclared materials atomically", () => {
+    const { store, bus } = makeHarness();
+    let events = 0;
+    store.subscribe(() => {
+      events += 1;
+    });
+    const result = bus.executeTransaction(
+      [
+        createVolumeCommand(commandId("command:conformance:append:0001"), {
+          volumeId: NEW_VOLUME,
+          name: "Imported",
+        }),
+        createVolumeCommand(commandId("command:conformance:append:0002"), {
+          volumeId: NEW_VOLUME,
+          entries: [{ coordinate: [0, 0, 0], material: materialId(65_535) }],
+        }),
+      ],
+      {
+        transactionId: transactionId("transaction:conformance:append:0001"),
+        expectedRevision: 0,
+        source: "import",
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("MISSING_MATERIAL");
+    expect(store.revision).toBe(0);
+    expect(events).toBe(0);
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+  });
+
+  it("appends entries whose materials are declared in the same transaction", () => {
+    const { store, bus } = makeHarness();
+    const result = bus.executeTransaction(
+      [
+        createVolumeCommand(commandId("command:conformance:append:0003"), {
+          volumeId: NEW_VOLUME,
+          name: "Imported",
+        }),
+        createVolumeCommand(commandId("command:conformance:append:0004"), {
+          volumeId: NEW_VOLUME,
+          entries: [{ coordinate: [0, 0, 0], material: materialId(1) }],
+        }),
+      ],
+      {
+        transactionId: transactionId("transaction:conformance:append:0002"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(store.revision).toBe(1);
+    expect(store.getVoxel(NEW_VOLUME, [0, 0, 0])).toBe(1);
+  });
+});
 
 const volumeDeleteSpec: CommandConformanceSpec = {
   name: "volume.delete@1",

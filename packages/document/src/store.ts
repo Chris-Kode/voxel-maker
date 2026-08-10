@@ -15,6 +15,7 @@ import {
   type VoxelDocument,
 } from "@voxel-maker/model";
 import {
+  CHUNK_VOXEL_COUNT,
   DEFAULT_VOXEL_VOLUME_LIMITS,
   type VoxelChunkSeed,
   type VoxelVolume,
@@ -129,6 +130,51 @@ export interface DocumentStoreHandle {
   readonly writeCapability: VoxelWriteCapability;
 }
 
+/**
+ * Stable structured rejection for a voxel reference to a material the
+ * document does not declare (issue #86). Zero is empty and always valid.
+ * Volume and chunk coordinates are included when known (load paths) and
+ * omitted from commit-time defense checks, which only know the material.
+ */
+function undeclaredMaterialError(
+  material: number,
+  volumeId?: VolumeId,
+  coordinate?: Vec3i,
+): WorkspaceError {
+  return new WorkspaceError({
+    family: "validation",
+    code: "MISSING_MATERIAL",
+    message: "Material is not defined in the document",
+    context: {
+      material: String(material),
+      ...(volumeId === undefined ? {} : { volumeId }),
+      ...(coordinate === undefined ? {} : { coordinate }),
+    },
+  });
+}
+
+/**
+ * Bounded aggregate validation of one loaded chunk's material references
+ * (issue #86): every nonzero value must name a declared document material.
+ * The scan is capped at one chunk (4096 cells) so a hostile oversized seed
+ * is bounded before the length check in repository construction rejects it;
+ * scanning stops at the first violation.
+ */
+export function validateChunkMaterialReferences(
+  document: VoxelDocument,
+  volumeId: VolumeId,
+  values: Uint16Array,
+  coordinate?: Vec3i,
+): void {
+  const cells = Math.min(values.length, CHUNK_VOXEL_COUNT);
+  for (let index = 0; index < cells; index += 1) {
+    const value = values[index] as number;
+    if (value !== 0 && document.materials[value as MaterialId] === undefined) {
+      throw undeclaredMaterialError(value, volumeId, coordinate);
+    }
+  }
+}
+
 /** Creates the authoritative store for one validated document. */
 export function createDocumentStore(
   input: CreateDocumentStoreInput,
@@ -159,6 +205,19 @@ export function createDocumentStore(
           message: "Seeded volume is not part of the document",
           context: { volumeId },
         });
+      }
+    }
+    // Issue #86: reject seeded chunk values referencing undeclared materials
+    // before any repository construction, so a native load can never install
+    // a dangling material reference (the aggregate referential invariant).
+    for (const [volumeId, chunkSeeds] of input.volumes) {
+      for (const seed of chunkSeeds) {
+        validateChunkMaterialReferences(
+          input.document,
+          volumeId,
+          seed.values,
+          seed.coordinate,
+        );
       }
     }
   }
@@ -233,6 +292,34 @@ class DocumentStoreImpl implements DocumentStore {
     };
   }
 
+  /**
+   * Scans chunks mutated during staging for voxel values referencing
+   * undeclared materials (issue #86, defense in depth). The primary gate is
+   * per-handler validation; this covers any handler, direct commit caller,
+   * or replay path that forgets to validate before mutation.
+   */
+  #validateStagedMaterialReferences(staged: StagedState): void {
+    for (const [volumeId, volume] of staged.volumes) {
+      const committed = this.#repository.getVolume(volumeId);
+      for (const coordinate of volume.chunkCoordinates()) {
+        const stagedRevision = volume.chunkRevision(coordinate);
+        const committedRevision =
+          committed === undefined
+            ? undefined
+            : this.#repository.chunkRevision(volumeId, coordinate);
+        if (stagedRevision === committedRevision) continue;
+        const values = volume.getChunk(coordinate);
+        if (values === undefined) continue;
+        validateChunkMaterialReferences(
+          staged.document,
+          volumeId,
+          values,
+          coordinate,
+        );
+      }
+    }
+  }
+
   commit(
     staged: StagedState,
     event: DocumentCommitted,
@@ -289,6 +376,14 @@ class DocumentStoreImpl implements DocumentStore {
         path: issues[0].path,
       });
     }
+    // Issue #86 defense in depth: every voxel material reference written by
+    // the transaction must be declared in the staged document. Chunks
+    // unchanged during staging were already validated at install or at
+    // their last commit, so only chunks whose mutation revision differs
+    // from the committed revision (or that are new) are scanned; this is
+    // bounded by the transaction's own voxel budget and also covers direct
+    // commit callers that report no change sets.
+    this.#validateStagedMaterialReferences(staged);
     for (const volumeId of staged.volumes.keys()) {
       if (staged.document.volumes[volumeId] === undefined) {
         throw new WorkspaceError({

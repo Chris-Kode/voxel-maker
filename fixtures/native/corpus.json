@@ -4,8 +4,8 @@
   "golden": {
     "file": "golden-roundtrip.vxl",
     "documentJson": "golden-roundtrip.document.json",
-    "semanticHash": "a2d2e1e4059230233a68aa417e4e1ddd9b4eae5290330838c6c22c615f700877",
-    "byteLength": 43731,
+    "semanticHash": "2ab4ef7c41b811c4c0938469a6fa1211d07f5be0318f97e52f4d6855d1460652",
+    "byteLength": 43951,
     "entryCount": 3
   },
   "rejected": [
@@ -104,6 +104,12 @@
       "vector": "zip has no manifest.json entry at all",
       "family": "io",
       "code": "MISSING_MANIFEST"
+    },
+    {
+      "file": "dangling-material-reference.vxl",
+      "vector": "voxel values reference a material the document does not declare",
+      "family": "validation",
+      "code": "MISSING_MATERIAL"
     },
     {
       "file": "document-missing-volume.vxl",

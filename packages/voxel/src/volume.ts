@@ -279,6 +279,17 @@ export class VoxelVolume implements VoxelVolumeReadView {
     return chunk === undefined ? undefined : chunk.values.slice();
   }
 
+  /**
+   * In-session mutation revision of the chunk at `coordinate`, or undefined
+   * when the chunk is absent. Cloning preserves revisions and every
+   * mutation bumps them, so a staged chunk whose revision differs from the
+   * committed chunk (or that is absent there) changed during staging.
+   * Revisions are runtime metadata, never semantic content.
+   */
+  chunkRevision(coordinate: Vec3i): number | undefined {
+    return this.#chunks.get(chunkKey(coordinate))?.revision;
+  }
+
   chunkCount(): number {
     return this.#chunks.size;
   }

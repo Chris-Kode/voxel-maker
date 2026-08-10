@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createDocumentStore } from "@voxel-maker/document";
+import {
+  createDocumentStore,
+  type DocumentStoreRead,
+} from "@voxel-maker/document";
 import { createDocument } from "@voxel-maker/model";
 import { documentId, materialId, nodeId, volumeId } from "@voxel-maker/shared";
 import {
@@ -101,42 +104,87 @@ const isRed = (r: number, g: number, b: number): boolean =>
 const isBlue = (r: number, g: number, b: number): boolean =>
   b - Math.max(r, g) > 40;
 
-/** Store whose chunks reference a material id with no document record. */
-function createStoreWithoutMaterialRecords(): ReturnType<
-  typeof createPreviewFixtureStore
-> {
+/**
+ * Read model whose chunks reference a material id with no document record.
+ * Issue #86 rejects dangling references at the store seam, so this test
+ * feeds the renderer interface a valid store whose document projection
+ * drops the record — the magenta fallback is defensive renderer behavior
+ * (ARCHITECTURE.md renderer/material adapter contract).
+ */
+function createStoreWithoutMaterialRecords(): DocumentStoreRead {
   const root = nodeId("node:preview:nomaterial");
   const volume = volumeId("volume:preview:nomaterial");
-  const document = createDocument({
-    documentId: documentId("document:preview:nomaterial"),
-    metadata: { title: "no material fixture" },
-    rootNodeId: root,
-    nodes: [
-      {
-        nodeId: root,
-        name: "Root",
-        parentId: null,
-        children: [],
-        transform: {
-          translation: [0, 0, 0],
-          pivot: [0, 0, 0],
-          rotation: [0, 0, 0, 1],
-          scale: [1, 1, 1],
+  const buildDocument = (
+    materials: readonly {
+      materialId: number;
+      name: string;
+      color: string;
+    }[],
+  ) =>
+    createDocument({
+      documentId: documentId("document:preview:nomaterial"),
+      metadata: { title: "no material fixture" },
+      rootNodeId: root,
+      nodes: [
+        {
+          nodeId: root,
+          name: "Root",
+          parentId: null,
+          children: [],
+          transform: {
+            translation: [0, 0, 0],
+            pivot: [0, 0, 0],
+            rotation: [0, 0, 0, 1],
+            scale: [1, 1, 1],
+          },
+          components: [{ kind: "voxel", schemaVersion: 1, volumeId: volume }],
         },
-        components: [{ kind: "voxel", schemaVersion: 1, volumeId: volume }],
-      },
-    ],
-    materials: [],
-    volumes: [{ volumeId: volume, bounds: { min: [0, 0, 0], max: [2, 2, 2] } }],
+      ],
+      materials: materials.map((material) => ({
+        materialId: materialId(material.materialId),
+        name: material.name,
+        color: material.color,
+        opacity: 1,
+        roughness: 0.5,
+        metallic: 0,
+        emissive: 0,
+      })),
+      volumes: [
+        { volumeId: volume, bounds: { min: [0, 0, 0], max: [2, 2, 2] } },
+      ],
+    });
+  // The installed store must be valid (material 1 declared); the projection
+  // handed to the renderer drops the record to exercise the fallback.
+  const { store } = createDocumentStore({
+    document: buildDocument([
+      { materialId: 1, name: "stone", color: "#aabbcc" },
+    ]),
+    volumes: new Map([
+      [
+        volume,
+        [
+          {
+            coordinate: [0, 0, 0],
+            values: (() => {
+              const values = new Uint16Array(4096);
+              values[0] = 1;
+              return values;
+            })(),
+          },
+        ],
+      ],
+    ]),
   });
-  const values = new Uint16Array(4096);
-  values[0] = 1;
-  return createDocumentStore({
-    document,
-    volumes: new Map([[volume, [{ coordinate: [0, 0, 0], values }]]]),
-  }).store;
+  return {
+    revision: store.revision,
+    limits: store.limits,
+    volumeLimits: store.volumeLimits,
+    getDocument: () => buildDocument([]),
+    getVolume: (volumeId) => store.getVolume(volumeId),
+    getVoxel: (volumeId, coordinate) => store.getVoxel(volumeId, coordinate),
+    subscribe: (listener) => store.subscribe(listener),
+  };
 }
-
 /**
  * Store with two opaque 1x1x1 voxels stacked along the fixed perspective
  * camera's center ray (ticket #61): the NEAR voxel at [6, 5, 6] is blue

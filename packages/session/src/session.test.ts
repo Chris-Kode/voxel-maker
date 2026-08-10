@@ -315,6 +315,19 @@ describe("DocumentSession lifecycle coordinator", () => {
     expect(state.store.getVoxel(VOLUME, [5, 5, 5])).toBe(0);
   });
 
+  it("rejects chunk seeds referencing undeclared materials before install (issue #86)", () => {
+    const session = createSession();
+    const values = new Uint16Array(4096);
+    values[0] = 2;
+    expect(() =>
+      session.open({
+        document: createFixtureDocument(1),
+        volumes: new Map([[VOLUME, [{ coordinate: [0, 0, 0], values }]]]),
+      }),
+    ).toThrow(/Material is not defined/u);
+    expect(session.current).toBeUndefined();
+  });
+
   it("keeps a throwing listener from breaking the transition", () => {
     const session = createSession();
     session.subscribe(() => {

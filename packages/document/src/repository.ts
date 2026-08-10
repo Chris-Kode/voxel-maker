@@ -42,6 +42,15 @@ export class VoxelRepository {
     return this.#volumes.get(volumeId);
   }
 
+  /**
+   * In-session mutation revision of a committed chunk (issue #86): the
+   * commit-time referential check compares staged revisions against these
+   * to scan only chunks that changed during staging.
+   */
+  chunkRevision(volumeId: VolumeId, coordinate: Vec3i): number | undefined {
+    return this.#volumes.get(volumeId)?.chunkRevision(coordinate);
+  }
+
   /** Material at a voxel coordinate; 0 when empty or the volume is missing. */
   getVoxel(volumeId: VolumeId, coordinate: Vec3i): MaterialId {
     return (

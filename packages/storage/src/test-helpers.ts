@@ -57,6 +57,15 @@ export function createDemoDocument(): VoxelDocument {
         metallic: 0,
         emissive: 0,
       },
+      {
+        materialId: materialId(2),
+        name: "demo2",
+        color: "#0088ff",
+        opacity: 1,
+        roughness: 0.5,
+        metallic: 0,
+        emissive: 0,
+      },
     ],
     volumes: [
       {
