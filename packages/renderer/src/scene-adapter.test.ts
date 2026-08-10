@@ -17,7 +17,7 @@ import {
   type VoxelDocument,
 } from "@voxel-maker/model";
 import { createSimpleCharacterFixture } from "@voxel-maker/rigging";
-import type { Transform } from "@voxel-maker/math";
+import { transformToMatrix, type Transform } from "@voxel-maker/math";
 import {
   createDocumentStore,
   type ChangedVolume,
@@ -258,6 +258,24 @@ describe("scene adapter", () => {
     expect(childGroup.matrix.elements[13]).toBe(0);
     expect(childGroup.matrix.elements[14]).toBe(0);
     adapter.dispose();
+  });
+
+  it("exposes column-major matrices consumable by Three.js without transpose (issue #82)", () => {
+    // Regression test for issue #82: `transformToMatrix` must store the
+    // matrix column-major so a standard consumer (`THREE.Matrix4.fromArray`
+    // + `applyMatrix4`) maps the origin to the translation directly. The
+    // scene adapter must not need its former `.transpose()` workaround.
+    const matrix = new THREE.Matrix4().fromArray(
+      transformToMatrix({
+        translation: [1, 2, 3],
+        pivot: [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      }),
+    );
+    expect(new THREE.Vector3(0, 0, 0).applyMatrix4(matrix).toArray()).toEqual([
+      1, 2, 3,
+    ]);
   });
 
   it("projects the constrained local rotation (plan S9.6, ticket #27)", () => {

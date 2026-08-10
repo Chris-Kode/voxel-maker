@@ -362,7 +362,8 @@ function worldOrigin(document: VoxelDocument, id: NodeId): readonly number[] {
     if (node === undefined) throw new Error("missing node in chain");
     matrix = multiply(matrix, transformToMatrix(node.transform));
   }
-  return [matrix[3] as number, matrix[7] as number, matrix[11] as number];
+  // Column-major storage (issue #82): translation at indices 12-14.
+  return [matrix[12] as number, matrix[13] as number, matrix[14] as number];
 }
 
 const identityMatrix = (): readonly number[] => [
@@ -373,14 +374,16 @@ const multiply = (
   a: readonly number[],
   b: readonly number[],
 ): readonly number[] => {
+  // Column-major storage (issue #82): element (row, column) at
+  // index row + 4 * column.
   const out = new Array<number>(16).fill(0);
-  for (let row = 0; row < 4; row += 1) {
-    for (let col = 0; col < 4; col += 1) {
+  for (let col = 0; col < 4; col += 1) {
+    for (let row = 0; row < 4; row += 1) {
       let sum = 0;
       for (let k = 0; k < 4; k += 1) {
-        sum += (a[row * 4 + k] as number) * (b[k * 4 + col] as number);
+        sum += (a[row + 4 * k] as number) * (b[k + 4 * col] as number);
       }
-      out[row * 4 + col] = sum;
+      out[row + 4 * col] = sum;
     }
   }
   return out;
@@ -399,22 +402,23 @@ const transformToMatrix = (transform: Transform): readonly number[] => {
   const r20 = 2 * (qx * qz - qy * qw);
   const r21 = 2 * (qy * qz + qx * qw);
   const r22 = 1 - 2 * (qx * qx + qy * qy);
+  // Column-major storage (issue #82): translation at indices 12-14.
   return [
     r00 * sx,
-    r01 * sy,
-    r02 * sz,
-    tx,
     r10 * sx,
-    r11 * sy,
-    r12 * sz,
-    ty,
     r20 * sx,
+    0,
+    r01 * sy,
+    r11 * sy,
     r21 * sy,
+    0,
+    r02 * sz,
+    r12 * sz,
     r22 * sz,
+    0,
+    tx,
+    ty,
     tz,
-    0,
-    0,
-    0,
     1,
   ];
 };

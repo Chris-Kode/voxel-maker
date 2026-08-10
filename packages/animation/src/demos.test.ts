@@ -63,15 +63,18 @@ const worldOf = (state: AnimationRuntimeState, id: string) => {
   return matrix;
 };
 
-/** World angle of the given axis from a row-major matrix (renderer math). */
+/** World angle of the given axis from a column-major matrix (issue #82). */
 const worldAngle = (
   matrix: ReturnType<typeof worldOf>,
   axis: "x" | "y" | "z",
 ): number => {
-  if (axis === "x") return Math.atan2(matrix[9], matrix[10]);
-  if (axis === "y") return Math.atan2(-matrix[8], matrix[0]);
-  // Standard Rz is [c,-s; s,c], so the (0,1) element is -sin(angle).
-  return Math.atan2(-matrix[1], matrix[0]);
+  // Column-major storage: element (row, column) at index row + 4 * column.
+  // Rx: -sin at (1,2) = index 9, cos at (2,2) = index 10.
+  if (axis === "x") return Math.atan2(-matrix[9], matrix[10]);
+  // Ry: -sin at (2,0) = index 2, cos at (0,0) = index 0.
+  if (axis === "y") return Math.atan2(-matrix[2], matrix[0]);
+  // Rz: sin at (1,0) = index 1, cos at (0,0) = index 0.
+  return Math.atan2(matrix[1], matrix[0]);
 };
 
 /** Content point of the demo fixture projected through the runtime. */

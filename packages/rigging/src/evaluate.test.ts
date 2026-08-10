@@ -55,17 +55,19 @@ const childTransform: Transform = {
   scale: [1, 1, 1],
 };
 
+// Column-major storage (issue #82): columns of the linear part, then the
+// translation column at indices 12-14.
 const CHILD_LOCAL_GOLDEN: Mat4 = [
-  -1, 0, 0, 3, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1,
+  -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 3, 0, 0, 1,
 ];
 
 /**
  * World of the child under the scaled parent:
- * `S(2,1,1) x local`, row 0 scaled by 2:
- *   world = [-2, 0, 0, 6 | 0, 1, 0, 0 | 0, 0, -1, 0 | 0, 0, 0, 1]
+ * `S(2,1,1) x local`, column 0 scaled by 2:
+ *   world = [-2, 0, 0 | 0, 1, 0 | 0, 0, -1 | 6, 0, 0]
  */
 const CHILD_WORLD_GOLDEN: Mat4 = [
-  -2, 0, 0, 6, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1,
+  -2, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 6, 0, 0, 1,
 ];
 
 const grandchildTransform: Transform = {
@@ -165,8 +167,9 @@ describe("evaluateLocalTransform", () => {
       rotation: [0, 0, 0, 1],
       scale: [1, 1, 1],
     };
+    // Column-major storage (issue #82): translation at indices 12-14.
     expect(evaluateLocalTransform(transform)).toEqual([
-      1, 0, 0, 4, 0, 1, 0, 5, 0, 0, 1, 6, 0, 0, 0, 1,
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 5, 6, 1,
     ]);
   });
 });
@@ -265,18 +268,18 @@ function composePivotFormula(transform: Transform): Mat4 {
     1,
     0,
     0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
     v[0],
-    0,
-    1,
-    0,
     v[1],
-    0,
-    0,
-    1,
     v[2],
-    0,
-    0,
-    0,
     1,
   ];
   return multiplyMatrices(

@@ -201,11 +201,12 @@ describe("constraint layer (plan S9.5, ticket #27)", () => {
     const animatedY = quaternionToEulerXYZ(localRotation)[1];
     expect(animatedY).toBeCloseTo(Math.PI / 4, 9);
     // ...but the world pass sees the clamped rotation: the wheel's Y
-    // rotation in the world matrix sits at the +-30 deg limit (row
-    // major: Ry[0][0] = cos, Ry[2][0] = -sin).
+    // rotation in the world matrix sits at the +30 deg limit
+    // (column-major: Ry[0][0] = cos at index 0, Ry[2][0] = -sin at
+    // index 2).
     const world = worldOf(runtime, WHEEL);
-    const worldAngle = Math.atan2(-world[8], world[0]);
-    expect(Math.abs(worldAngle)).toBeCloseTo(Math.PI / 6, 6);
+    const worldAngle = Math.atan2(-world[2], world[0]);
+    expect(worldAngle).toBeCloseTo(Math.PI / 6, 6);
     // The base document is untouched: the constraint is still there and
     // the authored rotation is identity (voxel + pivot + joint +
     // constraint).

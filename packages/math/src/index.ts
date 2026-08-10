@@ -242,8 +242,15 @@ export function isCanonicalQuat(
 }
 
 /**
- * 4x4 affine matrix in row-major order (ADR-0001: matrices are runtime-only).
- * A point is a column vector; `applyMatrix` computes `M * p`.
+ * 4x4 affine matrix in column-major storage (plan.md: "Matrices:
+ * column-major only inside math/runtime APIs"; ADR-0001: matrices are
+ * runtime-only): element `(row, column)` lives at index
+ * `row + 4 * column`, so the translation column occupies indices 12-14
+ * and the last row is `[0, 0, 0, 1]` at indices 3, 7, 11, 15. This
+ * matches the storage convention of standard column-major consumers such
+ * as Three.js/WebGL (`Matrix4.fromArray`), so matrices can be handed to
+ * them directly. A point is a column vector; `applyMatrix` computes
+ * `M * p`.
  */
 export type Mat4 = readonly [
   number,
@@ -280,9 +287,9 @@ function quantizeDerived(value: number): number {
 export function applyMatrix(matrix: Mat4, point: Vec3): Vec3 {
   const [x, y, z] = point;
   return [
-    matrix[0] * x + matrix[1] * y + matrix[2] * z + matrix[3],
-    matrix[4] * x + matrix[5] * y + matrix[6] * z + matrix[7],
-    matrix[8] * x + matrix[9] * y + matrix[10] * z + matrix[11],
+    matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+    matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+    matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
   ];
 }
 
@@ -319,22 +326,25 @@ export function transformToMatrix(transform: Transform): Mat4 {
   const tauX = tx + px - (a00 * px + a01 * py + a02 * pz);
   const tauY = ty + py - (a10 * px + a11 * py + a12 * pz);
   const tauZ = tz + pz - (a20 * px + a21 * py + a22 * pz);
+  // Column-major storage: column 0 = [a00, a10, a20, 0], column 1 =
+  // [a01, a11, a21, 0], column 2 = [a02, a12, a22, 0], column 3 =
+  // [tauX, tauY, tauZ, 1] (translation at indices 12-14).
   return [
     a00,
-    a01,
-    a02,
-    tauX,
     a10,
-    a11,
-    a12,
-    tauY,
     a20,
+    0,
+    a01,
+    a11,
     a21,
+    0,
+    a02,
+    a12,
     a22,
+    0,
+    tauX,
+    tauY,
     tauZ,
-    0,
-    0,
-    0,
     1,
   ];
 }
@@ -342,12 +352,14 @@ export function transformToMatrix(transform: Transform): Mat4 {
 /** Multiplies two 4x4 matrices: `a * b` (apply `b` first, then `a`). */
 export function multiplyMatrices(a: Mat4, b: Mat4): Mat4 {
   const result: number[] = [];
-  for (let row = 0; row < 4; row += 1) {
-    for (let column = 0; column < 4; column += 1) {
+  // Column-major storage: iterate columns in the outer loop so the pushed
+  // order is `row + 4 * column`.
+  for (let column = 0; column < 4; column += 1) {
+    for (let row = 0; row < 4; row += 1) {
       let sum = 0;
       for (let inner = 0; inner < 4; inner += 1) {
         sum +=
-          (a[row * 4 + inner] as number) * (b[inner * 4 + column] as number);
+          (a[row + 4 * inner] as number) * (b[inner + 4 * column] as number);
       }
       result.push(sum);
     }
@@ -358,17 +370,17 @@ export function multiplyMatrices(a: Mat4, b: Mat4): Mat4 {
 /** Inverts a 4x4 affine matrix (linear part inverse plus translation). */
 export function invertMatrix(matrix: Mat4): Mat4 {
   const a00 = matrix[0];
-  const a01 = matrix[1];
-  const a02 = matrix[2];
-  const a10 = matrix[4];
+  const a01 = matrix[4];
+  const a02 = matrix[8];
+  const a10 = matrix[1];
   const a11 = matrix[5];
-  const a12 = matrix[6];
-  const a20 = matrix[8];
-  const a21 = matrix[9];
+  const a12 = matrix[9];
+  const a20 = matrix[2];
+  const a21 = matrix[6];
   const a22 = matrix[10];
-  const tauX = matrix[3];
-  const tauY = matrix[7];
-  const tauZ = matrix[11];
+  const tauX = matrix[12];
+  const tauY = matrix[13];
+  const tauZ = matrix[14];
   const determinant =
     a00 * (a11 * a22 - a12 * a21) -
     a01 * (a10 * a22 - a12 * a20) +
@@ -390,22 +402,24 @@ export function invertMatrix(matrix: Mat4): Mat4 {
   const b20 = (a10 * a21 - a11 * a20) * invDet;
   const b21 = (a01 * a20 - a00 * a21) * invDet;
   const b22 = (a00 * a11 - a01 * a10) * invDet;
+  // Column-major storage: columns of the inverse linear part, then the
+  // inverse translation `-B * tau` at indices 12-14.
   return [
     b00,
-    b01,
-    b02,
-    -(b00 * tauX + b01 * tauY + b02 * tauZ),
     b10,
-    b11,
-    b12,
-    -(b10 * tauX + b11 * tauY + b12 * tauZ),
     b20,
+    0,
+    b01,
+    b11,
     b21,
+    0,
+    b02,
+    b12,
     b22,
+    0,
+    -(b00 * tauX + b01 * tauY + b02 * tauZ),
+    -(b10 * tauX + b11 * tauY + b12 * tauZ),
     -(b20 * tauX + b21 * tauY + b22 * tauZ),
-    0,
-    0,
-    0,
     1,
   ];
 }
@@ -420,17 +434,17 @@ export function invertMatrix(matrix: Mat4): Mat4 {
  */
 export function decomposeMatrix(matrix: Mat4, pivot: Vec3): Transform {
   const a00 = matrix[0];
-  const a01 = matrix[1];
-  const a02 = matrix[2];
-  const a10 = matrix[4];
+  const a01 = matrix[4];
+  const a02 = matrix[8];
+  const a10 = matrix[1];
   const a11 = matrix[5];
-  const a12 = matrix[6];
-  const a20 = matrix[8];
-  const a21 = matrix[9];
+  const a12 = matrix[9];
+  const a20 = matrix[2];
+  const a21 = matrix[6];
   const a22 = matrix[10];
-  const tauX = matrix[3];
-  const tauY = matrix[7];
-  const tauZ = matrix[11];
+  const tauX = matrix[12];
+  const tauY = matrix[13];
+  const tauZ = matrix[14];
   const scaleX = Math.sqrt(a00 * a00 + a10 * a10 + a20 * a20);
   const scaleY = Math.sqrt(a01 * a01 + a11 * a11 + a21 * a21);
   const scaleZ = Math.sqrt(a02 * a02 + a12 * a12 + a22 * a22);

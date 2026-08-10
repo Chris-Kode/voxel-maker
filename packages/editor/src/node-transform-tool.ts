@@ -4,6 +4,7 @@ import {
   type NodeId,
 } from "@voxel-maker/shared";
 import {
+  applyMatrix,
   canonicalTransform,
   decomposeMatrix,
   invertMatrix,
@@ -222,7 +223,7 @@ function nodeSelectionBounds(
     const resolved: SelectionWorldBounds =
       local ??
       (() => {
-        const origin = applyMatrixPoint(matrix, [0, 0, 0]);
+        const origin = applyMatrix(matrix, [0, 0, 0]);
         return { min: origin, max: origin };
       })();
     bounds = bounds === undefined ? resolved : unionBounds(bounds, resolved);
@@ -230,29 +231,12 @@ function nodeSelectionBounds(
   return bounds;
 }
 
-function applyMatrixPoint(matrix: Mat4, point: Vec3): Vec3 {
-  return [
-    matrix[0] * point[0] +
-      matrix[1] * point[1] +
-      matrix[2] * point[2] +
-      matrix[3],
-    matrix[4] * point[0] +
-      matrix[5] * point[1] +
-      matrix[6] * point[2] +
-      matrix[7],
-    matrix[8] * point[0] +
-      matrix[9] * point[1] +
-      matrix[10] * point[2] +
-      matrix[11],
-  ];
-}
-
 function transformLocalBounds(
   matrix: Mat4,
   bounds: { readonly min: Vec3; readonly max: Vec3 },
   into: SelectionWorldBounds | undefined,
 ): SelectionWorldBounds {
-  const first = applyMatrixPoint(matrix, [
+  const first = applyMatrix(matrix, [
     bounds.min[0],
     bounds.min[1],
     bounds.min[2],
@@ -262,7 +246,7 @@ function transformLocalBounds(
     for (let y = 0; y < 2; y += 1) {
       for (let z = 0; z < 2; z += 1) {
         if (x === 0 && y === 0 && z === 0) continue;
-        const corner: Vec3 = applyMatrixPoint(matrix, [
+        const corner: Vec3 = applyMatrix(matrix, [
           x === 0 ? bounds.min[0] : bounds.max[0],
           y === 0 ? bounds.min[1] : bounds.max[1],
           z === 0 ? bounds.min[2] : bounds.max[2],
