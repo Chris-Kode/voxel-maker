@@ -257,7 +257,7 @@ interface ProjectedTriangle {
   readonly by: number;
   readonly cx: number;
   readonly cy: number;
-  /** Z-buffer depth: smaller is nearer (1/-z for perspective, -z for ortho). */
+  /** Z-buffer depth: smaller is nearer (-1/z for perspective, -z for ortho). */
   readonly d0: number;
   readonly d1: number;
   readonly d2: number;
@@ -356,10 +356,15 @@ function projectPoint(
   if (projection.kind === "perspective") {
     const tanHalf = Math.tan(projection.fovY / 2);
     const aspect = width / height;
+    // 1 / -z is linear in screen space, so interpolating it per-vertex
+    // IS perspective-correct depth. It is LARGER when nearer (z = -5 ->
+    // 0.2, z = -10 -> 0.1), which would make the keep-smallest z-buffer
+    // keep the FARTHER fragment; negate it so smaller means nearer, the
+    // same convention as the orthographic views (ticket #61).
     const inverseZ = 1 / -point[2];
     ndcX = (point[0] * inverseZ) / (tanHalf * aspect);
     ndcY = (point[1] * inverseZ) / tanHalf;
-    depth = inverseZ;
+    depth = -inverseZ;
   } else {
     ndcX = point[0] / projection.halfWidth;
     ndcY = point[1] / projection.halfHeight;
