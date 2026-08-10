@@ -298,6 +298,9 @@ export async function evaluateScenario(
   let executedToolCalls = 0;
   let cancelRequested = false;
   const onEvent = (event: AgentEvent): void => {
+    // Only the recorded tool log is tool-restricted; every event kind
+    // (state, usage, text, tool, error, refine) is forwarded to the
+    // public progress projection (issue #79).
     if (event.kind === "tool") {
       executedToolCalls += 1;
       if (
@@ -308,18 +311,17 @@ export async function evaluateScenario(
         cancelRequested = true;
         sessionHolder.session?.cancel();
       }
+      toolLog.push({
+        tool: event.tool,
+        ok: event.result.ok,
+        ...(event.result.ok
+          ? {}
+          : {
+              errorCode: event.result.error.code,
+              errorFamily: event.result.error.family,
+            }),
+      });
     }
-    if (event.kind !== "tool") return;
-    toolLog.push({
-      tool: event.tool,
-      ok: event.result.ok,
-      ...(event.result.ok
-        ? {}
-        : {
-            errorCode: event.result.error.code,
-            errorFamily: event.result.error.family,
-          }),
-    });
     options.onEvent?.(event);
   };
   const sessionHolder: { session?: ReturnType<typeof createAgentSession> } = {};

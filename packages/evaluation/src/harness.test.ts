@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DeterministicStep } from "@voxel-maker/agent";
+import type { AgentEvent, DeterministicStep } from "@voxel-maker/agent";
 import { evaluateScenario, type GeometryEvalResult } from "./harness.js";
 import {
   evaluatePromotion,
@@ -675,6 +675,53 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
       expect(scenario.previewSignals.length).toBeGreaterThan(0);
       expect(scenario.goldenRounds).toBe(scenario.goldenTrace.length);
     }
+  });
+});
+
+describe("fixed geometry evaluation: progress projection (issue #79)", () => {
+  it("forwards state, usage, text, and tool events in agent emission order", async () => {
+    // A scripted run whose rounds emit usage, text, and tool activity.
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "Inspecting the chair materials.",
+        toolCalls: [
+          { id: "call_summary", name: "inspectSummary", arguments: {} },
+        ],
+      },
+      { text: "The proposal is ready for approval." },
+    ];
+    const events: AgentEvent[] = [];
+    const result = await evaluateScenario({
+      scenarioId: "red-seat",
+      script,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    expect(result.run.ok, `run failed: ${String(result.run.reason)}`).toBe(
+      true,
+    );
+    // The public progress projection must observe every event kind the
+    // agent loop emits, not only tool events (issue #79).
+    const kinds = events.map((event) => event.kind);
+    for (const kind of ["state", "usage", "text", "tool"] as const) {
+      expect(kinds, `callback never observed ${kind} events`).toContain(kind);
+    }
+    // Emission order: the run starts with the initial state, and each
+    // round emits usage before text before its tool calls.
+    expect(events[0]?.kind).toBe("state");
+    const firstUsage = kinds.indexOf("usage");
+    const firstText = kinds.indexOf("text");
+    const firstTool = kinds.indexOf("tool");
+    expect(firstUsage).toBeGreaterThanOrEqual(0);
+    expect(firstText).toBeGreaterThan(firstUsage);
+    expect(firstTool).toBeGreaterThan(firstText);
+    // The internal tool log still records exactly the forwarded tool
+    // events, and the run's tool-call accounting is unchanged.
+    expect(result.toolLog.length).toBe(
+      events.filter((event) => event.kind === "tool").length,
+    );
+    expect(result.run.toolCalls).toBe(1);
   });
 });
 
