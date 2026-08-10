@@ -62,11 +62,17 @@ describe("sceneEntries", () => {
       const target = kind === "sparse" ? 100_000 : 500_000;
       const entries = sceneEntries(kind, target);
       expect(entries).toHaveLength(target);
+      // One O(n) pass with plain arithmetic: per-entry expect() calls
+      // (~3M matcher invocations at 500k entries) dominated the runtime
+      // and timed out CI's 30s budget. The min check fails iff any
+      // coordinate is negative, exactly like the per-entry assertions.
+      let min = Number.POSITIVE_INFINITY;
       for (const [x, y, z] of entries) {
-        expect(x).toBeGreaterThanOrEqual(0);
-        expect(y).toBeGreaterThanOrEqual(0);
-        expect(z).toBeGreaterThanOrEqual(0);
+        if (x < min) min = x;
+        if (y < min) min = y;
+        if (z < min) min = z;
       }
+      expect(min).toBeGreaterThanOrEqual(0);
     }
   }, 30_000);
 });
