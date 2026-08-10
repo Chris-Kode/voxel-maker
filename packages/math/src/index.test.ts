@@ -284,6 +284,117 @@ describe("affine transform matrices", () => {
     }
   });
 
+  it("inverts matrices with representable extreme scales (issue #84)", () => {
+    // The issue's evidence case: a uniform tiny scale underflows the direct
+    // cofactor determinant, and the analogous huge scale overflows it. Both
+    // round-trip to identity within the ADR-0001 absolute 1e-9 epsilon.
+    const scales: Vec3[] = [
+      [1e-200, 1e-200, 1e-200],
+      [1e200, 1e200, 1e200],
+    ];
+    for (const scale of scales) {
+      const transform: Transform = {
+        translation: [3, -1, 2],
+        pivot: [1, 0, -1],
+        rotation: [0, HALF, 0, HALF],
+        scale,
+      };
+      const matrix = transformToMatrix(transform);
+      const inverse = invertMatrix(matrix);
+      const product = multiplyMatrices(matrix, inverse);
+      for (let i = 0; i < 16; i += 1) {
+        const expected = i % 5 === 0 ? 1 : 0;
+        expect(Math.abs((product[i] as number) - expected)).toBeLessThan(1e-9);
+      }
+    }
+  });
+
+  it("inverts a mixed extreme scale to machine precision relative to the matrix (issue #84)", () => {
+    // A mixed scale [1e200, 1e-200, 1] has condition number ~1e400, so the
+    // round-trip product's translation entries carry cancellation error
+    // proportional to the matrix magnitude (~1e-16 relative); no
+    // double-precision implementation can round-trip it within the absolute
+    // 1e-9 epsilon. The inverse is still finite and correct to machine
+    // precision relative to the matrix scale.
+    const transform: Transform = {
+      translation: [3, -1, 2],
+      pivot: [1, 0, -1],
+      rotation: [0, HALF, 0, HALF],
+      scale: [1e200, 1e-200, 1],
+    };
+    const matrix = transformToMatrix(transform);
+    const inverse = invertMatrix(matrix);
+    const product = multiplyMatrices(matrix, inverse);
+    const magnitude = Math.max(1, ...matrix.map((entry) => Math.abs(entry)));
+    for (let i = 0; i < 16; i += 1) {
+      const expected = i % 5 === 0 ? 1 : 0;
+      expect(Math.abs((product[i] as number) - expected)).toBeLessThan(
+        1e-9 * magnitude,
+      );
+    }
+  });
+
+  it("rejects scales whose inverse is not representable (issue #84)", () => {
+    // 1e-308 is a representable scale and its reciprocal 1e308 is
+    // representable, so a zero-translation matrix inverts exactly; with a
+    // translation the inverse translation overflows and must fail with the
+    // stable error instead of returning Infinity.
+    const tiny: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1e-308, 1e-308, 1e-308],
+    };
+    const inverse = invertMatrix(transformToMatrix(tiny));
+    expect(inverse[0]).toBe(1e308);
+    const translated: Transform = {
+      translation: [3, -1, 2],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1e-308, 1e-308, 1e-308],
+    };
+    expect(errorCode(() => invertMatrix(transformToMatrix(translated)))).toBe(
+      "NON_INVERTIBLE_TRANSFORM",
+    );
+  });
+
+  it("rejects truly singular and non-finite matrices (issue #84)", () => {
+    // A zero column and a repeated column are genuinely singular.
+    const zeroColumn: Mat4 = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const repeatedColumn: Mat4 = [
+      1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    ];
+    expect(errorCode(() => invertMatrix(zeroColumn))).toBe(
+      "NON_INVERTIBLE_TRANSFORM",
+    );
+    expect(errorCode(() => invertMatrix(repeatedColumn))).toBe(
+      "NON_INVERTIBLE_TRANSFORM",
+    );
+    // Non-finite entries must fail with the stable error instead of
+    // returning a matrix full of NaN/Infinity.
+    const nonFinite: Mat4 = [
+      Number.POSITIVE_INFINITY,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+    ];
+    expect(errorCode(() => invertMatrix(nonFinite))).toBe(
+      "NON_INVERTIBLE_TRANSFORM",
+    );
+  });
+
   it("decomposes a transform matrix back into canonical TRS with the given pivot", () => {
     const transform: Transform = {
       translation: [3, -1, 2],
@@ -501,6 +612,39 @@ describe("affine transform matrices", () => {
         Math.abs((recomposed[index] as number) - (world[index] as number)),
       ).toBeLessThan(1e-9);
     }
+  });
+
+  it("resolves preserve-world local transforms under extreme parent scales (issue #84)", () => {
+    // Preserve-world reparenting inverts the parent world matrix; a parent
+    // with a representable extreme positive scale must not be reported as
+    // non-invertible (issue #84).
+    const parent: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1e-200, 1e-200, 1e-200],
+    };
+    const local: Transform = {
+      translation: [2, -3, 4],
+      pivot: [0, 0, 0],
+      rotation: [0, HALF, 0, HALF],
+      scale: [1, 1, 1],
+    };
+    const world = multiplyMatrices(
+      transformToMatrix(parent),
+      transformToMatrix(local),
+    );
+    const resolved = resolveLocalTransform(
+      world,
+      transformToMatrix(parent),
+      [0, 0, 0],
+    );
+    expect(resolved.translation[0]).toBeCloseTo(2, 9);
+    expect(resolved.translation[1]).toBeCloseTo(-3, 9);
+    expect(resolved.translation[2]).toBeCloseTo(4, 9);
+    expect(resolved.rotation[1]).toBeCloseTo(HALF, 9);
+    expect(resolved.rotation[3]).toBeCloseTo(HALF, 9);
+    expect(resolved.scale).toEqual([1, 1, 1]);
   });
 });
 
