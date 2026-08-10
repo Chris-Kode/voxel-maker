@@ -499,6 +499,133 @@ describe("preflightVoxExport", () => {
     }
   });
 
+  it("reports identity and name losses when distinct materials collapse into one palette entry", () => {
+    const document = exportDocument();
+    const withPair: VoxelDocument = {
+      ...document,
+      materials: {
+        ...document.materials,
+        [materialId(1)]: {
+          materialId: materialId(1),
+          name: "red-a",
+          color: "#ff0000",
+          opacity: 1,
+          roughness: 0,
+          metallic: 0,
+          emissive: 0,
+        },
+        [materialId(2)]: {
+          materialId: materialId(2),
+          name: "red-b",
+          color: "#ff0000",
+          opacity: 1,
+          roughness: 0,
+          metallic: 0,
+          emissive: 0,
+        },
+      },
+    };
+    const { handle } = exportHarness(withPair, [
+      {
+        volumeId: VOLUME_A,
+        entries: [
+          { coordinate: [1, 2, -3], material: 1 },
+          { coordinate: [2, 2, -3], material: 2 },
+        ],
+      },
+    ]);
+    const getVolume = (id: import("@voxel-maker/shared").VolumeId) =>
+      handle.store.getVolume(id);
+    const result = preflightVoxExport(withPair, getVolume);
+    // The export stays allowed, but the merge must be visible before
+    // encoding: both Material identities and both names are dropped.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const distinction = result.losses.find(
+        (loss) => loss.code === "VOX_LOSS_MATERIAL_DISTINCTION",
+      );
+      expect(distinction).toBeDefined();
+      expect(distinction?.context).toMatchObject({ material: "2" });
+      const nameLosses = result.losses.filter(
+        (loss) =>
+          loss.code === "VOX_LOSS_METADATA" &&
+          loss.context !== undefined &&
+          "material" in loss.context,
+      );
+      expect(nameLosses.map((loss) => loss.context?.material)).toEqual([
+        "1",
+        "2",
+      ]);
+      // The merge is real: both materials project to palette index 1.
+      const plan = planVoxExport(withPair, getVolume, result);
+      expect(plan.models[0]?.materialToIndex.get(materialId(1))).toBe(1);
+      expect(plan.models[0]?.materialToIndex.get(materialId(2))).toBe(1);
+    }
+  });
+
+  it("bases the 255-entry limit on the projected palette, not the material count", () => {
+    const document = exportDocument();
+    const materials = Object.fromEntries(
+      Array.from({ length: 256 }, (_, i) => {
+        const id = materialId(i + 1);
+        return [
+          String(id),
+          {
+            materialId: id,
+            name: `m${String(i)}`,
+            color: "#ff0000",
+            opacity: 1,
+            roughness: 0,
+            metallic: 0,
+            emissive: 0,
+          },
+        ];
+      }),
+    );
+    const many: VoxelDocument = {
+      ...document,
+      materials: { ...document.materials, ...materials },
+    };
+    const entries = Array.from({ length: 256 }, (_, i) => ({
+      coordinate: [i, 0, 0] as [number, number, number],
+      material: i + 1,
+    }));
+    const { handle } = exportHarness(many, [{ volumeId: VOLUME_A, entries }]);
+    const result = preflightVoxExport(many, (id) => handle.store.getVolume(id));
+    // 256 materials collapse to one palette entry, so the export must not
+    // be falsely blocked; the collapsed identities are reported instead.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(
+        result.losses.some(
+          (loss) => loss.code === "VOX_LOSS_MATERIAL_DISTINCTION",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("reports used material names as metadata losses", () => {
+    const { handle, document } = exportHarness(exportDocument(), [
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
+    ]);
+    const result = preflightVoxExport(document, (id) =>
+      handle.store.getVolume(id),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const nameLoss = result.losses.find(
+        (loss) =>
+          loss.code === "VOX_LOSS_METADATA" &&
+          loss.context !== undefined &&
+          "material" in loss.context,
+      );
+      expect(nameLoss?.context).toEqual({ material: "1" });
+    }
+  });
+
   it("blocks more than 255 distinct colors", () => {
     const document = exportDocument();
     const materials = Object.fromEntries(

@@ -489,16 +489,18 @@ export function preflightVoxExport(
     });
   }
 
-  // Palette and material semantics.
-  if (usedMaterialIds.size > VOX_MAX_COLOR_INDEX) {
-    blocked.push({
-      code: VOX_EXPORT_LOSSES.colorLimit,
-      message: `Export needs ${String(usedMaterialIds.size)} colors but the VOX palette holds 255`,
-      severity: "block",
-      context: { colors: usedMaterialIds.size },
-    });
-  }
-  void buildExportPalette(document, [...usedMaterialIds]);
+  // Palette and material semantics: project every used material onto the
+  // deterministic export palette (one entry per distinct color, assigned in
+  // material-id order). Every material that collapses into an existing
+  // entry loses its identity, and every used material name is dropped by
+  // the subset; both are reported before encoding (ADR-0011 never silently
+  // drops semantic content). The 255-entry limit applies to the projected
+  // palette, not the raw material count, so representable exports are not
+  // falsely blocked.
+  const { materialToIndex } = buildExportPalette(document, [
+    ...usedMaterialIds,
+  ]);
+  const entryOwners = new Map<number, MaterialId>();
   for (const materialIdValue of [...usedMaterialIds].sort((a, b) => a - b)) {
     const material = document.materials[materialIdValue];
     if (material === undefined) {
@@ -531,34 +533,47 @@ export function preflightVoxExport(
         context: { material: String(materialIdValue) },
       });
     }
-  }
-  const distinctColors = new Set<string>();
-  const alphaByColor = new Map<string, number>();
-  for (const id of usedMaterialIds) {
-    const material = document.materials[id];
-    if (material === undefined) continue;
-    distinctColors.add(material.color);
-    const alpha = Math.round(material.opacity * 255);
-    const previousAlpha = alphaByColor.get(material.color);
-    if (previousAlpha !== undefined && previousAlpha !== alpha) {
+    if (material.name !== "") {
       losses.push({
-        code: VOX_EXPORT_LOSSES.materialDistinction,
-        message:
-          "Materials with the same color but different opacity share one palette entry",
+        code: VOX_EXPORT_LOSSES.metadata,
+        message: "Material names are not represented in the VOX subset",
         severity: "bake",
-        context: { material: String(id) },
+        context: { material: String(materialIdValue) },
       });
-    } else if (previousAlpha === undefined) {
-      alphaByColor.set(material.color, alpha);
     }
+    const entry = materialToIndex.get(materialIdValue);
+    if (entry === undefined) continue;
+    const owner = entryOwners.get(entry);
+    if (owner === undefined) {
+      entryOwners.set(entry, materialIdValue);
+      continue;
+    }
+    const ownerMaterial = document.materials[owner];
+    const opacityDiffers =
+      ownerMaterial !== undefined &&
+      Math.round(ownerMaterial.opacity * 255) !==
+        Math.round(material.opacity * 255);
+    losses.push({
+      code: VOX_EXPORT_LOSSES.materialDistinction,
+      message: opacityDiffers
+        ? "Materials with the same color but different opacity share one palette entry"
+        : "Distinct materials with the same color share one palette entry; their identities and names are not preserved",
+      severity: "bake",
+      context: {
+        material: String(materialIdValue),
+        collapsedInto: String(owner),
+      },
+    });
   }
-  const distinctColorCount = distinctColors.size;
-  if (distinctColorCount > VOX_MAX_COLOR_INDEX) {
+  // Palette entries are assigned contiguously from index 1, so the number
+  // of owned entries is the projected palette size.
+  const projectedEntryCount = entryOwners.size;
+  if (projectedEntryCount > VOX_MAX_COLOR_INDEX) {
     blocked.push({
       code: VOX_EXPORT_LOSSES.colorLimit,
-      message: `Export needs ${String(distinctColorCount)} colors but the VOX palette holds 255`,
+      message: `Export needs ${String(projectedEntryCount)} colors but the VOX palette holds 255`,
       severity: "block",
-      context: { colors: distinctColorCount },
+      context: { colors: projectedEntryCount },
     });
   }
 
