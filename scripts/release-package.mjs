@@ -22,8 +22,14 @@
  * Output layout:
  *   release/artifacts/<version>/
  *     <installers and bundles>
+ *     sbom.cdx.json          (Cargo CycloneDX SBOM, issue #74)
  *     SHASUMS256.txt
  *     manifest.json
+ *
+ * The Cargo SBOM is mandatory release evidence (issue #74): a missing
+ * or failing SBOM generation is fatal unless the explicit local-only
+ * flag is set, and the failure is then recorded in the manifest under
+ * `sbom.reason` (the same exception pattern as the native bundle).
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import {

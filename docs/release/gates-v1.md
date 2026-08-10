@@ -21,9 +21,9 @@ and passed on the recorded commit; each row names the command or suite.
 | Package + desktop web build | `pnpm build` | executed locally, part of `pnpm check` |
 | Schema/format golden diff approval | golden fixtures in model/formats/animation/interchange tests | executed locally, part of `pnpm test`; unchanged by this release |
 | Dependency license/security scan | `pnpm check:security` (licenses, native capabilities, secrets), `pnpm check:audit` | executed locally (exit 0) on the release commit |
-| Cargo vulnerability audit (issue #74) | `pnpm check:rust:audit` (`cargo audit --json`, high/critical fail closed) | executed locally (exit 0) on the release commit; enforced per PR by CI |
-| Cargo license allowlist (issue #74) | `pnpm check:rust:licenses` (`cargo deny check licenses` against `apps/desktop/src-tauri/deny.toml`) | executed locally (exit 0) on the release commit; enforced per PR by CI |
-| Cargo SBOM generation (issue #74) | `pnpm check:rust:sbom` (`cargo cyclonedx`, CycloneDX JSON) | executed locally (exit 0) on the release commit; enforced per PR by CI; the SBOM ships inside the release artifact set |
+| Cargo vulnerability audit (issue #74) | `pnpm check:rust:audit` (`cargo audit --json`, high/critical fail closed) | added after the release commit; enforced per PR by CI and in the release workflow |
+| Cargo license allowlist (issue #74) | `pnpm check:rust:licenses` (`cargo deny check licenses` against `apps/desktop/src-tauri/deny.toml`) | added after the release commit; enforced per PR by CI and in the release workflow |
+| Cargo SBOM generation (issue #74) | `pnpm check:rust:sbom` (`cargo cyclonedx`, CycloneDX JSON) | added after the release commit; enforced per PR by CI; the SBOM ships inside the release artifact set |
 | Benchmark smoke with regression threshold | `pnpm bench:smoke` (CI) | executed locally: 227 measured values, zero gate failures |
 | No checked-in secrets | `check-secrets.mjs` | executed locally, part of `check:security` |
 | Genericity gate | `pnpm check:genericity` (new in #46) | executed locally, part of `pnpm check` |
