@@ -102,3 +102,10 @@ export {
   type PromotionReport,
   type ThresholdResult,
 } from "./promotion.js";
+export {
+  EVALUATION_SUITE_MANIFEST,
+  suiteCaseById,
+  type ExpectedOutcome,
+  type SuiteCase,
+  type SuiteManifest,
+} from "./suite.js";

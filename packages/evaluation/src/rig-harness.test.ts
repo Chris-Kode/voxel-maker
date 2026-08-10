@@ -17,6 +17,7 @@ import {
   createRigFixtureStore,
 } from "./rig-fixtures.js";
 import { RIG_EVALUATION_VERSION } from "./versions.js";
+import { runCompleteSuite } from "./suite.test-utils.js";
 
 /**
  * Fixed rig/animation evaluation suite (plan S13.7-S13.9, ticket #36 AC):
@@ -178,11 +179,12 @@ describe("fixed rig/animation evaluation: golden scenarios", () => {
 });
 
 describe("fixed rig/animation evaluation: promotion gates", () => {
-  it("the combined golden suite passes every explicit promotion threshold", async () => {
-    const results: GeometryEvalResult[] = [];
-    for (const scenarioId of RIG_SCENARIO_IDS) {
-      results.push(await evaluateScenario({ scenarioId }));
-    }
+  it("the complete fixed suite passes every explicit promotion threshold", async () => {
+    // Issue #76: promotion must prove the WHOLE fixed suite ran — every
+    // golden case and every required rejected safety trace — so the gate
+    // is exercised against the complete manifest, not a cherry-picked
+    // subset.
+    const results = await runCompleteSuite();
     const report = evaluatePromotion(results);
     expect(report.promotable).toBe(true);
     expect(report.blocks).toEqual([]);

@@ -129,6 +129,11 @@ export interface RunReport {
 
 /** The complete recorded result of one scenario evaluation. */
 export interface GeometryEvalResult {
+  /**
+   * Suite-manifest case id this result belongs to (issue #76): the
+   * scenario id for golden cases, a suffixed id for adversarial traces.
+   */
+  readonly caseId: string;
   readonly scenarioId: ScenarioId | RigScenarioId;
   readonly scenario: ScenarioShape;
   readonly versions: EvaluationVersions;
@@ -153,6 +158,11 @@ export interface GeometryEvalResult {
 
 export interface EvaluateScenarioOptions {
   readonly scenarioId: ScenarioId | RigScenarioId;
+  /**
+   * Suite-manifest case id of this run (issue #76); defaults to the
+   * scenario id, i.e. the golden case of that scenario.
+   */
+  readonly caseId?: string;
   /** Recorded trace; defaults to the scenario's golden trace. */
   readonly script?: readonly DeterministicStep[];
   /** Optional lowerings of the fixed budget profile. */
@@ -425,6 +435,7 @@ export async function evaluateScenario(
   });
 
   return {
+    caseId: options.caseId ?? scenario.id,
     scenarioId: scenario.id as ScenarioId | RigScenarioId,
     scenario,
     versions: evaluationVersions({
