@@ -283,6 +283,24 @@ describe("VoxelVolume lazy allocation and primitives", () => {
     expect(volume.chunkCount()).toBe(1);
   });
 
+  it("tracks chunk mutation revisions across clones (issue #86)", () => {
+    const volume = createVolume();
+    expect(volume.chunkRevision([0, 0, 0])).toBeUndefined();
+    volume.setVoxel([0, 0, 0], 1, capability);
+    expect(volume.chunkRevision([0, 0, 0])).toBe(1);
+    volume.setVoxel([1, 0, 0], 2, capability);
+    expect(volume.chunkRevision([0, 0, 0])).toBe(2);
+    const clone = volume.clone();
+    expect(clone.chunkRevision([0, 0, 0])).toBe(2);
+    clone.setVoxel([2, 0, 0], 1, capability);
+    expect(clone.chunkRevision([0, 0, 0])).toBe(3);
+    // The original is untouched: its revision never advanced.
+    expect(volume.chunkRevision([0, 0, 0])).toBe(2);
+    // No-op writes do not bump the revision.
+    volume.setVoxel([0, 0, 0], 1, capability);
+    expect(volume.chunkRevision([0, 0, 0])).toBe(2);
+  });
+
   it("lists chunk coordinates in stable X,Y,Z order", () => {
     const volume = createVolume();
     volume.setVoxel([16, 0, 0], 1, capability);

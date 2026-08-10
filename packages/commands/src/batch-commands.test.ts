@@ -339,6 +339,58 @@ describe("voxel.fillBox boundary voxels", () => {
 });
 
 describe("voxel.applyPatches", () => {
+  it("rejects patches restoring undeclared materials atomically (issue #86)", () => {
+    const { bus, store } = createHarness();
+    let events = 0;
+    store.subscribe(() => {
+      events += 1;
+    });
+    const result = bus.execute(
+      applyPatchesCommand(commandId("command:batch:patch:0090"), {
+        volumeId: VOLUME,
+        chunks: [
+          {
+            coordinate: [0, 0, 0],
+            patches: [{ index: 0, oldValue: 65_535 }],
+          },
+        ],
+      }),
+      tx("patch:0090", 0),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("MISSING_MATERIAL");
+    expect(store.revision).toBe(0);
+    expect(events).toBe(0);
+    expect(voxelAt(store, [0, 0, 0])).toBe(0);
+  });
+
+  it("accepts patches restoring declared materials", () => {
+    const { bus, store } = createHarness();
+    bus.execute(
+      setBatchCommand(commandId("command:batch:patch:0091"), {
+        volumeId: VOLUME,
+        entries: [{ coordinate: [0, 0, 0], material: MATERIAL_TWO }],
+      }),
+      tx("patch:0091", 0),
+    );
+    const result = bus.execute(
+      applyPatchesCommand(commandId("command:batch:patch:0092"), {
+        volumeId: VOLUME,
+        chunks: [
+          {
+            coordinate: [0, 0, 0],
+            patches: [{ index: 0, oldValue: MATERIAL_ONE }],
+          },
+        ],
+      }),
+      tx("patch:0092", 1),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(voxelAt(store, [0, 0, 0])).toBe(MATERIAL_ONE);
+  });
+
   it("rejects patches whose voxel lies outside the coordinate domain at parse", () => {
     const { bus, store } = createHarness();
     const result = bus.execute(

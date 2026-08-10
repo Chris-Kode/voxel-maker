@@ -20,7 +20,10 @@ import {
   type VoxelVolumeLimits,
   type VoxelVolumeReadView,
 } from "@voxel-maker/voxel";
-import { canonicalAssetSemanticHash } from "@voxel-maker/document";
+import {
+  canonicalAssetSemanticHash,
+  validateChunkMaterialReferences,
+} from "@voxel-maker/document";
 import {
   decodeManifest,
   encodeManifest,
@@ -282,6 +285,22 @@ export function writeVxlProject(input: VxlWriteInput): Uint8Array {
   const volumeBinaries = new Map<string, Uint8Array>();
   for (const volumeIdText of volumeIds) {
     const readView = input.volumes?.get(volumeIdText as VolumeId);
+    // Issue #86: the writer must never emit a container whose voxels
+    // reference undeclared materials — its own reader and the lifecycle
+    // install would reject it, so fail here with the stable structured error.
+    if (readView !== undefined) {
+      for (const coordinate of readView.chunkCoordinates()) {
+        const values = readView.getChunk(coordinate);
+        if (values !== undefined) {
+          validateChunkMaterialReferences(
+            document,
+            volumeIdText as VolumeId,
+            values,
+            coordinate,
+          );
+        }
+      }
+    }
     volumeBinaries.set(
       volumeIdText,
       encodeVoxelVolume(
@@ -470,12 +489,21 @@ export function readVxlProject(
       });
     }
     const binary = (byName.get(indexed.name) as ZipEntry).data;
-    volumes.set(entryVolumeId, {
-      volumeId: entryVolumeId,
-      chunks: Object.freeze(
-        decodeVoxelVolume(binary, entryVolumeId, volumeLimits),
-      ),
-    });
+    const chunks = Object.freeze(
+      decodeVoxelVolume(binary, entryVolumeId, volumeLimits),
+    );
+    // Issue #86: reject nonzero voxel values referencing undeclared
+    // materials before the load can be installed, so a native project can
+    // never bypass the aggregate referential invariant.
+    for (const chunk of chunks) {
+      validateChunkMaterialReferences(
+        document,
+        entryVolumeId,
+        chunk.values,
+        chunk.coordinate,
+      );
+    }
+    volumes.set(entryVolumeId, { volumeId: entryVolumeId, chunks });
   }
   for (const volumeIdText of Object.keys(document.volumes)) {
     if (!volumes.has(volumeIdText as VolumeId)) {

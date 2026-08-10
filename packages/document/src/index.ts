@@ -1,5 +1,6 @@
 export {
   createDocumentStore,
+  validateChunkMaterialReferences,
   type ChangedChunk,
   type ChangedVolume,
   type CreateDocumentStoreInput,

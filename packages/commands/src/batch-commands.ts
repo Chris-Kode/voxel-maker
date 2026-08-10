@@ -871,6 +871,19 @@ const applyPatchesHandler: CommandHandler<
     if (context.document.volumes[payload.volumeId] === undefined) {
       throw missingVolume(payload.volumeId);
     }
+    // Issue #86: a patch restores a voxel value; every nonzero restored
+    // value must reference a declared material or the aggregate referential
+    // invariant would be bypassed by restore/import flows.
+    for (const chunk of payload.chunks) {
+      for (const patch of chunk.patches) {
+        if (
+          patch.oldValue !== 0 &&
+          context.document.materials[patch.oldValue as MaterialId] === undefined
+        ) {
+          throw missingMaterial(patch.oldValue as MaterialId);
+        }
+      }
+    }
   },
   execute(
     payload: ApplyPatchesPayload,

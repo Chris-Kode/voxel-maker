@@ -105,6 +105,24 @@ function goldenDocument() {
         metallic: 0,
         emissive: 0,
       },
+      {
+        materialId: materialId(2),
+        name: "brick",
+        color: "#cc6644",
+        opacity: 1,
+        roughness: 0.9,
+        metallic: 0,
+        emissive: 0,
+      },
+      {
+        materialId: materialId(3),
+        name: "glass",
+        color: "#88ccff",
+        opacity: 0.4,
+        roughness: 0.1,
+        metallic: 0.2,
+        emissive: 0,
+      },
     ],
     volumes: [{ volumeId: BODY }, { volumeId: ARM }],
     animations: [
@@ -560,6 +578,16 @@ const fixtures = {
         goldenEntries().filter((entry) => entry.name !== MANIFEST_ENTRY),
       ),
       expected: { family: "io", code: "MISSING_MANIFEST" },
+    }),
+  },
+  "dangling-material-reference": {
+    vector: "voxel values reference a material the document does not declare",
+    build: () => ({
+      bytes: withPatchedDocument(goldenEntries(), (document) => {
+        delete document.materials["3"];
+        return document;
+      }),
+      expected: { family: "validation", code: "MISSING_MATERIAL" },
     }),
   },
   "document-missing-volume": {

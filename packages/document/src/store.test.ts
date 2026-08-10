@@ -257,6 +257,45 @@ describe("DocumentStore.commit", () => {
     expect(store.revision).toBe(0);
   });
 
+  it("rejects staged voxel references to undeclared materials (issue #86)", () => {
+    const { store, writeCapability } = createDocumentStore({
+      document: createDemoDocument(),
+    });
+    const staged = store.stageVolume(VOLUME);
+    staged?.setVoxel([0, 0, 0], 2, writeCapability);
+    expect(() => {
+      store.commit(
+        stagedState(
+          { ...store.getDocument(), revision: 1 },
+          new Map([[VOLUME, staged as never]]),
+        ),
+        makeEvent(0, 1),
+        writeCapability,
+      );
+    }).toThrow(/Material is not defined/u);
+    expect(store.revision).toBe(0);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(0);
+  });
+
+  it("accepts staged voxel references to declared materials (issue #86)", () => {
+    const { store, writeCapability } = createDocumentStore({
+      document: createDemoDocument(),
+    });
+    const staged = store.stageVolume(VOLUME);
+    staged?.setVoxel([0, 0, 0], 1, writeCapability);
+    const event = makeEvent(0, 1);
+    store.commit(
+      stagedState(
+        { ...store.getDocument(), revision: 1 },
+        new Map([[VOLUME, staged as never]]),
+      ),
+      event,
+      writeCapability,
+    );
+    expect(store.revision).toBe(1);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+  });
+
   it("isolates subscriber exceptions", () => {
     const { store, writeCapability } = createDocumentStore({
       document: createDemoDocument(),
@@ -378,6 +417,65 @@ function expectErrorCode(fn: () => unknown, code: string): void {
 }
 
 describe("createDocumentStore volume seeding", () => {
+  /** Document declaring materials 1..3 so seeding tests can use each. */
+  const seededDocument = (): VoxelDocument =>
+    createDocument({
+      documentId: documentId("document:store:0001"),
+      metadata: { title: "store test", tags: [] },
+      rootNodeId: nodeId("node:store:root"),
+      nodes: [
+        {
+          nodeId: nodeId("node:store:root"),
+          name: "Root",
+          parentId: null,
+          children: [],
+          transform: identity,
+          components: [
+            {
+              kind: "voxel",
+              schemaVersion: 1,
+              volumeId: volumeId("volume:store:0001"),
+            },
+          ],
+        },
+      ],
+      materials: [
+        {
+          materialId: materialId(1),
+          name: "one",
+          color: "#ff0000",
+          opacity: 1,
+          roughness: 0.5,
+          metallic: 0,
+          emissive: 0,
+        },
+        {
+          materialId: materialId(2),
+          name: "two",
+          color: "#00ff00",
+          opacity: 1,
+          roughness: 0.5,
+          metallic: 0,
+          emissive: 0,
+        },
+        {
+          materialId: materialId(3),
+          name: "three",
+          color: "#0000ff",
+          opacity: 1,
+          roughness: 0.5,
+          metallic: 0,
+          emissive: 0,
+        },
+      ],
+      volumes: [
+        {
+          volumeId: volumeId("volume:store:0001"),
+          bounds: { min: [-1, -1, -1], max: [1, 1, 1] },
+        },
+      ],
+    });
+
   const seeds = (): ReadonlyMap<
     string,
     readonly {
@@ -404,7 +502,7 @@ describe("createDocumentStore volume seeding", () => {
 
   it("installs seeded chunks through the validated load path", () => {
     const { store } = createDocumentStore({
-      document: createDemoDocument(),
+      document: seededDocument(),
       volumes: seeds() as never,
     });
     const volume = store.getVolume(VOLUME);
@@ -413,6 +511,31 @@ describe("createDocumentStore volume seeding", () => {
     expect(volume?.getVoxel([-1, 0, 1])).toBe(3);
     expect(volume?.getVoxel([0, 0, 0])).toBe(0);
     expect(volume?.occupiedCount()).toBe(2);
+  });
+
+  it("rejects seeded chunks that reference undeclared materials", () => {
+    expectErrorCode(
+      () =>
+        createDocumentStore({
+          document: createDemoDocument(),
+          volumes: seeds() as never,
+        }),
+      "MISSING_MATERIAL",
+    );
+  });
+
+  it("loads zero and declared material values unchanged", () => {
+    const values = new Uint16Array(4096);
+    values[0] = 1;
+    values[17] = 0;
+    const { store } = createDocumentStore({
+      document: seededDocument(),
+      volumes: new Map([
+        ["volume:store:0001", [{ coordinate: [-1, 0, 0], values }]],
+      ]) as never,
+    });
+    expect(store.getVoxel(VOLUME, [-16, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [-15, 0, 0])).toBe(0);
   });
 
   it("rejects seeds for volumes missing from the document", () => {

@@ -27,6 +27,8 @@ import {
   seedReadView,
   writeVxlProject,
 } from "./container.js";
+import { crc32Hex } from "./crc32.js";
+import { encodeVoxelVolume } from "./volume-binary.js";
 import {
   readZipArchive,
   writeZipArchive,
@@ -96,6 +98,24 @@ function demoDocument(): VoxelDocument {
         metallic: 0,
         emissive: 0,
       },
+      {
+        materialId: materialId(2),
+        name: "brick",
+        color: "#cc6644",
+        opacity: 1,
+        roughness: 0.9,
+        metallic: 0,
+        emissive: 0,
+      },
+      {
+        materialId: materialId(3),
+        name: "glass",
+        color: "#88ccff",
+        opacity: 0.4,
+        roughness: 0.1,
+        metallic: 0.2,
+        emissive: 0,
+      },
     ],
     volumes: [{ volumeId: BODY }, { volumeId: ARM }],
     animations: [
@@ -141,6 +161,38 @@ function writeDemo(): Uint8Array {
   return writeVxlProject({
     document: demoDocument(),
     volumes: buildVolumes(),
+  });
+}
+
+/** Minimal document whose root node owns one voxel volume. */
+function singleVolumeDocument(
+  documentIdText: string,
+  materials: readonly { materialId: number; name: string; color: string }[],
+): VoxelDocument {
+  return createDocument({
+    documentId: documentId(`document:${documentIdText}`),
+    metadata: { title: "dangling material" },
+    rootNodeId: nodeId("node:container:root"),
+    nodes: [
+      {
+        nodeId: nodeId("node:container:root"),
+        name: "Root",
+        parentId: null,
+        children: [],
+        transform: identity,
+        components: [{ kind: "voxel", schemaVersion: 1, volumeId: BODY }],
+      },
+    ],
+    materials: materials.map((material) => ({
+      materialId: materialId(material.materialId),
+      name: material.name,
+      color: material.color,
+      opacity: 1,
+      roughness: 0.5,
+      metallic: 0,
+      emissive: 0,
+    })),
+    volumes: [{ volumeId: BODY }],
   });
 }
 
@@ -250,6 +302,21 @@ describe("writeVxlProject", () => {
           ]),
         }),
       "MISSING_VOLUME",
+    );
+  });
+  it("rejects volumes referencing undeclared materials (issue #86)", () => {
+    const document = singleVolumeDocument("container:0002", [
+      { materialId: 1, name: "stone", color: "#aabbcc" },
+    ]);
+    const volume = new VoxelVolume(BODY, limits, capability);
+    volume.setVoxel([0, 0, 0], 2, capability);
+    expectErrorCode(
+      () =>
+        writeVxlProject({
+          document,
+          volumes: new Map([[BODY, volume]]),
+        }),
+      "MISSING_MATERIAL",
     );
   });
 
@@ -376,6 +443,53 @@ describe("readVxlProject", () => {
     expect(store.getVoxel(ARM, [5, 5, 5])).toBe(1);
     expect(store.getVoxel(ARM, [-30, 2, 0])).toBe(3);
     expect(store.getVolume(BODY)?.occupiedCount()).toBe(3);
+  });
+
+  it("rejects containers whose voxels reference undeclared materials (issue #86)", () => {
+    // A foreign or corrupt writer emitted a container whose chunk values
+    // name material 2 while the document declares only material 1; the
+    // reader must reject it before the load can be installed.
+    const document = singleVolumeDocument("container:0003", [
+      { materialId: 1, name: "stone", color: "#aabbcc" },
+    ]);
+    const volume = new VoxelVolume(BODY, limits, capability);
+    volume.setVoxel([0, 0, 0], 2, capability);
+    const documentBytes = encoder.encode(canonicalDocumentJson(document));
+    const volumeBytes = encodeVoxelVolume(volume);
+    const entryName = encodeVolumeEntryName(BODY);
+    const manifestBytes = encoder.encode(
+      JSON.stringify({
+        containerVersion: 1,
+        documentSchemaVersion: 1,
+        chunkEncodingVersion: 1,
+        features: {},
+        semanticHash: canonicalAssetSemanticHash(
+          document,
+          new Map([[BODY, volume]]),
+        ),
+        entries: [
+          {
+            name: DOCUMENT_ENTRY,
+            kind: "document",
+            size: documentBytes.byteLength,
+            crc32: crc32Hex(documentBytes),
+          },
+          {
+            name: entryName,
+            kind: "voxels",
+            volumeId: BODY,
+            size: volumeBytes.byteLength,
+            crc32: crc32Hex(volumeBytes),
+          },
+        ],
+      }),
+    );
+    const bytes = writeZipArchive([
+      { name: MANIFEST_ENTRY, data: manifestBytes },
+      { name: DOCUMENT_ENTRY, data: documentBytes },
+      { name: entryName, data: volumeBytes },
+    ]);
+    expectErrorCode(() => readVxlProject(bytes), "MISSING_MATERIAL");
   });
 
   it("rejects a semantic hash that does not match the content", () => {

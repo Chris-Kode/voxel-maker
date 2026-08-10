@@ -233,7 +233,11 @@ const createVolumeHandler: CommandHandler<
           context: { volumeId: payload.volumeId },
         });
       }
-    } else if (payload.entries !== undefined) {
+    }
+    // Issue #86: entries carry voxel material references in both the first
+    // creation and append mode; every material must be declared in the
+    // (staged) document or the aggregate referential invariant is bypassed.
+    if (payload.entries !== undefined) {
       for (const entry of parseEntries(payload, ["payload", "entries"])) {
         if (context.document.materials[entry.material] === undefined) {
           throw new WorkspaceError({
