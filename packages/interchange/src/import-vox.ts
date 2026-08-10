@@ -86,6 +86,41 @@ const throwIfAborted = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) throw importCancelled();
 };
 
+/** The members of a VOX parse limit profile (ADR-0009, issue #90). */
+const PARSE_LIMIT_MEMBERS = [
+  "maxFileBytes",
+  "maxModels",
+  "maxVoxelsPerModel",
+  "maxTotalVoxels",
+  "maxChunks",
+  "maxUnknownChunkBytes",
+] as const;
+
+/**
+ * Validates a caller-supplied VOX parse limit profile at the interchange
+ * boundary (ADR-0009, issue #90). Callers may only lower the frozen hard
+ * defaults, so every member must be a positive integer no greater than its
+ * `DEFAULT_VOX_PARSE_LIMITS` value. Any raised, non-finite, fractional, or
+ * non-positive member is rejected with a stable limit error before parsing
+ * or mutation, so an untrusted file can never consume parser resources
+ * above the advertised hard policy.
+ */
+function validateParseLimits(limits: VoxParseLimits): void {
+  for (const member of PARSE_LIMIT_MEMBERS) {
+    const value = limits[member];
+    const hardMax = DEFAULT_VOX_PARSE_LIMITS[member];
+    if (!Number.isInteger(value) || value <= 0 || value > hardMax) {
+      throw new WorkspaceError({
+        family: "limit",
+        code: "VOX_PARSE_LIMITS_INVALID",
+        message:
+          "VOX parse limits may only be lowered: each member must be a positive integer no greater than its hard default",
+        context: { member, value: String(value), hardMax },
+      });
+    }
+  }
+}
+
 /**
  * Imports one VOX file into the open document behind `bus`. The document
  * read surface `store` must be the bus's store (used for id collision
@@ -96,12 +131,11 @@ export function importVox(
   store: DocumentStoreRead,
   options: ImportVoxOptions,
 ): ImportVoxOutcome {
+  const parseLimits = options.parseLimits ?? DEFAULT_VOX_PARSE_LIMITS;
+  validateParseLimits(parseLimits);
   throwIfAborted(options.signal);
   const totalVoxels = options.bytes.byteLength;
-  const parsed = parseVox(
-    options.bytes,
-    options.parseLimits ?? DEFAULT_VOX_PARSE_LIMITS,
-  );
+  const parsed = parseVox(options.bytes, parseLimits);
   throwIfAborted(options.signal);
   options.onProgress?.("parse", totalVoxels, totalVoxels);
 

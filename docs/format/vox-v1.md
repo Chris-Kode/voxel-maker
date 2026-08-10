@@ -150,6 +150,10 @@ structured report — never silently dropped:
 `parseVox` enforces ADR-0009-style hard limits (callers may only lower):
 512 MiB input, 1,024 models, 1,000,000 voxels per model and per file,
 100,000 chunks, and 64 MiB of skipped unknown-chunk bytes. The import
+seam (`importVox`) validates the caller-supplied limit profile before
+parsing or mutation and rejects any member that is raised above, or
+invalidates (non-finite, fractional, non-positive), its hard default with
+the stable `VOX_PARSE_LIMITS_INVALID` limit error (issue #90). The import
 transaction additionally inherits the command-bus budgets
 (`maxCommandPayloadBytes`, `maxTransactionEnvelopeBytes`, ...).
 

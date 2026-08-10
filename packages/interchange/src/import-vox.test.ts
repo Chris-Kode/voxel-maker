@@ -23,8 +23,17 @@ import {
   registerVoxelCommands,
   registerVolumeCommands,
 } from "@voxel-maker/commands";
-import { encodeVox, parseVox } from "@voxel-maker/formats";
-import type { VoxColor, VoxModel, VoxVoxel } from "@voxel-maker/formats";
+import {
+  DEFAULT_VOX_PARSE_LIMITS,
+  encodeVox,
+  parseVox,
+} from "@voxel-maker/formats";
+import type {
+  VoxColor,
+  VoxModel,
+  VoxParseLimits,
+  VoxVoxel,
+} from "@voxel-maker/formats";
 import { importVox, MAX_IMPORT_ENTRIES_PER_COMMAND } from "./import-vox.js";
 
 /** Asserts that `fn` throws a WorkspaceError with the given code. */
@@ -98,6 +107,45 @@ const cube: VoxModel = {
     { x: 1, y: 1, z: 0, colorIndex: 2 },
   ],
 };
+
+/**
+ * Builds a raw VOX file with `unknownCount` zero-length unknown chunks plus
+ * one SIZE/XYZI model pair (issue #90: chunk-count floods).
+ */
+function buildChunkFloodFile(unknownCount: number): Uint8Array {
+  const CHUNK_HEADER_BYTES = 12;
+  const childrenBytes =
+    unknownCount * CHUNK_HEADER_BYTES +
+    (CHUNK_HEADER_BYTES + 12) +
+    (CHUNK_HEADER_BYTES + 4 + 4);
+  const bytes = new Uint8Array(8 + CHUNK_HEADER_BYTES + childrenBytes);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x20584f56, true); // "VOX "
+  view.setUint32(4, 150, true);
+  let offset = 8;
+  const chunk = (id: string, content: number, children: number): void => {
+    for (let i = 0; i < 4; i += 1) {
+      view.setUint8(offset + i, id.charCodeAt(i));
+    }
+    view.setUint32(offset + 4, content, true);
+    view.setUint32(offset + 8, children, true);
+    offset += CHUNK_HEADER_BYTES;
+  };
+  chunk("MAIN", 0, childrenBytes);
+  for (let i = 0; i < unknownCount; i += 1) chunk("TEST", 0, 0);
+  chunk("SIZE", 12, 0);
+  view.setUint32(offset, 1, true);
+  view.setUint32(offset + 4, 1, true);
+  view.setUint32(offset + 8, 1, true);
+  offset += 12;
+  chunk("XYZI", 4 + 4, 0);
+  view.setUint32(offset, 1, true); // one voxel, palette index 1
+  view.setUint8(offset + 4, 0);
+  view.setUint8(offset + 5, 0);
+  view.setUint8(offset + 6, 0);
+  view.setUint8(offset + 7, 1);
+  return bytes;
+}
 
 describe("importVox", () => {
   it("imports a file into the open document through one transaction", () => {
@@ -464,5 +512,142 @@ describe("importVox", () => {
     );
     void commandId;
     void canonicalColor;
+  });
+
+  describe("parse limit profile validation (issue #90)", () => {
+    const LIMIT_MEMBERS = [
+      "maxFileBytes",
+      "maxModels",
+      "maxVoxelsPerModel",
+      "maxTotalVoxels",
+      "maxChunks",
+      "maxUnknownChunkBytes",
+    ] as const;
+
+    it("rejects every raised limit member before parsing or mutation", () => {
+      const { store, bus } = harness();
+      const bytes = encodeVox({ models: [cube], palette });
+      const before = store.getDocument();
+      for (const member of LIMIT_MEMBERS) {
+        const raised: VoxParseLimits = {
+          ...DEFAULT_VOX_PARSE_LIMITS,
+          [member]: DEFAULT_VOX_PARSE_LIMITS[member] + 1,
+        };
+        expectCode(
+          () =>
+            importVox(bus, store, {
+              bytes,
+              expectedRevision: 0,
+              parseLimits: raised,
+            }),
+          "VOX_PARSE_LIMITS_INVALID",
+        );
+        expect(store.revision).toBe(0);
+      }
+      expect(store.getDocument()).toEqual(before);
+    });
+
+    it("rejects non-finite, fractional, and non-positive limit members", () => {
+      const { store, bus } = harness();
+      const bytes = encodeVox({ models: [cube], palette });
+      const invalid: VoxParseLimits[] = [
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxChunks: Number.NaN },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxChunks: Number.POSITIVE_INFINITY },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxModels: 1.5 },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxTotalVoxels: 0 },
+        { ...DEFAULT_VOX_PARSE_LIMITS, maxFileBytes: -1 },
+      ];
+      for (const limits of invalid) {
+        expectCode(
+          () =>
+            importVox(bus, store, {
+              bytes,
+              expectedRevision: 0,
+              parseLimits: limits,
+            }),
+          "VOX_PARSE_LIMITS_INVALID",
+        );
+      }
+      expect(store.revision).toBe(0);
+    });
+
+    it("rejects a raised profile before parsing even malformed bytes", () => {
+      const { store, bus } = harness();
+      // Empty bytes would fail parsing with VOX_TRUNCATED; the raised
+      // profile must be rejected first, proving no parsing happens.
+      expectCode(
+        () =>
+          importVox(bus, store, {
+            bytes: new Uint8Array(0),
+            expectedRevision: 0,
+            parseLimits: {
+              ...DEFAULT_VOX_PARSE_LIMITS,
+              maxChunks: DEFAULT_VOX_PARSE_LIMITS.maxChunks + 1,
+            },
+          }),
+        "VOX_PARSE_LIMITS_INVALID",
+      );
+      expect(store.revision).toBe(0);
+    });
+
+    it("still honors valid lower overrides atomically", () => {
+      const { store, bus } = harness();
+      const bytes = encodeVox({ models: [cube], palette });
+      const lower: VoxParseLimits = {
+        ...DEFAULT_VOX_PARSE_LIMITS,
+        maxChunks: 8,
+        maxModels: 1,
+        maxVoxelsPerModel: 4,
+        maxTotalVoxels: 4,
+        maxUnknownChunkBytes: 1024,
+      };
+      const outcome = importVox(bus, store, {
+        bytes,
+        expectedRevision: 0,
+        parseLimits: lower,
+      });
+      expect(outcome.voxelsImported).toBe(4);
+      expect(store.revision).toBe(1);
+      // A file that violates a lowered limit is still rejected atomically.
+      const before = store.getDocument();
+      expectCode(
+        () =>
+          importVox(bus, store, {
+            bytes,
+            expectedRevision: store.revision,
+            parseLimits: { ...lower, maxChunks: 2 },
+          }),
+        "VOX_TOO_MANY_CHUNKS",
+      );
+      expect(store.revision).toBe(1);
+      expect(store.getDocument()).toEqual(before);
+    });
+
+    it("keeps the 100k-chunk hard policy unraisable through the import seam", () => {
+      const { store, bus } = harness();
+      const bytes = buildChunkFloodFile(100_000);
+      // The flood is rejected under the frozen defaults...
+      expectCode(
+        () => importVox(bus, store, { bytes, expectedRevision: 0 }),
+        "VOX_TOO_MANY_CHUNKS",
+      );
+      expect(store.revision).toBe(0);
+      // ...and the raised profile that used to admit it is now rejected
+      // before parsing, so the file can never consume parser resources
+      // above the advertised hard policy.
+      expectCode(
+        () =>
+          importVox(bus, store, {
+            bytes,
+            expectedRevision: 0,
+            parseLimits: {
+              ...DEFAULT_VOX_PARSE_LIMITS,
+              maxChunks: 100_010,
+            },
+          }),
+        "VOX_PARSE_LIMITS_INVALID",
+      );
+      expect(store.revision).toBe(0);
+    });
   });
 });
