@@ -189,6 +189,12 @@ export class WorkspaceError extends Error {
       >;
     const safeCause = redactCause(data.cause);
     if (safeCause !== undefined) this.safeCause = safeCause;
+    // Finish construction by freezing the instance (issue #69): TypeScript
+    // `readonly` has no runtime effect, so without this any consumer could
+    // rewrite family/code/message before display, logging, or serialization.
+    // Freezing preserves normal Error behavior: `stack` is computed lazily by
+    // the prototype accessor and `toJSON` lives on the prototype.
+    Object.freeze(this);
   }
 
   toJSON(): WorkspaceErrorData {
