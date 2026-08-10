@@ -107,7 +107,7 @@ naming policy above. Each Track maps to one channel plus one sampler:
 
 | Track | glTF channel target | Sampler |
 |---|---|---|
-| `translation` | chain head node (`translation`) | input = keyframe times |
+| `translation` | chain head node (`translation`) | input = keyframe times plus held boundary samples at `0` / `clip.duration` |
 | `rotation` | pivot helper / single node (`rotation`) | output = canonical quaternions (VEC4) |
 | `scale` | pivot helper / single node (`scale`) | output = scale vectors (VEC3) |
 
@@ -118,14 +118,22 @@ and scale are applied on the pivot helper, so the world transform stays
 
 Interpolation maps as follows:
 
-- `step` and `linear` map directly to glTF `STEP` and `LINEAR` with the
-  authored keyframes (times strictly increasing, values bit-for-bit in
-  float32).
+- `step` and `linear` map directly to glTF `STEP` and `LINEAR`; every
+  sampler carries the authored keyframes (values bit-for-bit in float32)
+  plus the held boundary samples described below.
 - `smoothstep` is deterministically baked to `LINEAR` samples using the
   frozen ease curve `u² × (3 - 2u)` (ADR-0006), with at most
   `maxSmoothstepSamplesPerSegment` interior samples per segment
   (default 16, callers may only lower). Authored boundary values are
   reproduced exactly.
+- Every multi-keyframe sampler covers the whole Clip: the runtime holds
+  the first value before the first keyframe and the last value after the
+  last keyframe, so held boundary samples are emitted at `0` and
+  `clip.duration` whenever the first/last authored keys do not already
+  lie there (identical adjacent values keep the segments constant; input
+  times stay strictly increasing without duplicates). This preserves the
+  Clip's leading and trailing hold intervals for every interpolation
+  mode.
 - A track with a single keyframe is constant and is emitted as two
   `LINEAR` samples over `[0, clip.duration]`, because glTF samplers
   require at least two strictly increasing input times.

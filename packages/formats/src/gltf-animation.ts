@@ -36,9 +36,13 @@ import {
  * samples per segment (callers may only lower the default). Rotation
  * samples are the canonical shortest-path values of the model. glTF
  * cannot encode playback looping, so a `loop` clip is reported as a bake
- * loss. Tracks with no keyframes carry no motion and are omitted; a
- * single-keyframe track is constant and is emitted as two samples over
- * the clip duration so the sampler stays valid for every consumer.
+ * loss. The runtime holds the first value before the first keyframe and
+ * the last value after the last keyframe, so every multi-keyframe
+ * sampler also emits held boundary samples at 0 and `clipDuration`
+ * unless an authored key already lies there; a single-keyframe track is
+ * constant and is emitted as two samples over the clip duration so the
+ * sampler stays valid for every consumer. Tracks with no keyframes carry
+ * no motion and are omitted.
  */
 
 /** Where each document node's TRS properties live in the exported chain. */
@@ -90,6 +94,33 @@ function blendValue(
 }
 
 /**
+ * Appends held boundary samples so a sampler covers `[0, clipDuration]`
+ * (issue #99). The runtime holds the first value before the first
+ * keyframe and the last value after the last keyframe
+ * (packages/animation/src/sample.ts), so a sampler over only the
+ * authored times would drop the Clip's leading and trailing hold
+ * intervals. A boundary whose time is already an authored key is
+ * skipped, so input times stay strictly increasing; identical adjacent
+ * values keep LINEAR/STEP segments constant.
+ */
+function addHeldBoundaries(
+  input: number[],
+  output: number[],
+  first: AnimationTrack["keyframes"][number],
+  last: AnimationTrack["keyframes"][number],
+  clipDuration: number,
+): void {
+  if (first.time > 0) {
+    input.unshift(0);
+    output.unshift(...first.property.value);
+  }
+  if (last.time < clipDuration) {
+    input.push(clipDuration);
+    output.push(...last.property.value);
+  }
+}
+
+/**
  * Converts one track to a glTF sampler, or undefined when the track has
  * no keyframes (no motion). `clipDuration` bounds the constant sample of
  * a single-keyframe track.
@@ -125,6 +156,9 @@ export function buildTrackSamples(
       input.push(keyframe.time);
       output.push(...keyframe.property.value);
     }
+    const last = keyframes[keyframes.length - 1];
+    if (last !== undefined)
+      addHeldBoundaries(input, output, first, last, clipDuration);
     return {
       input: Float32Array.from(input),
       output: Float32Array.from(output),
@@ -171,6 +205,8 @@ export function buildTrackSamples(
   }
   const last = keyframes[keyframes.length - 1];
   if (last !== undefined) push(last.time, last.property.value);
+  if (last !== undefined)
+    addHeldBoundaries(input, output, first, last, clipDuration);
   return {
     input: Float32Array.from(input),
     output: Float32Array.from(output),

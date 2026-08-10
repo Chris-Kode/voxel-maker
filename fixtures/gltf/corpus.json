@@ -57,7 +57,7 @@
     {
       "file": "golden/animated.glb",
       "vector": "pivoted arm with linear rotation, step translation, baked smoothstep scale, loop clip, and a constraint",
-      "byteLength": 5576,
+      "byteLength": 5592,
       "documentJson": "golden/animated.document.json",
       "volumesJson": "golden/animated.volumes.json",
       "nodes": 5,
@@ -192,10 +192,14 @@
             {
               "input": [
                 0,
-                0.5
+                0.5,
+                1
               ],
               "output": [
                 1,
+                2,
+                0,
+                2,
                 2,
                 0,
                 2,
