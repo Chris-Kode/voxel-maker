@@ -268,6 +268,17 @@ export async function runRecoveryTrace(): Promise<string> {
       expectedSessionId: TRACE_SESSION,
     });
     const recoveredHash = liveHash(crashRecovery.store);
+    // Issue #65: a recovered document must start a fresh bounded user
+    // history, so an immediate Undo reports no history instead of rolling
+    // back a replayed pre-crash transaction.
+    const undoAfterRecoveryResult = crashRecovery.bus.undo({
+      transactionId: transactionId("transaction:recovery:trace:undo-after"),
+      expectedRevision: crashRecovery.report.recoveredRevision,
+      source: "ui",
+    });
+    const undoAfterRecovery = undoAfterRecoveryResult.ok
+      ? { accepted: true, code: null }
+      : { accepted: false, code: undoAfterRecoveryResult.error.code };
 
     // --- corrupt tail: garbage after the last complete frame ---
     await port.appendJournal(
@@ -402,6 +413,7 @@ export async function runRecoveryTrace(): Promise<string> {
         hashStable: recoveredHash === liveHashBeforeCrash,
         historyPast: crashRecovery.bus.historySnapshot().past.length,
         historyFresh: crashRecovery.report.history,
+        undoAfterRecovery,
       },
       corruptTail: {
         replayedFrames: tailRecovery.report.replayedFrames,

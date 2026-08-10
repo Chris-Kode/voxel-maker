@@ -105,6 +105,7 @@ interface TraceOutput {
     hashStable: boolean;
     historyPast: number;
     historyFresh: string;
+    undoAfterRecovery: { accepted: boolean; code: string | null };
   };
   corruptTail: {
     replayedFrames: number;
@@ -157,9 +158,16 @@ describe("headless crash recovery", () => {
     expect(output.crash.journalAbsent).toBe(false);
     expect(output.crash.corruptTail).toBeNull();
     expect(output.crash.hashStable).toBe(true);
-    // A recovered document starts a fresh bounded user history.
+    // A recovered document starts a fresh bounded user history (issue
+    // #65): replay applies recorded revision transitions without
+    // pretending to be a fresh user edit, so the history is empty and an
+    // immediate Undo reports no history.
     expect(output.crash.historyFresh).toBe("fresh");
-    expect(output.crash.historyPast).toBe(2);
+    expect(output.crash.historyPast).toBe(0);
+    expect(output.crash.undoAfterRecovery).toEqual({
+      accepted: false,
+      code: "NOTHING_TO_UNDO",
+    });
 
     // Corrupt tail: valid frames replay, garbage is reported, never guessed.
     expect(output.corruptTail.replayedFrames).toBe(2);
@@ -392,6 +400,116 @@ describe("headless crash recovery", () => {
         volumeViews(outcome.store),
       );
       expect(after).toBe(before);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("recovery replay leaves a fresh undo history and preserves idempotency (issue #65)", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "voxel-maker-recovery-"));
+    try {
+      const projectPath = join(directory, "fresh-history.vxl");
+      const port = new NodeProjectStorage();
+      const trace = await import("./recovery-trace.js");
+      const document = trace.createTraceDocument();
+      const { store, writeCapability } = createDocumentStore({ document });
+      const registry = trace.createTraceRegistry();
+      const session = createRecoverySession({
+        projectPath,
+        port,
+        store,
+        writeCapability,
+        registry,
+        sessionId: SESSION,
+        baseRevision: 0,
+        baseSemanticHash: canonicalAssetSemanticHash(document, new Map()),
+      });
+      // A durable anchor snapshot at revision 0, then two journaled edits.
+      const anchor = await session.save(projectPath);
+      expect(anchor.status).toBe("saved");
+      const run = (label: string, expectedRevision: number): number => {
+        const result = session.bus.execute(
+          fillBoxCommand(commandId(`command:issue65:${label}`), {
+            volumeId: VOLUME,
+            region: { min: [0, 0, 0], max: [2, 2, 2] },
+            material: materialId(1),
+          }),
+          {
+            transactionId: transactionId(`transaction:issue65:${label}`),
+            expectedRevision,
+            source: "ui",
+          },
+        );
+        if (!result.ok) throw new Error(`${label} failed`);
+        return result.value.revisionAfter;
+      };
+      run("a", 0); // rev 1, journal frame 0->1
+      await journalEventOnce(
+        session.journal,
+        (event) => event.kind === "appended" && event.revisionAfter === 1,
+        "append a",
+      );
+      run("b", 1); // rev 2, journal frame 1->2
+      await journalEventOnce(
+        session.journal,
+        (event) => event.kind === "appended" && event.revisionAfter === 2,
+        "append b",
+      );
+      const liveHashBeforeCrash = canonicalAssetSemanticHash(
+        store.getDocument(),
+        volumeViews(store),
+      );
+      session.dispose();
+
+      const outcome = await recoverProject({
+        port,
+        projectPath,
+        registry,
+        expectedSessionId: SESSION,
+      });
+      expect(outcome.report.replayedFrames).toBe(2);
+      expect(outcome.report.recoveredRevision).toBe(2);
+      // Recovered state/hash is unchanged by the replay.
+      const recoveredHash = canonicalAssetSemanticHash(
+        outcome.store.getDocument(),
+        volumeViews(outcome.store),
+      );
+      expect(recoveredHash).toBe(liveHashBeforeCrash);
+      // The recovered bus starts a fresh bounded user history: replay
+      // entries are not undoable (issue #65).
+      expect(outcome.bus.historySnapshot().past).toHaveLength(0);
+      expect(outcome.bus.historySnapshot().future).toHaveLength(0);
+      const undo = outcome.bus.undo({
+        transactionId: transactionId("transaction:issue65:undo"),
+        expectedRevision: outcome.report.recoveredRevision,
+        source: "ui",
+      });
+      expect(undo.ok).toBe(false);
+      if (!undo.ok) {
+        expect(undo.error.code).toBe("NOTHING_TO_UNDO");
+      }
+      // Idempotency records survive recovery (ADR-0003: they live for the
+      // open session and every retained recovery frame): retrying a
+      // replayed transaction returns its recorded result without advancing
+      // the revision or appending a duplicate frame.
+      const retry = outcome.bus.execute(
+        fillBoxCommand(commandId("command:issue65:b"), {
+          volumeId: VOLUME,
+          region: { min: [0, 0, 0], max: [2, 2, 2] },
+          material: materialId(1),
+        }),
+        {
+          transactionId: transactionId("transaction:issue65:b"),
+          expectedRevision: 2,
+          source: "ui",
+        },
+      );
+      expect(retry.ok).toBe(true);
+      if (retry.ok) {
+        expect(retry.value.replayed).toBe(true);
+        expect(retry.value.revisionAfter).toBe(2);
+      }
+      expect(outcome.store.revision).toBe(2);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

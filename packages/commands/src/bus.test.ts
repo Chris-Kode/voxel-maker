@@ -423,6 +423,41 @@ describe("undo and redo", () => {
     expect(redo.error.code).toBe("NOTHING_TO_REDO");
   });
 
+  it("resetHistory clears undo/redo history but preserves idempotency", () => {
+    const { bus, store } = createBus();
+    bus.execute(set("rh:0001", [0, 0, 0]), options("rh:0001", 0));
+    bus.execute(set("rh:0002", [1, 0, 0]), options("rh:0002", 1));
+    expect(bus.historySnapshot().past).toHaveLength(2);
+    expect(bus.canUndo()).toBe(true);
+
+    bus.resetHistory();
+
+    // The history is fresh: nothing to undo or redo.
+    expect(bus.historySnapshot().past).toHaveLength(0);
+    expect(bus.historySnapshot().future).toHaveLength(0);
+    expect(bus.canUndo()).toBe(false);
+    expect(bus.canRedo()).toBe(false);
+    const undo = bus.undo(options("rh:undo:0001", 2));
+    expect(undo.ok).toBe(false);
+    if (undo.ok) return;
+    expect(undo.error.code).toBe("NOTHING_TO_UNDO");
+
+    // Idempotency records survive the reset (ADR-0003): retrying a
+    // committed transaction id returns its recorded result without
+    // advancing the revision.
+    const retry = bus.execute(set("rh:0002", [1, 0, 0]), options("rh:0002", 2));
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) return;
+    expect(retry.value.replayed).toBe(true);
+    expect(retry.value.revisionAfter).toBe(2);
+    expect(store.revision).toBe(2);
+
+    // A fresh commit after the reset is normally undoable.
+    bus.execute(set("rh:0003", [2, 0, 0]), options("rh:0003", 2));
+    expect(bus.canUndo()).toBe(true);
+    expect(bus.historySnapshot().past).toHaveLength(1);
+  });
+
   it("reports NOTHING_TO_UNDO and NOTHING_TO_REDO at the ends", () => {
     const { bus } = createBus();
     const undo = bus.undo(options("ur:undo:0005", 0));
