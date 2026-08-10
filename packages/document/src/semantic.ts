@@ -11,9 +11,25 @@ import {
 
 const encoder = new TextEncoder();
 
-/** Unicode code unit comparison (RFC 8785 member order). */
-const compareCodeUnit = (a: string, b: string): number =>
-  a < b ? -1 : a > b ? 1 : 0;
+/**
+ * Unicode scalar sequence comparison (ADR-0004/vxl-v1 volume order).
+ * JavaScript string comparison orders UTF-16 code units, which puts the
+ * high surrogate of a non-BMP scalar (e.g. U+10000) below a BMP scalar
+ * such as U+E000; the frozen v1 rule sorts Volume IDs by scalar value.
+ * Lone surrogates are not scalars; comparing them by code unit value keeps
+ * the ordering total and deterministic for any caller-supplied string.
+ */
+const compareScalarSequence = (a: string, b: string): number => {
+  const common = Math.min(a.length, b.length);
+  for (let index = 0; index < common; index += 1) {
+    const aCode = a.codePointAt(index) ?? 0;
+    const bCode = b.codePointAt(index) ?? 0;
+    if (aCode !== bCode) return aCode < bCode ? -1 : 1;
+    if (aCode > 0xffff) index += 1; // consume the low surrogate
+  }
+  // One sequence is a scalar prefix of the other: the shorter sorts first.
+  return a.length - b.length;
+};
 
 /**
  * ADR-0004 canonical semantic bytes for a whole asset: the document framing
@@ -39,7 +55,7 @@ export function canonicalAssetSemanticBytes(
     readonly payload: Uint8Array;
   }> = [];
   let chunksBytes = 0;
-  const volumeIds = Object.keys(document.volumes).sort(compareCodeUnit);
+  const volumeIds = Object.keys(document.volumes).sort(compareScalarSequence);
   for (const volumeId of volumeIds) {
     const volume = volumes.get(volumeId as VolumeId);
     if (volume === undefined) continue;

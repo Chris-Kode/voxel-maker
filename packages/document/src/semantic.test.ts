@@ -243,6 +243,81 @@ describe("canonicalAssetSemanticBytes", () => {
     );
   });
 
+  it("orders non-BMP volume IDs by Unicode scalar sequence, not UTF-16 code units", () => {
+    // Two volumes whose IDs share a prefix and diverge at the final scalar:
+    // "volume:u:\uE000" (BMP scalar U+E000) and "volume:u:\u{10000}"
+    // (non-BMP scalar U+10000). UTF-16 code-unit order would put U+10000
+    // first (its high surrogate 0xD800 sorts below 0xE000); the frozen
+    // ADR-0004/vxl-v1 rule sorts volume IDs by Unicode scalar sequence,
+    // which puts U+E000 first (issue #87).
+    const lowId = "volume:u:\uE000";
+    const highId = "volume:u:\u{10000}";
+    const document = createDocument({
+      documentId: documentId("document:semantic:0002"),
+      rootNodeId: nodeId("node:semantic:root"),
+      nodes: [
+        {
+          nodeId: nodeId("node:semantic:root"),
+          parentId: null,
+          children: [nodeId("node:semantic:low"), nodeId("node:semantic:high")],
+          transform: identity,
+          components: [],
+        },
+        {
+          nodeId: nodeId("node:semantic:low"),
+          parentId: nodeId("node:semantic:root"),
+          children: [],
+          transform: identity,
+          components: [
+            { kind: "voxel", schemaVersion: 1, volumeId: volumeId(lowId) },
+          ],
+        },
+        {
+          nodeId: nodeId("node:semantic:high"),
+          parentId: nodeId("node:semantic:root"),
+          children: [],
+          transform: identity,
+          components: [
+            { kind: "voxel", schemaVersion: 1, volumeId: volumeId(highId) },
+          ],
+        },
+      ],
+      volumes: [{ volumeId: volumeId(lowId) }, { volumeId: volumeId(highId) }],
+    });
+    const makeVolume = (id: string): VoxelVolume => {
+      const volume = new VoxelVolume(id as never, limits, capability);
+      volume.setVoxel([0, 0, 0], 1, capability);
+      return volume;
+    };
+    const volumes = new Map([
+      [volumeId(lowId), makeVolume(lowId)],
+      [volumeId(highId), makeVolume(highId)],
+    ]);
+    const bytes = canonicalAssetSemanticBytes(document, volumes);
+
+    const encoder = new TextEncoder();
+    const documentJson = canonicalDocumentJson(document);
+    const prefix = new Uint8Array([
+      ...encoder.encode("vxl-semantic-v1\n"),
+      ...u64le(BigInt(encoder.encode(documentJson).byteLength)),
+      ...encoder.encode(documentJson),
+    ]);
+    const lowChunk = volumes.get(volumeId(lowId))?.getChunk([0, 0, 0]);
+    const highChunk = volumes.get(volumeId(highId))?.getChunk([0, 0, 0]);
+    expect(lowChunk).toBeDefined();
+    expect(highChunk).toBeDefined();
+    // Independent scalar-order golden: U+E000 frame first, U+10000 second.
+    const expected = new Uint8Array([
+      ...prefix,
+      ...frame(encoder, lowId, [0, 0, 0], lowChunk as Uint16Array),
+      ...frame(encoder, highId, [0, 0, 0], highChunk as Uint16Array),
+    ]);
+    expect(Buffer.from(bytes).equals(Buffer.from(expected))).toBe(true);
+    expect(canonicalAssetSemanticHash(document, volumes)).toBe(
+      sha256Hex(expected),
+    );
+  });
+
   it("rejects chunk read views that are not exactly 4096 unsigned-16 values (issue #85)", () => {
     const document = demoDocument();
     const malformed: VoxelVolumeReadView = {
