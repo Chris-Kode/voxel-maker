@@ -751,6 +751,15 @@ export class CommandBus {
         // A removal supersedes any earlier staged clone or creation.
         staged.volumes.delete(volumeId);
       },
+      stageCancelVolume: (volumeId) => {
+        // A staged-new volume never reached the committed document, so
+        // cancelling it only drops it from the overlay (ticket #111); the
+        // store's removal path is not involved.
+        if (!staged.volumes.has(volumeId)) {
+          throw missingVolume(volumeId);
+        }
+        staged.volumes.delete(volumeId);
+      },
       stageDocument: () => {
         if (staged.document === undefined) {
           staged.document = cloneDocumentMutable(store.getDocument());

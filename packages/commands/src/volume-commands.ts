@@ -383,10 +383,14 @@ const deleteVolumeHandler: CommandHandler<
     payload: DeleteVolumePayload,
     context: CommandValidationContext,
   ): void {
-    if (context.committedDocument.volumes[payload.volumeId] === undefined) {
-      // Deleting a volume that is already absent is a no-op commit (the
-      // desired end state already holds), matching the node/voxel no-op
-      // policy (plan 4.1).
+    // A volume counts as present when it is committed or was created
+    // earlier in this transaction (ticket #111); only a volume absent from
+    // both is a no-op commit (the desired end state already holds),
+    // matching the node/voxel no-op policy (plan 4.1).
+    if (
+      context.committedDocument.volumes[payload.volumeId] === undefined &&
+      !context.isVolumeStaged(payload.volumeId)
+    ) {
       return;
     }
     if (nodesReferencingVolume(context.document, payload.volumeId).length > 0) {
@@ -405,6 +409,55 @@ const deleteVolumeHandler: CommandHandler<
   ): CommandExecution {
     const committed = context.committedDocument;
     const descriptor = committed.volumes[payload.volumeId];
+    if (descriptor === undefined && context.isVolumeStaged(payload.volumeId)) {
+      // A volume created earlier in this transaction is deleted by
+      // cancelling the staged creation atomically (ticket #111): the staged
+      // volume and its descriptor are dropped together, so the commit
+      // installs neither and the repository never sees the volume. The
+      // inverse replays the exact creation, restoring the volume on undo.
+      const stagedDescriptor = context.document.volumes[payload.volumeId];
+      if (stagedDescriptor === undefined) throw missingVolume(payload.volumeId);
+      const volume = context.getVolume(payload.volumeId);
+      if (volume === undefined) throw missingVolume(payload.volumeId);
+      const entries = readVolumeEntries(volume);
+      if (entries.length > MAX_VOXELS_PER_OPERATION) {
+        throw new WorkspaceError({
+          family: "limit",
+          code: "TOO_MANY_VOXELS",
+          message: "Volume exceeds the per-operation voxel limit for deletion",
+          context: { limit: MAX_VOXELS_PER_OPERATION },
+        });
+      }
+      const inverse: InverseCommand = {
+        type: VOLUME_CREATE_COMMAND,
+        schemaVersion: VOLUME_COMMAND_SCHEMA_VERSION,
+        payload: {
+          volumeId: payload.volumeId,
+          ...(stagedDescriptor.name !== undefined
+            ? { name: stagedDescriptor.name }
+            : {}),
+          ...(stagedDescriptor.bounds !== undefined
+            ? { bounds: stagedDescriptor.bounds }
+            : {}),
+          ...(entries.length > 0
+            ? { entries: encodeVolumeEntries(entries) }
+            : {}),
+        },
+      };
+      context.stageCancelVolume(payload.volumeId);
+      const document = context.stageDocument();
+      document.volumes = withoutRecordEntry(document.volumes, payload.volumeId);
+      return {
+        changedRecords: true,
+        inverse,
+        declaredAffectedResources: {
+          nodeIds: [],
+          materialIds: [],
+          animationIds: [],
+          volumeIds: [payload.volumeId],
+        },
+      };
+    }
     if (descriptor === undefined) {
       // No-op: the volume is already absent; the inverse replays the same
       // delete and remains a no-op.

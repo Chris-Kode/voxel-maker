@@ -101,6 +101,16 @@ export interface CommandExecutionContext extends CommandValidationContext {
    * the store rejects an inconsistent removal.
    */
   stageRemoveVolume(volumeId: VolumeId): void;
+  /**
+   * Cancels a volume created earlier in this transaction (ticket #111): the
+   * staged-new volume is dropped from the overlay so the commit never
+   * installs it. The caller must also remove its descriptor from the staged
+   * document; the store rejects an inconsistent removal. Unlike
+   * `stageRemoveVolume`, the volume never reached the committed document,
+   * so no repository removal is recorded. Fails when the volume was not
+   * staged in this transaction.
+   */
+  stageCancelVolume(volumeId: VolumeId): void;
   readonly writeCapability: VoxelWriteCapability;
 }
 
