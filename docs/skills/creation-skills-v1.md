@@ -136,7 +136,9 @@ created with a skill.
    an existing one) and a manifest in `src/creation/`.
 2. Reference only **registered tools** (`KNOWN_TOOL_NAMES`) and
    **registered generators** (`KNOWN_GENERATOR_NAMES`); the registry
-   rejects unknown names.
+   rejects unknown names. Both collections are read-only views (issue
+   #108): consumers may iterate and test membership, but any mutation
+   attempt fails and cannot change what the registry accepts.
 3. Keep `constraints` at or below the hard engine caps; keep efficiency
    maxima at or below the constraints and goldens at or below the maxima.
 4. Reference only **registered structural checks** with bounded regions;

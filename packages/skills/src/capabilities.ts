@@ -4,6 +4,7 @@ import {
   type ToolCapability,
 } from "@voxel-maker/agent";
 import type { SkillManifest } from "./manifest.js";
+import { ReadonlyMapView } from "./readonly-collections.js";
 
 /**
  * Skill capability checks (plan S14.2, ticket #38): a skill's allowed
@@ -12,10 +13,15 @@ import type { SkillManifest } from "./manifest.js";
  * usable under an authorized capability set — every allowed tool's
  * capability class must be authorized, so a skill can never silently
  * depend on tools the agent run cannot call.
+ *
+ * The authoritative tool -> capability map is private to this module;
+ * the exported value is a read-only facade view over it (issue #108),
+ * so a consumer can resolve capability classes but a mutation attempt
+ * can never rewrite the usability decisions.
  */
 
 /** Tool name -> capability class (single source: the agent tool surface). */
-export const TOOL_CAPABILITIES: ReadonlyMap<string, ToolCapability> = new Map([
+const toolCapabilities = new Map<string, ToolCapability>([
   ...TOOL_DEFINITIONS.map(
     (definition) =>
       [definition.contract.name, definition.contract.capability] as const,
@@ -25,13 +31,17 @@ export const TOOL_CAPABILITIES: ReadonlyMap<string, ToolCapability> = new Map([
   ),
 ]);
 
+/** Read-only view of the tool name -> capability class map. */
+export const TOOL_CAPABILITIES: ReadonlyMap<string, ToolCapability> =
+  Object.freeze(new ReadonlyMapView(toolCapabilities));
+
 /** The capability classes a skill requires (its allowed tools). */
 export function requiredCapabilities(
   skill: SkillManifest,
 ): ReadonlySet<ToolCapability> {
   const required = new Set<ToolCapability>();
   for (const tool of skill.allowedTools) {
-    const capability = TOOL_CAPABILITIES.get(tool);
+    const capability = toolCapabilities.get(tool);
     if (capability !== undefined) required.add(capability);
   }
   return required;
@@ -52,7 +62,7 @@ export function unauthorizedTools(
 ): readonly string[] {
   const authorized = new Set(capabilities);
   return skill.allowedTools.filter((tool) => {
-    const capability = TOOL_CAPABILITIES.get(tool);
+    const capability = toolCapabilities.get(tool);
     return capability === undefined || !authorized.has(capability);
   });
 }

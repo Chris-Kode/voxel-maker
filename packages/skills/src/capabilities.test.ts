@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ToolCapability } from "@voxel-maker/agent";
 import { ALL_SKILLS, CREATION_SKILLS } from "./skill-registry.js";
 import {
   TOOL_CAPABILITIES,
@@ -84,5 +85,41 @@ describe("skill usability under a capability set (S14.2)", () => {
       unauthorized.every((tool) => TOOL_CAPABILITIES.get(tool) === "mutate"),
     ).toBe(true);
     expect(unauthorizedTools(furniture, ["inspect", "mutate"])).toHaveLength(0);
+  });
+});
+
+describe("public capability view (issue #108)", () => {
+  it("exposes capabilities through a non-mutating read-only map view", () => {
+    expect(TOOL_CAPABILITIES.get("fillBox")).toBe("mutate");
+    expect(TOOL_CAPABILITIES.has("queryVoxels")).toBe(true);
+    expect(TOOL_CAPABILITIES.size).toBeGreaterThan(0);
+    // The exported value is a facade, not a live Map: it has no
+    // mutation surface, so a consumer cannot rewrite capability
+    // decisions.
+    expect(TOOL_CAPABILITIES instanceof Map).toBe(false);
+    expect("set" in TOOL_CAPABILITIES).toBe(false);
+    expect("delete" in TOOL_CAPABILITIES).toBe(false);
+    expect("clear" in TOOL_CAPABILITIES).toBe(false);
+    // Any mutation attempt must fail loudly.
+    expect(() =>
+      (TOOL_CAPABILITIES as Map<string, ToolCapability>).set(
+        "fillBox",
+        "inspect",
+      ),
+    ).toThrow();
+  });
+
+  it("keeps creation skills blocked under inspect-only capability after a mutation attempt (issue #108 repro)", () => {
+    const furniture = CREATION_SKILLS[0] as (typeof CREATION_SKILLS)[number];
+    expect(skillUsableWith(furniture, ["inspect"])).toBe(false);
+    // A consumer rewriting the public map must fail...
+    expect(() =>
+      (TOOL_CAPABILITIES as Map<string, ToolCapability>).set(
+        "fillBox",
+        "inspect",
+      ),
+    ).toThrow();
+    // ...and the capability decision stays unchanged.
+    expect(skillUsableWith(furniture, ["inspect"])).toBe(false);
   });
 });
