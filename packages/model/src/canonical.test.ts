@@ -335,6 +335,33 @@ describe("canonicalSemanticBytes", () => {
 });
 
 describe("round-trip identity", () => {
+  it("round-trips dense metadata arrays with nulls exactly", () => {
+    const document = createDocument({
+      documentId: documentId("document:roundtrip:0001"),
+      rootNodeId: nodeId("node:roundtrip:root"),
+      metadata: {
+        list: [null, 1, "two", true],
+        nested: { deep: [0, null, [1, 2]] },
+      },
+      nodes: [
+        {
+          nodeId: nodeId("node:roundtrip:root"),
+          parentId: null,
+          children: [],
+          transform: identity,
+          components: [],
+          metadata: { tags: ["a", "b"] },
+        },
+      ],
+    });
+    const serialized = canonicalDocumentJson(document);
+    const reloaded = parseDocument(serialized);
+    expect(canonicalDocumentJson(reloaded)).toBe(serialized);
+    expect(canonicalDocumentHash(reloaded)).toBe(
+      canonicalDocumentHash(document),
+    );
+  });
+
   it("reloads every fixture to the identical canonical bytes and hash", () => {
     for (const fixture of [
       createHouseFixture(),

@@ -141,7 +141,7 @@ function serializeMetadata(
   return `{${parts.join(",")}}`;
 }
 
-function serializeJsonValue(value: JsonValue, seen: Set<object>): string {
+function serializeJsonValue(value: unknown, seen: Set<object>): string {
   if (value === null) return "null";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return serializeNumber(value);
@@ -165,15 +165,7 @@ function serializeJsonValue(value: JsonValue, seen: Set<object>): string {
           message: "Canonical JSON cannot contain holes in arrays",
         });
       }
-      const item = items[index];
-      if (item === undefined) {
-        throw new WorkspaceError({
-          family: "validation",
-          code: "INVALID_METADATA",
-          message: "Metadata must contain only JSON values",
-        });
-      }
-      parts.push(serializeJsonValue(item, seen));
+      parts.push(serializeJsonValue(items[index], seen));
     }
     seen.delete(value);
     return `[${parts.join(",")}]`;

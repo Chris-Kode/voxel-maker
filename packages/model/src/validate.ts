@@ -535,7 +535,7 @@ function checkMetadata(
             ),
           );
         }
-      } else if (typeof current !== "boolean") {
+      } else if (current !== null && typeof current !== "boolean") {
         // Non-JSON values (undefined, functions, symbols, BigInt) must be
         // rejected before any accepted document is serialized; array holes
         // are reported separately by the index walk below.
