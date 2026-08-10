@@ -50,7 +50,12 @@ export function clampWrappedAngle(
   max: number,
 ): number {
   if (max - min >= TWO_PI) return angle;
-  const midpoint = (min + max) / 2;
+  // Overflow-safe midpoint: (min + max) / 2 can overflow to Infinity
+  // for two finite same-sign endpoints near the double magnitude limit
+  // (issue #75); min / 2 + max / 2 cannot. The span check above already
+  // bounds the remaining arithmetic: when max - min < TWO_PI the shifted
+  // interval endpoints stay within a few ulps of the principal branch.
+  const midpoint = min / 2 + max / 2;
   const period = Math.round((angle - midpoint) / TWO_PI);
   const lo = min + period * TWO_PI;
   const hi = max + period * TWO_PI;

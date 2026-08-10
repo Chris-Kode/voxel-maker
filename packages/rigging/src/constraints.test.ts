@@ -136,6 +136,26 @@ describe("clampWrappedAngle", () => {
       );
     }
   });
+  it("handles finite limits near the double magnitude limit without overflow", () => {
+    // min=max=1e308: (min + max) / 2 overflows to Infinity, which used
+    // to make the clamp return -Infinity and crash quaternion
+    // recomposition (issue #75). The nearest equivalent of the single
+    // allowed point 1e308 to 0 is the double-arithmetic residual
+    // 1e308 - round(1e308 / 2pi) * 2pi, which is exactly 0.
+    expect(clampWrappedAngle(0, 1e308, 1e308)).toBe(0);
+    expect(clampWrappedAngle(0, -1e308, -1e308)).toBe(0);
+    // A span that overflows to Infinity still means "at least a full
+    // revolution", so the axis stays unrestricted.
+    expect(clampWrappedAngle(0, -1e308, 1e308)).toBe(0);
+    // Near the absolute double limit the residual is a huge-but-finite
+    // equivalent rotation, never an infinity.
+    const huge = clampWrappedAngle(0, 1.7e308, 1.7e308);
+    expect(Number.isFinite(huge)).toBe(true);
+    expect(clampWrappedAngle(0, 1.7e308, 1.7e308)).toBe(huge);
+    const negativeHuge = clampWrappedAngle(0, -1.7e308, -1.7e308);
+    expect(Number.isFinite(negativeHuge)).toBe(true);
+    expect(clampWrappedAngle(0, -1.7e308, -1.7e308)).toBe(negativeHuge);
+  });
 });
 
 describe("applyRotationLimits", () => {
@@ -385,6 +405,50 @@ describe("evaluateConstrainedNodeWorldTransforms", () => {
         9,
       );
     }
+  });
+  it("evaluates huge finite limits repeatedly to finite deterministic matrices", () => {
+    // Regression for issue #75: a model-valid document whose rotation
+    // limits are min=max=1e308 must evaluate to finite world matrices
+    // without throwing and without mutating the document.
+    const document = createDocument({
+      documentId: "document:rig:constraint:overflow" as never,
+      metadata: { title: "constraint overflow regression" },
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [],
+          transform: IDENTITY,
+          components: [
+            {
+              kind: "constraint",
+              schemaVersion: 1,
+              constraints: [
+                constraint("component:rig:constraint:overflow", {
+                  min: [1e308, 1e308, 1e308],
+                  max: [1e308, 1e308, 1e308],
+                }),
+              ],
+            },
+          ],
+        },
+      ],
+      volumes: [],
+    });
+    const frozen = deepFreeze(cloneDocument(document));
+    const before = JSON.stringify(frozen);
+    const first = evaluateConstrainedNodeWorldTransforms(frozen);
+    const second = evaluateConstrainedNodeWorldTransforms(frozen);
+    expect(first.size).toBe(1);
+    for (const [nodeId, matrix] of first) {
+      for (const component of matrix) {
+        expect(Number.isFinite(component)).toBe(true);
+      }
+      expect(second.get(nodeId)).toEqual(matrix);
+    }
+    expect(JSON.stringify(frozen)).toBe(before);
   });
 });
 
