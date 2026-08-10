@@ -306,6 +306,65 @@ describe("voxel.rotateRegion", () => {
     expect(voxelAt(store, [1, 0, 1])).toBe(1);
   });
 
+  it("undo and redo preserve a 180-degree axial rotation (issue #93)", () => {
+    const { bus, store } = createHarness();
+    // Distinguish axial rotation from point reflection: ONE at (0,1,0) must
+    // land on (1,1,1) (the y coordinate is preserved), not on (1,0,1), and
+    // TWO at (0,0,0) must land on (1,0,1), not on (1,1,1).
+    const seedOne = bus.execute(
+      setVoxelCommand(commandId("command:region:seed:93:0001"), {
+        volumeId: VOLUME,
+        coordinate: [0, 1, 0],
+        material: MATERIAL_ONE,
+      }),
+      tx("seed:93:0001", store.revision),
+    );
+    expect(seedOne.ok).toBe(true);
+    if (!seedOne.ok) return;
+    const seedTwo = bus.execute(
+      setVoxelCommand(commandId("command:region:seed:93:0002"), {
+        volumeId: VOLUME,
+        coordinate: [0, 0, 0],
+        material: MATERIAL_TWO,
+      }),
+      tx("seed:93:0002", store.revision),
+    );
+    expect(seedTwo.ok).toBe(true);
+    if (!seedTwo.ok) return;
+
+    const result = bus.execute(
+      rotateRegionCommand(commandId("command:region:rot:0093"), {
+        volumeId: VOLUME,
+        region: { min: [0, 0, 0], max: [2, 2, 2] },
+        axis: "y",
+        quarterTurns: 2,
+      }),
+      tx("rot:93:0001", store.revision),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(voxelAt(store, [1, 1, 1])).toBe(1);
+    expect(voxelAt(store, [1, 0, 1])).toBe(2);
+    expect(voxelAt(store, [0, 1, 0])).toBe(0);
+    expect(voxelAt(store, [0, 0, 0])).toBe(0);
+
+    const undone = bus.undo(tx("rot:93:undo", store.revision));
+    expect(undone.ok).toBe(true);
+    if (!undone.ok) return;
+    expect(voxelAt(store, [0, 1, 0])).toBe(1);
+    expect(voxelAt(store, [0, 0, 0])).toBe(2);
+    expect(voxelAt(store, [1, 1, 1])).toBe(0);
+    expect(voxelAt(store, [1, 0, 1])).toBe(0);
+
+    const redone = bus.redo(tx("rot:93:redo", store.revision));
+    expect(redone.ok).toBe(true);
+    if (!redone.ok) return;
+    expect(voxelAt(store, [1, 1, 1])).toBe(1);
+    expect(voxelAt(store, [1, 0, 1])).toBe(2);
+    expect(voxelAt(store, [0, 1, 0])).toBe(0);
+    expect(voxelAt(store, [0, 0, 0])).toBe(0);
+  });
+
   it("rejects a parity-mismatched region at parse time", () => {
     const { bus, store } = createHarness();
     seedQuad(bus, store);

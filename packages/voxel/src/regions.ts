@@ -12,7 +12,9 @@ import type { ShapeAxis } from "./shapes.js";
  * - **Rotate** turns the region content around the region center by exact
  *   90-degree increments. The mapping is the exact lattice rotation of voxel
  *   centers: `p' = c + R(p + 1/2 - c) - 1/2` with `c = (min + max) / 2`.
- *   This maps integer coordinates to integer coordinates only when the
+ *   180-degree rotations preserve the rotation-axis coordinate and reflect
+ *   the other two (issue #93) and are always exact; 90-degree rotations map
+ *   integer coordinates to integer coordinates only when the
  *   region extents on the two rotation-plane axes have the same parity
  *   (both even or both odd); otherwise the rotated voxel centers would land
  *   on half-integer positions and the operation is rejected
@@ -185,11 +187,27 @@ function rotationMap(
   cz: number,
 ): (coordinate: Vec3i) => Vec3i {
   if (quarterTurns === 2) {
-    // 180 degrees: p' = 2c - p - 1 on every axis.
+    // 180 degrees about `axis`: the axis coordinate is preserved and the
+    // other two are reflected about their centers (issue #93). Reflecting
+    // all three coordinates would be a point reflection, not a rotation.
+    if (axis === "x") {
+      return (p) => [
+        p[0],
+        reflectAboutCenter(cy, p[1]),
+        reflectAboutCenter(cz, p[2]),
+      ];
+    }
+    if (axis === "y") {
+      return (p) => [
+        reflectAboutCenter(cx, p[0]),
+        p[1],
+        reflectAboutCenter(cz, p[2]),
+      ];
+    }
     return (p) => [
       reflectAboutCenter(cx, p[0]),
       reflectAboutCenter(cy, p[1]),
-      reflectAboutCenter(cz, p[2]),
+      p[2],
     ];
   }
   if (axis === "x") {

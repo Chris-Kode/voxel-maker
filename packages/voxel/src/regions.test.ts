@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceError } from "@voxel-maker/shared";
+import type { IntAabb, Vec3i } from "@voxel-maker/math";
+import { rotateRegionPlan } from "./regions.js";
 import {
   VoxelVolume,
   chunkKey,
@@ -53,6 +55,23 @@ function seedNegativeQuad(volume: VoxelVolume): void {
       { coordinate: [-1, -1, -1], material: 2 as never },
       { coordinate: [-2, -1, 0], material: 3 as never },
       { coordinate: [-1, -1, 0], material: 4 as never },
+    ],
+    capability,
+  );
+}
+
+/** Fills a 2x2x2 cube with eight distinct materials (issue #93 fixture). */
+function seedCube(volume: VoxelVolume): void {
+  volume.setVoxels(
+    [
+      { coordinate: [0, 0, 0], material: 1 as never },
+      { coordinate: [1, 0, 0], material: 2 as never },
+      { coordinate: [0, 1, 0], material: 3 as never },
+      { coordinate: [1, 1, 0], material: 4 as never },
+      { coordinate: [0, 0, 1], material: 5 as never },
+      { coordinate: [1, 0, 1], material: 6 as never },
+      { coordinate: [0, 1, 1], material: 7 as never },
+      { coordinate: [1, 1, 1], material: 8 as never },
     ],
     capability,
   );
@@ -178,6 +197,45 @@ describe("VoxelVolume.rotateRegion golden fixtures", () => {
     expect(three.getVoxel([1, 0, 0])).toBe(1);
     expect(three.getVoxel([0, 0, 1])).toBe(4);
     expect(three.getVoxel([1, 0, 1])).toBe(2);
+  });
+
+  it("rotates 180 degrees about each axis as an axial rotation (issue #93)", () => {
+    // A 180-degree rotation about an axis must preserve the axis
+    // coordinate; the old quarterTurns===2 branch reflected all three
+    // coordinates (a point reflection). Direct 180 must equal two 90s.
+    for (const axis of ["x", "y", "z"] as const) {
+      const direct = createVolume();
+      seedCube(direct);
+      direct.rotateRegion(
+        { min: [0, 0, 0], max: [2, 2, 2] },
+        axis,
+        2,
+        capability,
+      );
+
+      const composed = createVolume();
+      seedCube(composed);
+      composed.rotateRegion(
+        { min: [0, 0, 0], max: [2, 2, 2] },
+        axis,
+        1,
+        capability,
+      );
+      composed.rotateRegion(
+        { min: [0, 0, 0], max: [2, 2, 2] },
+        axis,
+        1,
+        capability,
+      );
+      expectSameVoxels(snapshot(direct), snapshot(composed));
+
+      // Axial (not point) reflection: rotating about Y keeps every voxel on
+      // its y plane, so (0,1,0) lands on (1,1,1) and (0,0,0) on (1,0,1).
+      if (axis === "y") {
+        expect(direct.getVoxel([1, 1, 1])).toBe(3);
+        expect(direct.getVoxel([1, 0, 1])).toBe(1);
+      }
+    }
   });
 
   it("rotates about X and Z with exact material mapping", () => {
@@ -716,6 +774,41 @@ describe("VoxelVolume region property tests (fixed seed)", () => {
       invert(volume, changeSet);
       expectSameVoxels(snapshot(volume), before);
     }
+  });
+
+  it("a direct 180-degree map equals two 90-degree maps for every axis (issue #93, 100 rounds)", () => {
+    const random = lcg(0x5eed_0093);
+    for (let round = 0; round < 100; round += 1) {
+      // Even (2) and parity-valid odd (3) extents: 90-degree rotations are
+      // exact whenever the two rotation-plane extents share parity, so both
+      // classes must agree with the always-exact 180-degree map.
+      const extent = 2 + Math.floor(random() * 2);
+      const region = randomRegion(random, extent);
+      const axis = (["x", "y", "z"] as const)[Math.floor(random() * 3)] as
+        | "x"
+        | "y"
+        | "z";
+      const point: Vec3i = [
+        region.min[0] + Math.floor(random() * extent),
+        region.min[1] + Math.floor(random() * extent),
+        region.min[2] + Math.floor(random() * extent),
+      ];
+      const direct = rotateRegionPlan(region, axis, 2).map(point);
+      const once = rotateRegionPlan(region, axis, 1).map(point);
+      const twice = rotateRegionPlan(region, axis, 1).map(once);
+      expect(direct).toEqual(twice);
+    }
+  });
+});
+
+describe("rotateRegionPlan 180-degree axial rotation (issue #93)", () => {
+  it("preserves the rotation axis coordinate (issue #93 evidence)", () => {
+    // Issue #93 evidence: region [10,20,30)..[12,24,36), point [10,20,30].
+    const region: IntAabb = { min: [10, 20, 30], max: [12, 24, 36] };
+    const point: Vec3i = [10, 20, 30];
+    expect(rotateRegionPlan(region, "x", 2).map(point)).toEqual([10, 23, 35]);
+    expect(rotateRegionPlan(region, "y", 2).map(point)).toEqual([11, 20, 35]);
+    expect(rotateRegionPlan(region, "z", 2).map(point)).toEqual([11, 23, 30]);
   });
 });
 
