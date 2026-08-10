@@ -18,7 +18,12 @@ import {
 } from "@voxel-maker/document";
 import { CommandBus, fillBoxCommand } from "@voxel-maker/commands";
 import { readVxlProject } from "@voxel-maker/formats";
-import { decodeJournalFrames } from "@voxel-maker/storage";
+import { WorkspaceError } from "@voxel-maker/shared";
+import {
+  decodeJournalFrames,
+  type AtomicWriteOptions,
+  type AtomicWriteResult,
+} from "@voxel-maker/storage";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 import { NodeProjectStorage } from "./node-storage.js";
 import { createRecoverySession, recoverProject } from "./recovery.js";
@@ -44,6 +49,34 @@ function volumeViews(store: {
 const CLI_PATH = fileURLToPath(
   new URL("../dist/recovery-cli.js", import.meta.url),
 );
+
+/**
+ * Node storage that fails the next coordinated project write (issue #52
+ * repro). Only writes carrying the coordinator's phase callback are
+ * faulted, so the reassociation's internal snapshot copy (which passes no
+ * options) cannot consume the fault: the failure lands on the project
+ * write that follows the Save As reassociation.
+ */
+class FailingProjectStorage extends NodeProjectStorage {
+  failNextCoordinatedWrite = false;
+
+  override async writeProjectAtomic(
+    path: string,
+    bytes: Uint8Array,
+    options?: AtomicWriteOptions,
+  ): Promise<AtomicWriteResult> {
+    if (this.failNextCoordinatedWrite && options?.onPhase !== undefined) {
+      this.failNextCoordinatedWrite = false;
+      throw new WorkspaceError({
+        family: "io",
+        code: "IO_RENAME_FAILED",
+        message: "simulated failed project write",
+        context: { path },
+      });
+    }
+    return super.writeProjectAtomic(path, bytes, options);
+  }
+}
 
 const SESSION = recoverySessionId("session:recovery:e2e:0001");
 const VOLUME = volumeId("volume:recovery:body");
@@ -359,6 +392,70 @@ describe("headless crash recovery", () => {
         volumeViews(outcome.store),
       );
       expect(after).toBe(before);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("same-path Save As with a faulted project write preserves recovery (issue #52)", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "voxel-maker-recovery-"));
+    try {
+      const projectPath = join(directory, "samepath.vxl");
+      const port = new FailingProjectStorage();
+      const trace = await import("./recovery-trace.js");
+      const document = trace.createTraceDocument();
+      const { store, writeCapability } = createDocumentStore({ document });
+      const registry = trace.createTraceRegistry();
+      const session = createRecoverySession({
+        projectPath,
+        port,
+        store,
+        writeCapability,
+        registry,
+        sessionId: SESSION,
+        baseRevision: 0,
+        baseSemanticHash: canonicalAssetSemanticHash(document, new Map()),
+      });
+      // A durable anchor save, then one journaled edit.
+      const anchor = await session.save(projectPath);
+      expect(anchor.status).toBe("saved");
+      const edit = session.bus.execute(
+        fillBoxCommand(commandId("command:e2e:samepath"), {
+          volumeId: VOLUME,
+          region: { min: [0, 0, 0], max: [2, 2, 2] },
+          material: materialId(1),
+        }),
+        {
+          transactionId: transactionId("transaction:e2e:samepath"),
+          expectedRevision: 0,
+          source: "ui",
+        },
+      );
+      expect(edit.ok).toBe(true);
+      await journalEventOnce(
+        session.journal,
+        (event) => event.kind === "appended" && event.revisionAfter === 1,
+        "journal append",
+      );
+
+      // Save As to the SAME path; the project write that follows fails.
+      port.failNextCoordinatedWrite = true;
+      await expect(session.saveAs(projectPath)).rejects.toMatchObject({
+        code: "IO_RENAME_FAILED",
+      });
+
+      // The recovery area survived the faulted save-as: the journal still
+      // covers the edit and recovery replays it.
+      session.dispose();
+      const recovered = await recoverProject({
+        port,
+        projectPath,
+        registry,
+        expectedSessionId: SESSION,
+      });
+      expect(recovered.report.journalAbsent).toBe(false);
+      expect(recovered.report.recoveredRevision).toBe(1);
+      expect(recovered.report.replayedFrames).toBe(1);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

@@ -181,7 +181,11 @@ export interface RecoveryJournal {
    * that snapshot are removed (confirmed-save cleanup policy).
    */
   resetBase(revision: number, semanticHash: string): Promise<void>;
-  /** Moves the recovery area to `newPath`, preserving the recovery identity. */
+  /**
+   * Moves the recovery area to `newPath`, preserving the recovery identity.
+   * Reassociating to the current path is a no-op that retains the existing
+   * recovery area (issue #52).
+   */
   reassociate(newPath: string): Promise<void>;
   subscribe(listener: (event: RecoveryJournalEvent) => void): () => void;
   /** Stops the writer; pending appends reject and the file is retained. */
@@ -1100,10 +1104,17 @@ class RecoveryJournalImpl implements RecoveryJournal {
    * Moves the recovery area to `newPath` preserving the recovery identity
    * (plan S5.15 save-as reassociation). Snapshot first, then journal, then
    * removal: at every crash point at least one path keeps a recoverable
-   * combination.
+   * combination. Reassociating to the current path is a no-op: the
+   * replace-then-remove sequence would delete the journal while still
+   * reporting success (issue #52), so identical old/new paths retain the
+   * existing recovery area untouched.
    */
   async #performReassociate(newPath: string): Promise<void> {
     const oldPath = this.#projectPath;
+    if (newPath === oldPath) {
+      this.#emit({ kind: "reassociated", path: newPath });
+      return;
+    }
     if (await this.#port.exists(oldPath)) {
       const snapshotBytes = await this.#port.readProject(oldPath);
       await this.#port.writeProjectAtomic(newPath, snapshotBytes);
