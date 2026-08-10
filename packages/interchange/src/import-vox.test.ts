@@ -236,6 +236,41 @@ describe("importVox", () => {
     );
   });
 
+  it("keeps palette entries that differ only in alpha as distinct materials", () => {
+    const { store, bus } = harness();
+    // Palette indices 1 and 2 share RGB #ff0000 but differ in alpha; the
+    // within-import color cache must not merge them (issue #89).
+    const alphaPalette: VoxColor[] = [
+      { r: 0, g: 0, b: 0, a: 0 },
+      { r: 255, g: 0, b: 0, a: 255 },
+      { r: 255, g: 0, b: 0, a: 128 },
+      ...Array.from({ length: 253 }, () => ({ r: 0, g: 0, b: 0, a: 255 })),
+    ];
+    const alphaCube: VoxModel = {
+      sizeX: 2,
+      sizeY: 1,
+      sizeZ: 1,
+      voxels: [
+        { x: 0, y: 0, z: 0, colorIndex: 1 },
+        { x: 1, y: 0, z: 0, colorIndex: 2 },
+      ],
+    };
+    const bytes = encodeVox({ models: [alphaCube], palette: alphaPalette });
+    const outcome = importVox(bus, store, { bytes, expectedRevision: 0 });
+    expect(outcome.materialsCreated).toBe(2);
+    expect(store.getDocument().materials[materialId(1)]?.opacity).toBe(1);
+    expect(store.getDocument().materials[materialId(2)]?.opacity).toBe(
+      128 / 255,
+    );
+    // Each voxel keeps its source palette entry's material.
+    expect(store.getVoxel(volumeId("volume:import:0001"), [0, 0, 0])).toBe(
+      materialId(1),
+    );
+    expect(store.getVoxel(volumeId("volume:import:0001"), [1, 0, 0])).toBe(
+      materialId(2),
+    );
+  });
+
   it("remaps colliding palette ids to free material ids", () => {
     const document = createDocument({
       documentId: "document:import:0003" as never,

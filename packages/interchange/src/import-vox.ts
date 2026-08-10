@@ -113,7 +113,10 @@ export function importVox(
   );
   const materialIdByIndex = new Map<number, MaterialId>();
   const materialCreated = new Set<MaterialId>();
-  const materialColorCache = new Map<string, MaterialId>();
+  // Keyed by canonical RGB plus the exact palette alpha byte: two palette
+  // entries that share RGB but differ in alpha are distinct materials and
+  // must not be merged (issue #89).
+  const materialCacheByColorAndAlpha = new Map<string, MaterialId>();
 
   const nextFreeMaterialId = (): MaterialId => {
     for (let candidate = 1; candidate <= 65_535; candidate += 1) {
@@ -142,11 +145,12 @@ export function importVox(
       });
     }
     const colorKey = hexColor(color);
+    const cacheKey = `${colorKey}@${String(color.a)}`;
     const opacity = color.a / 255;
-    const existingByColor = materialColorCache.get(colorKey);
-    if (existingByColor !== undefined) {
-      materialIdByIndex.set(colorIndex, existingByColor);
-      return existingByColor;
+    const existingByColorAndAlpha = materialCacheByColorAndAlpha.get(cacheKey);
+    if (existingByColorAndAlpha !== undefined) {
+      materialIdByIndex.set(colorIndex, existingByColorAndAlpha);
+      return existingByColorAndAlpha;
     }
     let resolved: MaterialId | undefined;
     // 1. Reuse an existing material with the identical color AND opacity;
@@ -167,7 +171,7 @@ export function importVox(
       }
     }
     usedMaterialIds.add(resolved);
-    materialColorCache.set(colorKey, resolved);
+    materialCacheByColorAndAlpha.set(cacheKey, resolved);
     materialIdByIndex.set(colorIndex, resolved);
     return resolved;
   };
