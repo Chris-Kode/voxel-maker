@@ -25,13 +25,23 @@ export function randomBytes(rng: () => number, size: number): Uint8Array {
   return out;
 }
 
-/** Flips up to `count` random bytes of `bytes` (returns a copy). */
+/**
+ * Flips up to `count` random bytes of `bytes` (returns a copy). A zero
+ * budget (or empty input) yields an unchanged copy; `count` must be a
+ * non-negative integer (issue #50).
+ */
 export function mutateBytes(
   bytes: Uint8Array,
   rng: () => number,
   count: number,
 ): Uint8Array {
+  if (!Number.isInteger(count) || count < 0) {
+    throw new RangeError("mutateBytes count must be a non-negative integer");
+  }
   const out = bytes.slice();
+  if (count === 0 || out.byteLength === 0) {
+    return out;
+  }
   const flips = 1 + Math.floor(rng() * count);
   for (let i = 0; i < flips; i += 1) {
     out[Math.floor(rng() * out.byteLength)] = Math.floor(rng() * 256);
