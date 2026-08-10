@@ -117,14 +117,17 @@ async function main(): Promise<number> {
   console.log("");
   for (const gate of outcome.gates) {
     const status = gate.skipped ? "skip" : gate.pass ? "pass" : "FAIL";
-    // A zero-sample summary is zeros, not a measurement: the gate fails
-    // and the report says why instead of certifying empty evidence.
-    const zeroSample =
-      gate.samples === 0
-        ? " (zero samples; empty summary is not a measurement)"
-        : "";
+    // A gate can fail on completeness (issue #63) or on zero samples
+    // (ticket #57): the report says why instead of certifying empty or
+    // broken evidence.
+    const annotation =
+      gate.failureReason ??
+      (gate.samples === 0
+        ? "zero samples; empty summary is not a measurement"
+        : undefined);
+    const reason = annotation === undefined ? "" : ` (${annotation})`;
     console.log(
-      `[${status}] ${gate.label}: ${formatNumber(gate.measured, gate.unit === "s" ? "s" : gate.unit)} <= ${String(gate.limit)}${gate.unit}${zeroSample}`,
+      `[${status}] ${gate.label}: ${formatNumber(gate.measured, gate.unit === "s" ? "s" : gate.unit)} <= ${String(gate.limit)}${gate.unit}${reason}`,
     );
   }
   console.log("");
