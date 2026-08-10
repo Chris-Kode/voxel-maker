@@ -156,6 +156,42 @@ describe("shared contracts", () => {
     expect(err(error)).toEqual({ ok: false, error });
   });
 
+  it("freezes the instance so runtime writes cannot change serialized output (issue #69)", () => {
+    const error = new WorkspaceError({
+      family: "validation",
+      code: "ORIGINAL",
+      message: "original",
+      path: ["payload", "id"],
+      context: { nested: { reason: "initial" } },
+      cause: new Error("secret native details"),
+    });
+    expect(Object.isFrozen(error)).toBe(true);
+    // Freezing must preserve normal Error behavior.
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe("WorkspaceError");
+    const stack = error.stack;
+    expect(stack).toBeTypeOf("string");
+    expect(stack?.length).toBeGreaterThan(0);
+    const before = JSON.stringify(error);
+    // Attempted runtime writes are rejected (Reflect.set reports false on a
+    // frozen instance) and must never change the serialized contract.
+    expect(Reflect.set(error, "family", "internal")).toBe(false);
+    expect(Reflect.set(error, "code", "MUTATED")).toBe(false);
+    expect(Reflect.set(error, "message", "mutated")).toBe(false);
+    expect(Reflect.set(error, "path", ["hacked"])).toBe(false);
+    expect(Reflect.set(error, "context", { hacked: true })).toBe(false);
+    expect(Reflect.set(error, "cause", "hacked")).toBe(false);
+    expect(JSON.stringify(error)).toBe(before);
+    expect(JSON.parse(before)).toEqual({
+      family: "validation",
+      code: "ORIGINAL",
+      message: "original",
+      path: ["payload", "id"],
+      context: { nested: { reason: "initial" } },
+      cause: { type: "Error" },
+    });
+  });
+
   it("redacts attacker-controlled and hostile error names in causes (issue #67)", () => {
     const secret = "Authorization: Bearer sk-secret";
     const hostile = new Error("safe");
