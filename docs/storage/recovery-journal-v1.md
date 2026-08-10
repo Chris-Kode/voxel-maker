@@ -122,11 +122,16 @@ invariants:
 
 The recovered document is installed into a fresh store through validated
 lifecycle replacement and begins a fresh bounded user history (v1 promises
-no cross-restart undo before the journal; the replayed frames form the
-first entries of that fresh history and remain undoable within the
-session). Recovery never resets the journal: the replayed frames stay on
-disk, and a second crash before the next save recovers the same state by
-replaying them again.
+no cross-restart undo before the journal). Replay applies recorded revision
+transitions without pretending to be a fresh user edit: the replayed frames
+are not undoable, so an immediate Undo reports no history and can never
+remove recovered work. Idempotency records for the replayed transactions
+survive recovery (ADR-0003: they live for the open session and every
+retained recovery frame), so a caller retrying a replayed transaction id
+receives its recorded result instead of re-applying the edit. Recovery
+never resets the journal: the replayed frames stay on disk, and a second
+crash before the next save recovers the same state by replaying them
+again.
 
 ## Adapters
 

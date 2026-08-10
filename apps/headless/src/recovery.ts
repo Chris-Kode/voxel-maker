@@ -316,6 +316,13 @@ export async function recoverProject(
     replayed += 1;
   }
 
+  // Issue #65: replay applies recorded revision transitions without
+  // pretending to be a fresh user edit (plan 5.4). The replayed frames
+  // must not be undoable, so the recovered bus starts a fresh bounded
+  // user history; idempotency records survive so a retried transaction id
+  // still replays its recorded result (ADR-0003).
+  bus.resetHistory();
+
   const report: RecoveryReport = {
     ...base,
     recoveredRevision: store.revision,

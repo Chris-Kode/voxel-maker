@@ -242,6 +242,26 @@ export class CommandBus {
     this.#sealPending();
   }
 
+  /**
+   * Clears the undo/redo history while preserving idempotency records
+   * (plan 5.4, ADR-0003). Recovery replay applies recorded revision
+   * transitions through normal command decoding, but a recovered document
+   * starts a fresh bounded user history, so replayed transactions must
+   * not be undoable. Idempotency records are retained because they live
+   * for the open session and every retained recovery frame: a caller
+   * retrying a replayed transaction id still receives its recorded result
+   * instead of re-applying the edit. Seals any unsealed gesture so
+   * retained handles report inactive. Owned by recovery and lifecycle
+   * transitions; arbitrary projections must never reset a live bus's
+   * history.
+   */
+  resetHistory(): void {
+    this.#sealPending();
+    this.#past = [];
+    this.#future = [];
+    this.#inverseBytes = 0;
+  }
+
   /** Executes one command as a single transaction. */
   execute(command: Command, options: TransactionOptions): TransactionResult {
     return this.executeTransaction([command], options);
