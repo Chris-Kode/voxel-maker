@@ -19,6 +19,7 @@ import {
   parseRegion,
   parseVolumeId,
 } from "./parse-helpers.js";
+import { withoutRecordEntry } from "./records.js";
 import type { Command } from "./types.js";
 import type {
   CommandExecution,
@@ -26,7 +27,6 @@ import type {
   CommandHandler,
   CommandValidationContext,
   InverseCommand,
-  MutableDocument,
 } from "./registry.js";
 import { CommandRegistry } from "./registry.js";
 import {
@@ -450,11 +450,7 @@ const deleteVolumeHandler: CommandHandler<
     };
     context.stageRemoveVolume(payload.volumeId);
     const document = context.stageDocument();
-    document.volumes = Object.fromEntries(
-      Object.entries(document.volumes).filter(
-        ([id]) => id !== payload.volumeId,
-      ),
-    ) as MutableDocument["volumes"];
+    document.volumes = withoutRecordEntry(document.volumes, payload.volumeId);
     return {
       changedRecords: true,
       inverse,

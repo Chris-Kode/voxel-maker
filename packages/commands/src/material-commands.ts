@@ -18,6 +18,7 @@ import {
   parseMaterial,
   parseName,
 } from "./parse-helpers.js";
+import { withoutRecordEntry } from "./records.js";
 import type { Command } from "./types.js";
 import type {
   CommandExecution,
@@ -25,7 +26,6 @@ import type {
   CommandHandler,
   CommandValidationContext,
   InverseCommand,
-  MutableDocument,
 } from "./registry.js";
 import { CommandRegistry } from "./registry.js";
 import { patchesInverse } from "./batch-commands.js";
@@ -605,11 +605,10 @@ const deleteMaterialHandler: CommandHandler<
         if (changeSet.chunks.length > 0) changeSets.push(changeSet);
       }
     }
-    document.materials = Object.fromEntries(
-      Object.entries(document.materials).filter(
-        ([id]) => id !== String(payload.materialId),
-      ),
-    ) as MutableDocument["materials"];
+    document.materials = withoutRecordEntry(
+      document.materials,
+      String(payload.materialId),
+    );
     const inverse: InverseCommand[] = changeSets.map((changeSet) =>
       patchesInverse(changeSet),
     );

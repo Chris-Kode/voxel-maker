@@ -32,6 +32,7 @@ import {
   parseNodeId,
   parseVolumeId,
 } from "./parse-helpers.js";
+import { withoutRecordEntry } from "./records.js";
 import type { Command } from "./types.js";
 import type {
   CommandExecution,
@@ -1412,9 +1413,7 @@ const deleteNodeHandler: CommandHandler<
     parent.children = parent.children.filter(
       (child) => child !== payload.nodeId,
     );
-    document.nodes = Object.fromEntries(
-      Object.entries(document.nodes).filter(([id]) => id !== payload.nodeId),
-    ) as MutableDocument["nodes"];
+    document.nodes = withoutRecordEntry(document.nodes, payload.nodeId);
     return {
       inverse: {
         type: NODE_CREATE_COMMAND,

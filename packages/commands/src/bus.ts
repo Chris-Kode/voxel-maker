@@ -25,6 +25,7 @@ import {
   type VoxelWriteCapability,
 } from "@voxel-maker/voxel";
 import { missingVolume } from "./parse-helpers.js";
+import { copyNullPrototype } from "./records.js";
 import {
   DEFAULT_COMMAND_LIMITS,
   type Command,
@@ -169,9 +170,18 @@ interface StagedOverlay {
  * Mutable deep clone of the committed document for transaction staging.
  * The committed document is canonical and deeply frozen, so a JSON round
  * trip yields an independent working copy with no shared backing data.
+ * The round trip also loses the null-prototype ID-keyed records, so they
+ * are rebuilt (issue #103): without this, an absent caller-supplied ID
+ * such as "toString" would resolve to an inherited `Object.prototype`
+ * member on the staged document and be mistaken for an existing record.
  */
 function cloneDocumentMutable(document: VoxelDocument): MutableDocument {
-  return JSON.parse(JSON.stringify(document)) as MutableDocument;
+  const cloned = JSON.parse(JSON.stringify(document)) as MutableDocument;
+  cloned.nodes = copyNullPrototype(cloned.nodes);
+  cloned.materials = copyNullPrototype(cloned.materials);
+  cloned.volumes = copyNullPrototype(cloned.volumes);
+  cloned.animations = copyNullPrototype(cloned.animations);
+  return cloned;
 }
 
 /**

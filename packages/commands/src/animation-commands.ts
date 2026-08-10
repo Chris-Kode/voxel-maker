@@ -24,6 +24,7 @@ import type {
   VoxelDocument,
 } from "@voxel-maker/model";
 import { isRecord, parseName, parseNodeId } from "./parse-helpers.js";
+import { withoutRecordEntry } from "./records.js";
 import type { Command } from "./types.js";
 import type {
   CommandExecution,
@@ -867,10 +868,7 @@ const createAnimationHandler: CommandHandler<
       tracks: [],
       ...(payload.name === undefined ? {} : { name: payload.name }),
     };
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: clip,
-    };
+    document.animations[payload.animationId] = clip;
     return {
       inverse: {
         type: ANIMATION_DELETE_COMMAND,
@@ -953,10 +951,7 @@ const updateAnimationHandler: CommandHandler<
     }
     if (payload.duration !== undefined) next.duration = payload.duration;
     if (payload.loop !== undefined) next.loop = payload.loop;
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: next,
-    };
+    document.animations[payload.animationId] = next;
     const inversePayload: UpdateAnimationPayload = {
       animationId: payload.animationId,
       ...(payload.name === undefined ||
@@ -1018,11 +1013,10 @@ const deleteAnimationHandler: CommandHandler<
         declaredAffectedResources: animationResources(payload.animationId),
       };
     }
-    document.animations = Object.fromEntries(
-      Object.entries(document.animations).filter(
-        ([id]) => id !== payload.animationId,
-      ),
-    ) as MutableDocument["animations"];
+    document.animations = withoutRecordEntry(
+      document.animations,
+      payload.animationId,
+    );
     return {
       inverse: restoreClipInverse(clip),
       changedRecords: true,
@@ -1108,9 +1102,9 @@ const addTrackHandler: CommandHandler<
       interpolation: payload.interpolation,
       keyframes: [],
     };
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: { ...clip, tracks: [...clip.tracks, track] },
+    document.animations[payload.animationId] = {
+      ...clip,
+      tracks: [...clip.tracks, track],
     };
     return {
       inverse: {
@@ -1170,14 +1164,11 @@ const removeTrackHandler: CommandHandler<
         declaredAffectedResources: animationResources(payload.animationId),
       };
     }
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: {
-        ...clip,
-        tracks: clip.tracks.filter(
-          (candidate) => candidate.trackId !== payload.trackId,
-        ),
-      },
+    document.animations[payload.animationId] = {
+      ...clip,
+      tracks: clip.tracks.filter(
+        (candidate) => candidate.trackId !== payload.trackId,
+      ),
     };
     // Restore the track and its keyframes on undo: the bus replays the
     // stored array in reverse, so the keyframes are stored first.
@@ -1255,14 +1246,11 @@ const setTrackInterpolationHandler: CommandHandler<
       ...track,
       interpolation: payload.interpolation,
     };
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: {
-        ...clip,
-        tracks: clip.tracks.map((candidate) =>
-          candidate.trackId === payload.trackId ? next : candidate,
-        ),
-      },
+    document.animations[payload.animationId] = {
+      ...clip,
+      tracks: clip.tracks.map((candidate) =>
+        candidate.trackId === payload.trackId ? next : candidate,
+      ),
     };
     return {
       inverse: {
@@ -1399,14 +1387,11 @@ const setKeyframeHandler: CommandHandler<
     // time is unique, so sorting the array restores the invariant.
     keyframes.sort((a, b) => a.time - b.time);
     const next: AnimationTrack = { ...track, keyframes };
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: {
-        ...clip,
-        tracks: clip.tracks.map((candidate) =>
-          candidate.trackId === payload.trackId ? next : candidate,
-        ),
-      },
+    document.animations[payload.animationId] = {
+      ...clip,
+      tracks: clip.tracks.map((candidate) =>
+        candidate.trackId === payload.trackId ? next : candidate,
+      ),
     };
     const inverse: InverseCommand =
       existing === undefined
@@ -1542,14 +1527,11 @@ const moveKeyframeHandler: CommandHandler<
       )
       .sort((a, b) => a.time - b.time);
     const next: AnimationTrack = { ...track, keyframes };
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: {
-        ...clip,
-        tracks: clip.tracks.map((candidate) =>
-          candidate.trackId === payload.trackId ? next : candidate,
-        ),
-      },
+    document.animations[payload.animationId] = {
+      ...clip,
+      tracks: clip.tracks.map((candidate) =>
+        candidate.trackId === payload.trackId ? next : candidate,
+      ),
     };
     return {
       inverse: {
@@ -1613,21 +1595,18 @@ const deleteKeyframeHandler: CommandHandler<
         declaredAffectedResources: animationResources(payload.animationId),
       };
     }
-    document.animations = {
-      ...document.animations,
-      [payload.animationId]: {
-        ...clip,
-        tracks: clip.tracks.map((candidate) =>
-          candidate.trackId === payload.trackId
-            ? {
-                ...candidate,
-                keyframes: candidate.keyframes.filter(
-                  (keyframe) => keyframe.keyframeId !== payload.keyframeId,
-                ),
-              }
-            : candidate,
-        ),
-      },
+    document.animations[payload.animationId] = {
+      ...clip,
+      tracks: clip.tracks.map((candidate) =>
+        candidate.trackId === payload.trackId
+          ? {
+              ...candidate,
+              keyframes: candidate.keyframes.filter(
+                (keyframe) => keyframe.keyframeId !== payload.keyframeId,
+              ),
+            }
+          : candidate,
+      ),
     };
     return {
       inverse: {
