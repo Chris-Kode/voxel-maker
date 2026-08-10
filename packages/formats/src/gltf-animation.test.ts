@@ -221,7 +221,7 @@ function storeWithVoxels(document: VoxelDocument) {
       [VOLUME_BODY, [chunk]],
       [VOLUME_ARM, [chunk]],
     ]),
-  }).store;
+  });
 }
 
 describe("preflightGltfAnimations", () => {

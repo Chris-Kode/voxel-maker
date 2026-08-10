@@ -7,10 +7,8 @@ import {
   type CommandId,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import {
-  createDocumentStore,
-  type DocumentStoreRead,
-} from "@voxel-maker/document";
+import { type DocumentStoreRead } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
 import {
@@ -336,7 +334,7 @@ runCommandConformanceSuite(volumeCreateSpec, { describe, it, expect });
 describe("volume.create append mode material validation (issue #86)", () => {
   const makeHarness = () => {
     const document = createVolumeConformanceDocument();
-    const { store, writeCapability } = createDocumentStore({ document });
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
     const registry = new CommandRegistry();
     registerVolumeCommands(registry);
     const bus = new CommandBus(store, registry, writeCapability);

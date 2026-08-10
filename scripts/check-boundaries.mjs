@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -135,6 +136,30 @@ const allowedDependencies = {
     "session",
   ],
 };
+/**
+ * Packages and apps allowed to import the non-public mutation surface
+ * `@voxel-maker/document/internal` (issue #91): the command bus and the
+ * lifecycle coordinator own the write capability, the headless and
+ * desktop composition roots wire store and bus at startup, and monorepo
+ * fixture / test infrastructure stages committed state for tests. Every
+ * other package must consume only the read-only public entrypoint.
+ */
+const internalDocumentSurfacePackages = new Set([
+  "commands",
+  "session",
+  "storage",
+  "agent",
+  "skills",
+  "evaluation",
+  "benchmarks",
+  "editor",
+  "formats",
+  "interchange",
+  "renderer",
+  "headless",
+  "desktop",
+]);
+
 const packageOnlyAdapterPattern =
   /^(react|@react-three|@tauri-apps|@anthropic-ai|openai|node:(?:child_process|fs|http|https|net|path|worker_threads))(\/|$)/u;
 const threePattern = /^(three)(\/|$)/u;
@@ -152,12 +177,23 @@ async function sourceFiles(directory) {
   return files;
 }
 
+function recordDeepImport(findings, packageName, specifier) {
+  const parts = specifier.split("/");
+  const isDocumentInternal =
+    specifier === "@voxel-maker/document/internal" &&
+    internalDocumentSurfacePackages.has(packageName);
+  if (parts.length !== 2 && !isDocumentInternal)
+    findings.push(`${packageName} uses forbidden deep import ${specifier}`);
+}
+
 export async function inspectBoundaries(workspaceRoot) {
   const findings = [];
   const packageRoot = resolve(workspaceRoot, "packages");
-  const directories = (
-    await readdir(packageRoot, { withFileTypes: true })
-  ).filter((entry) => entry.isDirectory());
+  const directories = existsSync(packageRoot)
+    ? (await readdir(packageRoot, { withFileTypes: true })).filter((entry) =>
+        entry.isDirectory(),
+      )
+    : [];
   const graph = new Map();
   for (const directory of directories) {
     const packageName = directory.name;
@@ -185,10 +221,7 @@ export async function inspectBoundaries(workspaceRoot) {
         if (specifier?.startsWith("@voxel-maker/")) {
           const parts = specifier.split("/");
           const dependency = parts[1];
-          if (parts.length !== 2)
-            findings.push(
-              `${packageName} uses forbidden deep import ${specifier}`,
-            );
+          recordDeepImport(findings, packageName, specifier);
           if (dependency && !allowed.has(dependency))
             findings.push(`${packageName} may not import ${dependency}`);
           if (dependency && !dependencies.includes(dependency))
@@ -232,6 +265,28 @@ export async function inspectBoundaries(workspaceRoot) {
       }
     }
   }
+  // Apps (composition roots) are scanned for the same deep-import rule:
+  // only headless/desktop may reach the non-public mutation surface. The
+  // dependency-graph checks do not apply to apps.
+  const appsRoot = resolve(workspaceRoot, "apps");
+  const appDirectories = existsSync(appsRoot)
+    ? (await readdir(appsRoot, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()
+    : [];
+  for (const packageName of appDirectories) {
+    const src = resolve(appsRoot, packageName, "src");
+    for (const file of await sourceFiles(src)) {
+      const contents = await readFile(file, "utf8");
+      for (const match of contents.matchAll(importPattern)) {
+        const specifier = match[1];
+        if (specifier?.startsWith("@voxel-maker/"))
+          recordDeepImport(findings, packageName, specifier);
+      }
+    }
+  }
+
   const visiting = new Set();
   const visited = new Set();
   function visit(name, path) {

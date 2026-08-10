@@ -13,7 +13,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { canonicalAssetSemanticHash } from "@voxel-maker/document";
 import {
   CommandBus,
@@ -62,7 +62,7 @@ const frames = readFileSync(journalPath, "utf8")
   .filter((line) => line.length > 0);
 
 // OPEN: fresh store from the saved document — no skill catalog anywhere.
-const { store: openedStore, writeCapability } = createDocumentStore({
+const { store: openedStore, writeCapability } = createDocumentStoreHandle({
   document,
 });
 const registry = new CommandRegistry();

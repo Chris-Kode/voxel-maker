@@ -1,9 +1,9 @@
+import type { DocumentStoreRead } from "@voxel-maker/document";
 import type {
   DocumentStore,
   DocumentStoreHandle,
-  DocumentStoreRead,
-} from "@voxel-maker/document";
-import { createDocumentStore } from "@voxel-maker/document";
+} from "@voxel-maker/document/internal";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import {
   documentId,
@@ -98,7 +98,9 @@ export interface GeneratorFixture {
 
 /** Creates the live fixture: store, generic preview registry, and bus. */
 export function createGeneratorFixture(): GeneratorFixture {
-  const handle = createDocumentStore({ document: createGeneratorDocument() });
+  const handle = createDocumentStoreHandle({
+    document: createGeneratorDocument(),
+  });
   const registry = createPreviewRegistry();
   const bus = new CommandBus(handle.store, registry, handle.writeCapability);
   return { store: handle.store, handle, registry, bus };

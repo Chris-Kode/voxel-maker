@@ -433,7 +433,7 @@ describe("readVxlProject", () => {
     const seeds = new Map(
       [...loaded.volumes.entries()].map(([id, volume]) => [id, volume.chunks]),
     );
-    const { store } = createDocumentStore({
+    const store = createDocumentStore({
       document: loaded.document,
       volumes: seeds,
     });

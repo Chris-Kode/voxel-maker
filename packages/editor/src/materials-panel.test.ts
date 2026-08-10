@@ -17,10 +17,8 @@ import {
   registerMaterialCommands,
   registerVoxelCommands,
 } from "@voxel-maker/commands";
-import {
-  createDocumentStore,
-  type DocumentStoreRead,
-} from "@voxel-maker/document";
+import { type DocumentStoreRead } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   countMaterialUsage,
   defaultNewMaterialPayload,
@@ -108,7 +106,7 @@ interface Harness {
 
 function createHarness(): Harness {
   const document = buildDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerBatchCommands(registry);

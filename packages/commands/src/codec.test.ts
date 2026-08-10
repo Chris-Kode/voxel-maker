@@ -10,7 +10,7 @@ import {
   type JsonValue,
 } from "@voxel-maker/shared";
 import { WorkspaceError } from "@voxel-maker/shared";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -104,7 +104,7 @@ describe("journal-safe command codec (plan S4.14)", () => {
   it("replays a decoded transaction through the bus with identical semantics", () => {
     const encoded = journalTransactionToJson(record());
     const decoded = parseJournalTransaction(encoded, DEFAULT_COMMAND_LIMITS);
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createCodecDocument(),
     });
     const registry = new CommandRegistry();

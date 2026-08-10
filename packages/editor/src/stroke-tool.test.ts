@@ -19,10 +19,8 @@ import {
   registerVoxelCommands,
   setBatchCommand,
 } from "@voxel-maker/commands";
-import {
-  createDocumentStore,
-  type DocumentStoreRead,
-} from "@voxel-maker/document";
+import { type DocumentStoreRead } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { createEditorStore, createStrokeTool } from "./index.js";
 import type { StrokeTool } from "./stroke-tool.js";
 import type { ToolHost, ToolPick } from "./types.js";
@@ -117,7 +115,7 @@ interface Harness {
 
 function createHarness(options?: { maxGestureVoxels?: number }): Harness {
   const document = buildDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerBatchCommands(registry);

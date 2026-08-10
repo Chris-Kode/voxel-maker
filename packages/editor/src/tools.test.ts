@@ -21,7 +21,7 @@ import {
   DEFAULT_VOXEL_VOLUME_LIMITS,
   type VoxelVolumeLimits,
 } from "@voxel-maker/voxel";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   createEditorStore,
   createEyedropperTool,
@@ -138,7 +138,7 @@ interface Harness {
 
 function createHarness(options?: { maxGestureVoxels?: number }): Harness {
   const document = buildDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerBatchCommands(registry);

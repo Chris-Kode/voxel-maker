@@ -12,7 +12,7 @@ import {
   createDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
 import {
@@ -80,9 +80,9 @@ function createHarness(options?: {
   readonly documentLimits?: typeof DEFAULT_DOCUMENT_LIMITS;
 }): {
   readonly bus: CommandBus;
-  readonly store: ReturnType<typeof createDocumentStore>["store"];
+  readonly store: ReturnType<typeof createDocumentStoreHandle>["store"];
 } {
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: createTwoVolumeDocument(),
     ...(options?.documentLimits === undefined
       ? {}

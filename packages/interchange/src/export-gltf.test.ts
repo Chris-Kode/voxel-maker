@@ -120,7 +120,7 @@ function parseGlbJson(bytes: Uint8Array): unknown {
 describe("exportGltf", () => {
   it("writes a deterministic GLB through the storage port", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
       { coordinate: [4, 5, -6], material: 1 },
     ]);
@@ -153,7 +153,7 @@ describe("exportGltf", () => {
 
   it("writes a .gltf JSON file with an embedded buffer", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [0, 0, 0], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -210,7 +210,7 @@ describe("exportGltf", () => {
 
   it("rejects a destination without a .gltf/.glb extension", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [0, 0, 0], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -227,7 +227,7 @@ describe("exportGltf", () => {
 
   it("reports atomic-write phases through onPhase", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -249,7 +249,7 @@ describe("exportGltf", () => {
 
   it("cancels the atomic write before it lands", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -298,7 +298,7 @@ describe("exportGltf", () => {
         },
       } as VoxelDocument["animations"],
     };
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -364,7 +364,7 @@ describe("exportGltf", () => {
         },
       } as VoxelDocument["animations"],
     };
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [0, 0, 0], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -391,7 +391,7 @@ describe("exportGltf", () => {
 
   it("does not mutate the document", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const before = store.getDocument();

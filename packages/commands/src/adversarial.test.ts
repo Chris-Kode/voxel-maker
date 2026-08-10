@@ -6,7 +6,7 @@ import {
   type JsonValue,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
 import { DEFAULT_COMMAND_LIMITS, type CommandLimits } from "./types.js";
@@ -63,12 +63,12 @@ function createDemoDocument(): VoxelDocument {
 
 function createBus(limits?: CommandLimits): {
   readonly bus: CommandBus;
-  readonly store: ReturnType<typeof createDocumentStore>["store"];
+  readonly store: ReturnType<typeof createDocumentStoreHandle>["store"];
   readonly writeCapability: ReturnType<
-    typeof createDocumentStore
+    typeof createDocumentStoreHandle
   >["writeCapability"];
 } {
-  const handle = createDocumentStore({ document: createDemoDocument() });
+  const handle = createDocumentStoreHandle({ document: createDemoDocument() });
   const registry = new CommandRegistry();
   registerNodeCommands(registry);
   const bus = new CommandBus(

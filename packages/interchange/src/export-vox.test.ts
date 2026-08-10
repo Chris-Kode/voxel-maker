@@ -104,7 +104,7 @@ function storeWithEntries(
 describe("exportVox", () => {
   it("writes a deterministic VOX file through the storage port", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
       { coordinate: [4, 5, -6], material: 2 },
     ]);
@@ -155,7 +155,7 @@ describe("exportVox", () => {
         },
       },
     };
-    const { store } = storeWithEntries(moved, [
+    const store = storeWithEntries(moved, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -204,7 +204,7 @@ describe("exportVox", () => {
         },
       },
     };
-    const { store } = storeWithEntries(animated, [
+    const store = storeWithEntries(animated, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -222,7 +222,7 @@ describe("exportVox", () => {
     // Nothing is written while the Clip loss is pending.
     expect(storage.files().size).toBe(0);
     // The Clip-free equivalent exports without the Clip loss.
-    const { store: plainStore } = storeWithEntries(exportDocument(), [
+    const plainStore = storeWithEntries(exportDocument(), [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const plain = await exportVox({
@@ -255,7 +255,7 @@ describe("exportVox", () => {
         },
       },
     };
-    const { store } = storeWithEntries(shiny, [
+    const store = storeWithEntries(shiny, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -276,7 +276,7 @@ describe("exportVox", () => {
 
   it("rebases negative origins when chosen", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [-3, 2, -5], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -307,7 +307,7 @@ describe("exportVox", () => {
 
   it("reports atomic-write phases through onPhase", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -329,7 +329,7 @@ describe("exportVox", () => {
 
   it("cancels the atomic write before it lands", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const storage = new MemoryProjectStorage();
@@ -351,7 +351,7 @@ describe("exportVox", () => {
 
   it("does not mutate the document", async () => {
     const document = exportDocument();
-    const { store } = storeWithEntries(document, [
+    const store = storeWithEntries(document, [
       { coordinate: [1, 2, -3], material: 1 },
     ]);
     const before = store.getDocument();

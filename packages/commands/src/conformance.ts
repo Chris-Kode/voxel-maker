@@ -7,10 +7,10 @@ import {
 } from "@voxel-maker/shared";
 import { canonicalDocumentHash, type VoxelDocument } from "@voxel-maker/model";
 import {
-  createDocumentStore,
   type DocumentCommitted,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import type { describe, expect, it } from "vitest";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
@@ -96,7 +96,7 @@ function createHarness(
   options: HarnessOptions = {},
 ): Harness {
   const document = spec.createDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   spec.register(registry);
   const bus = new CommandBus(store, registry, writeCapability, options.limits);

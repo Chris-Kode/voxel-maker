@@ -31,10 +31,8 @@ import {
 } from "@voxel-maker/model";
 import { quaternionFromAxisAngle } from "@voxel-maker/math";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
-import {
-  canonicalAssetSemanticHash,
-  createDocumentStore,
-} from "@voxel-maker/document";
+import { canonicalAssetSemanticHash } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -86,7 +84,8 @@ import {
   type RecoveryJournal,
   type RecoveryJournalEvent,
 } from "@voxel-maker/storage";
-import type { DocumentStore, DocumentStoreRead } from "@voxel-maker/document";
+import type { DocumentStoreRead } from "@voxel-maker/document";
+import type { DocumentStore } from "@voxel-maker/document/internal";
 import type { VoxelWriteCapability } from "@voxel-maker/voxel";
 
 const SMOKE_VERSION = "release-smoke-v1";
@@ -239,7 +238,7 @@ interface LiveHarness {
 
 function liveHarness(): LiveHarness {
   const document = createSmokeDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = createSmokeRegistry();
   const bus = new CommandBus(store, registry, writeCapability);
   return { document, store, writeCapability, registry, bus };
@@ -307,7 +306,7 @@ function createImportSourceHarness(): LiveHarness {
       },
     ],
   });
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = createSmokeRegistry();
   const bus = new CommandBus(store, registry, writeCapability);
   let result = bus.execute(

@@ -436,7 +436,7 @@ describe("rig and animation state checks (ticket #39 AC3)", () => {
     // motion checks; the unrigged starts do not.
     const biped = rigMotionFixtureById("rig-biped");
     expect(biped).toBeDefined();
-    const { store: endStore } = createDocumentStore({
+    const endStore = createDocumentStore({
       document: biped?.end as VoxelDocument,
     });
     const results = runStructuralChecks(
@@ -454,7 +454,7 @@ describe("rig and animation state checks (ticket #39 AC3)", () => {
       expect(result.passed, result.evidence).toBe(true);
     }
 
-    const { store: startStore } = createDocumentStore({
+    const startStore = createDocumentStore({
       document: biped?.start as VoxelDocument,
     });
     const startResults = runStructuralChecks(
@@ -473,7 +473,7 @@ describe("rig and animation state checks (ticket #39 AC3)", () => {
   it("animation duration and loop policy require at least one animation", () => {
     const fixture = rigMotionFixtureById("motion-walk");
     expect(fixture).toBeDefined();
-    const { store } = createDocumentStore({
+    const store = createDocumentStore({
       document: fixture?.end as VoxelDocument,
     });
     const results = runStructuralChecks(
@@ -491,7 +491,7 @@ describe("rig and animation state checks (ticket #39 AC3)", () => {
       expect(result.passed, result.evidence).toBe(true);
     }
 
-    const { store: startStore } = createDocumentStore({
+    const startStore = createDocumentStore({
       document: fixture?.start as VoxelDocument,
     });
     const startResults = runStructuralChecks(

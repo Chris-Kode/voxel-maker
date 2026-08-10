@@ -14,7 +14,7 @@ import type { DocumentStoreRead } from "@voxel-maker/document";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
 import { registerNodeCommands } from "./node-commands.js";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   NODE_ADD_JOINT_COMMAND,
   NODE_REMOVE_JOINT_COMMAND,
@@ -32,7 +32,7 @@ import {
 } from "./conformance.js";
 
 const createDocumentStoreFor = () =>
-  createDocumentStore({ document: createFixture() });
+  createDocumentStoreHandle({ document: createFixture() });
 
 /**
  * Articulation component command conformance (plan S9.3, ticket #26):

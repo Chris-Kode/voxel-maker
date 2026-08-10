@@ -1,9 +1,9 @@
 import type {
   DocumentCommitted,
-  DocumentStoreHandle,
   DocumentStoreRead,
 } from "@voxel-maker/document";
-import { createDocumentStore } from "@voxel-maker/document";
+import type { DocumentStoreHandle } from "@voxel-maker/document/internal";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import type { VoxelVolume } from "@voxel-maker/voxel";
 import {
   animationId,
@@ -653,7 +653,7 @@ export function createRigFixtureStore(
   kind: RigFixtureKind,
   rigged: boolean,
 ): { readonly store: DocumentStoreRead; readonly handle: DocumentStoreHandle } {
-  const handle = createDocumentStore({
+  const handle = createDocumentStoreHandle({
     document: rigged ? riggedDocument(kind) : unriggedDocument(kind),
   });
   commitRigVoxels(handle, kind);

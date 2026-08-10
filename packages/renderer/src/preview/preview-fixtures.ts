@@ -8,7 +8,10 @@ import {
   type VolumeId,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore, type DocumentStore } from "@voxel-maker/document";
+import {
+  createDocumentStore,
+  type DocumentStoreRead,
+} from "@voxel-maker/document";
 import type { VoxelChunkSeed } from "@voxel-maker/voxel";
 
 /**
@@ -126,15 +129,15 @@ export function createPreviewFixtureSeeds(): ReadonlyMap<
 }
 
 /** A fully installed fixture store (document + seeded volumes). */
-export function createPreviewFixtureStore(): DocumentStore {
+export function createPreviewFixtureStore(): DocumentStoreRead {
   return createDocumentStore({
     document: createPreviewFixtureDocument(),
     volumes: createPreviewFixtureSeeds(),
-  }).store;
+  });
 }
 
 /** Builds a document with a single empty voxel volume (no content). */
-export function createEmptyPreviewStore(): DocumentStore {
+export function createEmptyPreviewStore(): DocumentStoreRead {
   const root = nodeId("node:preview:empty");
   const volume = volumeId("volume:preview:empty");
   const document = createDocument({
@@ -154,5 +157,5 @@ export function createEmptyPreviewStore(): DocumentStore {
     materials: [],
     volumes: [{ volumeId: volume, bounds: { min: [0, 0, 0], max: [1, 1, 1] } }],
   });
-  return createDocumentStore({ document }).store;
+  return createDocumentStore({ document });
 }

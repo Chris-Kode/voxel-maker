@@ -17,7 +17,7 @@ import {
   registerBatchCommands,
   registerVoxelCommands,
 } from "@voxel-maker/commands";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   MemoryProjectStorage,
   type ProjectStoragePort,
@@ -116,7 +116,7 @@ function buildFixtureProject(): Uint8Array {
       { volumeId: VOLUME_B, bounds: { min: [0, 0, 0], max: [8, 8, 8] } },
     ],
   });
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerBatchCommands(registry);

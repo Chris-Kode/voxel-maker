@@ -8,7 +8,7 @@ import {
 } from "@voxel-maker/shared";
 import { type Transform } from "@voxel-maker/math";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -255,7 +255,7 @@ describe("defaultChildName", () => {
 describe("hierarchy command construction", () => {
   it("creates a child with the default name through the real bus", () => {
     const document = createDemoDocument();
-    const { store, writeCapability } = createDocumentStore({ document });
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
     const registry = new CommandRegistry();
     registerNodeCommands(registry);
     const bus = new CommandBus(store, registry, writeCapability);
@@ -278,7 +278,7 @@ describe("hierarchy command construction", () => {
 
   it("renames and deletes through the real bus", () => {
     const document = createDemoDocument();
-    const { store, writeCapability } = createDocumentStore({ document });
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
     const registry = new CommandRegistry();
     registerNodeCommands(registry);
     const bus = new CommandBus(store, registry, writeCapability);
@@ -319,7 +319,7 @@ describe("hierarchy command construction", () => {
       B,
     );
     expect(command).toBeDefined();
-    const { store, writeCapability } = createDocumentStore({ document });
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
     const registry = new CommandRegistry();
     registerNodeCommands(registry);
     const bus = new CommandBus(store, registry, writeCapability);

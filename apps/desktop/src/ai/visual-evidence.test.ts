@@ -11,7 +11,10 @@ import {
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import { validateEvidenceSet } from "@voxel-maker/agent";
-import { createDocumentStore, type DocumentStore } from "@voxel-maker/document";
+import {
+  createDocumentStoreHandle,
+  type DocumentStore,
+} from "@voxel-maker/document/internal";
 import { createRendererEvidenceCapture } from "./visual-evidence.js";
 
 /**
@@ -66,7 +69,7 @@ function smallFixture(): VoxelDocument {
 }
 
 function populatedStore(): DocumentStore {
-  const handle = createDocumentStore({ document: smallFixture() });
+  const handle = createDocumentStoreHandle({ document: smallFixture() });
   const { store, writeCapability } = handle;
   const staged = store.stageVolume(volumeId("volume:box"));
   if (staged === undefined) throw new Error("fixture volume missing");

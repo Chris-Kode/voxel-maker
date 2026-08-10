@@ -12,10 +12,8 @@ import {
   volumeId,
   type VolumeId,
 } from "@voxel-maker/shared";
-import {
-  canonicalAssetSemanticHash,
-  createDocumentStore,
-} from "@voxel-maker/document";
+import { canonicalAssetSemanticHash } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus, fillBoxCommand } from "@voxel-maker/commands";
 import { readVxlProject } from "@voxel-maker/formats";
 import { WorkspaceError } from "@voxel-maker/shared";
@@ -214,7 +212,7 @@ describe("headless crash recovery", () => {
     try {
       const projectPath = join(directory, "plain.vxl");
       const port = new NodeProjectStorage();
-      const { store, writeCapability } = createDocumentStore({
+      const { store, writeCapability } = createDocumentStoreHandle({
         document: (await import("./recovery-trace.js")).createTraceDocument(),
       });
       const registry = (
@@ -270,7 +268,9 @@ describe("headless crash recovery", () => {
       const port = new NodeProjectStorage();
       const trace = await import("./recovery-trace.js");
       const document = trace.createTraceDocument();
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const registry = trace.createTraceRegistry();
       const bus = new CommandBus(store, registry, writeCapability);
       bus.execute(
@@ -338,7 +338,9 @@ describe("headless crash recovery", () => {
       const port = new NodeProjectStorage();
       const trace = await import("./recovery-trace.js");
       const document = trace.createTraceDocument();
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const registry = trace.createTraceRegistry();
       const session = createRecoverySession({
         projectPath,
@@ -416,7 +418,9 @@ describe("headless crash recovery", () => {
       const port = new NodeProjectStorage();
       const trace = await import("./recovery-trace.js");
       const document = trace.createTraceDocument();
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const registry = trace.createTraceRegistry();
       // A durable anchor snapshot at revision 0, then two journaled edits.
       // The anchor write happens BEFORE the session exists, exactly like
@@ -530,7 +534,9 @@ describe("headless crash recovery", () => {
       const port = new FailingProjectStorage();
       const trace = await import("./recovery-trace.js");
       const document = trace.createTraceDocument();
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const registry = trace.createTraceRegistry();
       // A durable anchor save, then one journaled edit. The anchor write
       // happens BEFORE the session exists, exactly like the real open
@@ -597,7 +603,9 @@ describe("headless crash recovery", () => {
       const port = new NodeProjectStorage();
       const trace = await import("./recovery-trace.js");
       const document = trace.createTraceDocument();
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const registry = trace.createTraceRegistry();
       const session = createRecoverySession({
         projectPath,
@@ -690,7 +698,9 @@ describe("headless crash recovery", () => {
       const port = new NodeProjectStorage();
       const trace = await import("./recovery-trace.js");
       const document = trace.createTraceDocument();
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const registry = trace.createTraceRegistry();
       // The issue's repro: first durably save the fixed snapshot, then open
       // a session over that exact base revision/hash.
@@ -728,7 +738,9 @@ describe("headless crash recovery", () => {
       const port = new NodeProjectStorage();
       const trace = await import("./recovery-trace.js");
       const document = trace.createTraceDocument();
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const registry = trace.createTraceRegistry();
       const bus = new CommandBus(store, registry, writeCapability);
       const edit = bus.execute(

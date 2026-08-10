@@ -15,11 +15,8 @@ import {
   createDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import {
-  createDocumentStore,
-  type DocumentCommitted,
-  type StagedState,
-} from "./store.js";
+import { createDocumentStore, type DocumentCommitted } from "./index.js";
+import { createDocumentStoreHandle, type StagedState } from "./internal.js";
 
 const identity = {
   translation: [0, 0, 0],
@@ -145,14 +142,14 @@ function stagedState(
 
 describe("createDocumentStore", () => {
   it("exposes the document, revision, and limits", () => {
-    const { store } = createDocumentStore({ document: createDemoDocument() });
+    const store = createDocumentStore({ document: createDemoDocument() });
     expect(store.revision).toBe(0);
     expect(store.getDocument().documentId).toBe("document:store:0001");
     expect(store.limits.maxVoxelCoordinate).toBe(1_048_575);
   });
 
   it("reads empty voxels and missing volumes as empty", () => {
-    const { store } = createDocumentStore({ document: createDemoDocument() });
+    const store = createDocumentStore({ document: createDemoDocument() });
     expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(0);
     expect(store.getVoxel(volumeId("volume:missing:0001"), [0, 0, 0])).toBe(0);
     expect(store.getVolume(VOLUME)?.chunkCount()).toBe(0);
@@ -160,7 +157,7 @@ describe("createDocumentStore", () => {
   });
 
   it("stages copy-on-write clones that never affect committed state", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const staged = store.stageVolume(VOLUME);
@@ -173,7 +170,7 @@ describe("createDocumentStore", () => {
 
 describe("DocumentStore.commit", () => {
   it("installs staged state, increments revision once, and emits one frozen event", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const events: DocumentCommitted[] = [];
@@ -205,7 +202,9 @@ describe("DocumentStore.commit", () => {
   });
 
   it("rejects commits without the store write capability", () => {
-    const { store } = createDocumentStore({ document: createDemoDocument() });
+    const { store } = createDocumentStoreHandle({
+      document: createDemoDocument(),
+    });
     const event = makeEvent(0, 1);
     expect(() => {
       store.commit(
@@ -218,7 +217,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("rejects a staged document from another document", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const other = createDemoDocument();
@@ -238,7 +237,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("rejects a staged revision that is not exactly current + 1", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     expect(() => {
@@ -252,7 +251,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("rejects an event whose revisions do not match the staged document", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     expect(() => {
@@ -266,7 +265,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("rejects staged volumes that are not in the document", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const staged = store.stageVolume(VOLUME);
@@ -284,7 +283,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("rejects a structurally invalid staged document", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const invalid = {
@@ -303,7 +302,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("rejects staged voxel references to undeclared materials (issue #86)", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const staged = store.stageVolume(VOLUME);
@@ -323,7 +322,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("accepts staged voxel references to declared materials (issue #86)", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const staged = store.stageVolume(VOLUME);
@@ -342,7 +341,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("isolates subscriber exceptions", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const seen: DocumentCommitted[] = [];
@@ -361,7 +360,7 @@ describe("DocumentStore.commit", () => {
   });
 
   it("unsubscribes listeners", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const seen: DocumentCommitted[] = [];
@@ -380,7 +379,7 @@ describe("DocumentStore.commit", () => {
 
 describe("public consumer surface", () => {
   it("does not expose direct mutation through the read view", () => {
-    const { store } = createDocumentStore({ document: createDemoDocument() });
+    const store = createDocumentStore({ document: createDemoDocument() });
     // Compile-time guard: these lines must never type-check. They live in a
     // never-called function so the runtime never executes them.
     const guard = (): void => {
@@ -388,10 +387,11 @@ describe("public consumer surface", () => {
       // @ts-expect-error direct mutation must not be available on the public read view
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call
       view?.setVoxel([0, 0, 0], 1, undefined);
+      // @ts-expect-error the public read surface has no commit (issue #91)
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
       store.commit(
         stagedState({ ...store.getDocument(), revision: 1 }, new Map()),
         makeEvent(0, 1),
-        // @ts-expect-error commit requires the private write capability
         undefined,
       );
     };
@@ -399,7 +399,7 @@ describe("public consumer surface", () => {
   });
 
   it("returns a deeply frozen document that cannot be mutated", () => {
-    const { store } = createDocumentStore({ document: createDemoDocument() });
+    const store = createDocumentStore({ document: createDemoDocument() });
     const document = store.getDocument();
     expect(Object.isFrozen(document)).toBe(true);
     expect(Object.isFrozen(document.nodes)).toBe(true);
@@ -415,7 +415,7 @@ describe("public consumer surface", () => {
   });
 
   it("serializes the committed event canonically", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const staged = store.stageVolume(VOLUME);
@@ -546,7 +546,7 @@ describe("createDocumentStore volume seeding", () => {
     ]);
 
   it("installs seeded chunks through the validated load path", () => {
-    const { store } = createDocumentStore({
+    const store = createDocumentStore({
       document: seededDocument(),
       volumes: seeds() as never,
     });
@@ -573,7 +573,7 @@ describe("createDocumentStore volume seeding", () => {
     const values = new Uint16Array(4096);
     values[0] = 1;
     values[17] = 0;
-    const { store } = createDocumentStore({
+    const store = createDocumentStore({
       document: seededDocument(),
       volumes: new Map([
         ["volume:store:0001", [{ coordinate: [-1, 0, 0], values }]],
@@ -625,8 +625,10 @@ describe("document-wide voxel totals (ADR-0009, issue #92)", () => {
   }
 
   function commitBox(
-    store: ReturnType<typeof createDocumentStore>["store"],
-    writeCapability: ReturnType<typeof createDocumentStore>["writeCapability"],
+    store: ReturnType<typeof createDocumentStoreHandle>["store"],
+    writeCapability: ReturnType<
+      typeof createDocumentStoreHandle
+    >["writeCapability"],
     volume: ReturnType<typeof volumeId>,
     size: readonly [number, number, number],
     event: DocumentCommitted,
@@ -654,7 +656,7 @@ describe("document-wide voxel totals (ADR-0009, issue #92)", () => {
   }
 
   it("rejects a commit whose aggregate occupied voxels exceed the document limit", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createTwoVolumeDocument(),
       limits: { ...DEFAULT_DOCUMENT_LIMITS, maxOccupiedVoxels: 100 },
     });
@@ -680,7 +682,7 @@ describe("document-wide voxel totals (ADR-0009, issue #92)", () => {
   });
 
   it("rejects a commit whose aggregate non-empty chunks exceed the document limit", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createTwoVolumeDocument(),
       limits: { ...DEFAULT_DOCUMENT_LIMITS, maxChunks: 3 },
     });
@@ -705,7 +707,7 @@ describe("document-wide voxel totals (ADR-0009, issue #92)", () => {
   });
 
   it("allows document-wide totals at exactly the limit", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createTwoVolumeDocument(),
       limits: { ...DEFAULT_DOCUMENT_LIMITS, maxOccupiedVoxels: 100 },
     });

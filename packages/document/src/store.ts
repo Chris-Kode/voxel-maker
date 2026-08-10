@@ -175,8 +175,16 @@ export function validateChunkMaterialReferences(
   }
 }
 
-/** Creates the authoritative store for one validated document. */
-export function createDocumentStore(
+/**
+ * Non-public integration factory (issue #91): creates the authoritative
+ * store for one validated document and returns the mutation surface — the
+ * mutable `DocumentStore` plus the minted write capability. Only the
+ * command bus, the lifecycle coordinator, the headless and desktop
+ * composition roots, and monorepo fixture infrastructure import this
+ * through `@voxel-maker/document/internal`; ordinary consumers receive
+ * only the read surface from the public `createDocumentStore`.
+ */
+export function createDocumentStoreHandle(
   input: CreateDocumentStoreInput,
 ): DocumentStoreHandle {
   const limits = input.limits ?? DEFAULT_DOCUMENT_LIMITS;
@@ -234,6 +242,41 @@ export function createDocumentStore(
     writeCapability,
   );
   return { store, writeCapability };
+}
+
+/**
+ * Public composition factory (issue #91): creates the authoritative store
+ * for one validated document and returns only the immutable read surface.
+ * The write capability and the mutable store never cross the public
+ * package entrypoint, so a consumer can persist a staged edit only through
+ * `CommandBus.execute`; the command bus and lifecycle coordinator reach
+ * the mutation surface through `createDocumentStoreHandle` instead.
+ */
+export function createDocumentStore(
+  input: CreateDocumentStoreInput,
+): DocumentStoreRead {
+  const { store } = createDocumentStoreHandle(input);
+  return toReadSurface(store);
+}
+
+/**
+ * Read-only facade over the authoritative store (ADR-0002): the object a
+ * public consumer receives has no `stageVolume`/`commit` members at
+ * runtime, so neither a cast nor a spread can reach the mutation surface
+ * through the read store. Reads delegate to the authoritative store.
+ */
+function toReadSurface(store: DocumentStore): DocumentStoreRead {
+  return {
+    get revision(): number {
+      return store.revision;
+    },
+    limits: store.limits,
+    volumeLimits: store.volumeLimits,
+    getDocument: () => store.getDocument(),
+    getVolume: (volumeId) => store.getVolume(volumeId),
+    getVoxel: (volumeId, coordinate) => store.getVoxel(volumeId, coordinate),
+    subscribe: (listener) => store.subscribe(listener),
+  };
 }
 
 class DocumentStoreImpl implements DocumentStore {

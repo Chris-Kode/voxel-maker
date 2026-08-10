@@ -17,7 +17,7 @@ import {
   registerVoxelCommands,
   setBatchCommand,
 } from "@voxel-maker/commands";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   createEditorStore,
   createTransformTool,
@@ -132,7 +132,7 @@ interface Harness {
 
 function createHarness(options?: { maxGestureVoxels?: number }): Harness {
   const document = buildDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerBatchCommands(registry);

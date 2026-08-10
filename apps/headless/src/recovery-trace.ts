@@ -20,10 +20,12 @@ import {
 } from "@voxel-maker/model";
 import {
   canonicalAssetSemanticHash,
-  createDocumentStore,
-  type DocumentStore,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import {
+  createDocumentStoreHandle,
+  type DocumentStore,
+} from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -186,7 +188,7 @@ export async function runRecoveryTrace(): Promise<string> {
   try {
     // --- build the asset through commands and save a snapshot ---
     const document = createTraceDocument();
-    const { store, writeCapability } = createDocumentStore({ document });
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
     const registry = createTraceRegistry();
     const bus = new CommandBus(store, registry, writeCapability);
     const run = (
@@ -362,7 +364,7 @@ export async function runRecoveryTrace(): Promise<string> {
     // --- degraded durability: append failure leaves the edit valid and dirty ---
     port.failNextAppend = true;
     const { store: degradedStore, writeCapability: degradedCapability } =
-      createDocumentStore({ document });
+      createDocumentStoreHandle({ document });
     const degradedRegistry = createTraceRegistry();
     const degradedSession = createRecoverySession({
       projectPath: degradedPath,

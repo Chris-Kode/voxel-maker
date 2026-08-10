@@ -128,7 +128,7 @@ function buildStore(spec: DocumentSpec): DocumentStoreRead {
       bounds: { min: volume.min, max: volume.max },
     })),
   });
-  const { store } = createDocumentStore({
+  const store = createDocumentStore({
     document,
     volumes: new Map(
       spec.volumes.map((volume) => [

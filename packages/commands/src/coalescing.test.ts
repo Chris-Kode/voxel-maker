@@ -6,7 +6,7 @@ import {
   type NodeId,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus, type GestureHandle } from "./bus.js";
 import type { Command, TransactionOptions } from "./types.js";
 import { CommandRegistry } from "./registry.js";
@@ -66,9 +66,9 @@ function createDemoDocument(): VoxelDocument {
 
 function createBus(): {
   bus: CommandBus;
-  store: ReturnType<typeof createDocumentStore>["store"];
+  store: ReturnType<typeof createDocumentStoreHandle>["store"];
 } {
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: createDemoDocument(),
   });
   const registry = new CommandRegistry();
@@ -106,7 +106,7 @@ const tx = (expectedRevision: number): TransactionOptions => {
 };
 
 const translationOf = (
-  store: ReturnType<typeof createDocumentStore>["store"],
+  store: ReturnType<typeof createDocumentStoreHandle>["store"],
   node: NodeId,
 ): readonly [number, number, number] => {
   const record = store.getDocument().nodes[node];

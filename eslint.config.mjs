@@ -29,7 +29,11 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ["@voxel-maker/*/*"],
+              // Only the non-public mutation surface of @voxel-maker/document
+              // (issue #91) may be imported below the root entrypoint; the
+              // boundary check additionally limits it to integration
+              // packages (command bus, lifecycle, fixtures).
+              group: ["@voxel-maker/*/*", "!@voxel-maker/document/internal"],
               message: "Use only another package's exported root entrypoint.",
             },
           ],

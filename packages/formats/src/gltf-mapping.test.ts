@@ -135,7 +135,7 @@ function storeWithEntries(
     }
     volumes.set(id, [...chunks.values()]);
   }
-  return createDocumentStore({ document, volumes }).store;
+  return createDocumentStore({ document, volumes });
 }
 
 const fullStore = (document: VoxelDocument) =>

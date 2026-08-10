@@ -6,7 +6,7 @@ import {
   parseJournalTransaction,
   type CommandLimits,
 } from "@voxel-maker/commands";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import type { readVxlProject } from "@voxel-maker/formats";
 import type { VoxelChunkSeed } from "@voxel-maker/voxel";
 import type { DecodedJournal } from "@voxel-maker/storage";
@@ -49,7 +49,7 @@ export interface ReplayServices {
  */
 export function replayJournalFrames(services: ReplayServices): ReplayOutcome {
   const { loaded, decoded } = services;
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: loaded.document,
     volumes: new Map(
       [...loaded.volumes.entries()].map(([id, volume]) => [id, volume.chunks]),

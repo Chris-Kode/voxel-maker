@@ -1,10 +1,12 @@
 import type {
   DocumentCommitted,
-  DocumentStore,
   DocumentStoreRead,
-  DocumentStoreHandle,
 } from "@voxel-maker/document";
-import { createDocumentStore } from "@voxel-maker/document";
+import type {
+  DocumentStore,
+  DocumentStoreHandle,
+} from "@voxel-maker/document/internal";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import {
   animationId,
@@ -228,7 +230,9 @@ export function createInspectionStore(): {
   readonly store: DocumentStoreRead;
   readonly handle: DocumentStoreHandle;
 } {
-  const handle = createDocumentStore({ document: createInspectionDocument() });
+  const handle = createDocumentStoreHandle({
+    document: createInspectionDocument(),
+  });
   commitFixtureVoxels(handle);
   return { store: handle.store, handle };
 }

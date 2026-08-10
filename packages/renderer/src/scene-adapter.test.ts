@@ -18,11 +18,11 @@ import {
 } from "@voxel-maker/model";
 import { createSimpleCharacterFixture } from "@voxel-maker/rigging";
 import { transformToMatrix, type Transform } from "@voxel-maker/math";
+import { type ChangedVolume } from "@voxel-maker/document";
 import {
-  createDocumentStore,
-  type ChangedVolume,
+  createDocumentStoreHandle,
   type DocumentStore,
-} from "@voxel-maker/document";
+} from "@voxel-maker/document/internal";
 import type { VoxelVolume, VoxelWriteCapability } from "@voxel-maker/voxel";
 import {
   ANIMATED_DEMOS,
@@ -128,7 +128,7 @@ function createHarness(
     ],
     volumes: [{ volumeId: VOLUME, bounds: { min: [0, 0, 0], max: [5, 5, 5] } }],
   });
-  const handle = createDocumentStore({
+  const handle = createDocumentStoreHandle({
     document,
     volumes: new Map([
       [VOLUME, [{ coordinate: [0, 0, 0], values: boxChunkSeed() }]],
@@ -332,7 +332,7 @@ describe("scene adapter", () => {
 
   it("projects a definition-of-done demo rig deterministically without mutating the store (ticket #30)", () => {
     const document = createSimpleCharacterFixture();
-    const handle = createDocumentStore({ document });
+    const handle = createDocumentStoreHandle({ document });
     const scene = new THREE.Scene();
     const adapter = createSceneAdapter({ scene });
     adapter.rebind(handle.store);
@@ -398,7 +398,7 @@ describe("scene adapter", () => {
         ...transform,
       };
     }
-    const handle = createDocumentStore({ document: animated });
+    const handle = createDocumentStoreHandle({ document: animated });
     const adapter = createSceneAdapter({ scene: new THREE.Scene() });
     adapter.rebind(handle.store);
 
@@ -594,7 +594,7 @@ describe("scene adapter", () => {
         },
       ],
     });
-    const handle = createDocumentStore({
+    const handle = createDocumentStoreHandle({
       document,
       volumes: new Map([
         [VOLUME, [{ coordinate: [0, 0, 0], values: boxChunkSeed() }]],
@@ -675,7 +675,7 @@ describe("scene adapter", () => {
         },
       ],
     });
-    const handle = createDocumentStore({
+    const handle = createDocumentStoreHandle({
       document,
       volumes: new Map([[VOLUME, chunks]]),
     });
@@ -881,7 +881,7 @@ describe("scene adapter", () => {
         { volumeId: VOLUME, bounds: { min: [0, 0, 0], max: [5, 5, 5] } },
       ],
     });
-    const handle = createDocumentStore({
+    const handle = createDocumentStoreHandle({
       document,
       volumes: new Map([
         [VOLUME, [{ coordinate: [0, 0, 0], values: boxChunkSeed() }]],
@@ -1035,7 +1035,7 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
         }
       }
     }
-    const handle = createDocumentStore({
+    const handle = createDocumentStoreHandle({
       document,
       volumes: new Map([[VOLUME, [{ coordinate: [0, 0, 0], values }]]]),
     });
