@@ -37,8 +37,10 @@ contents, and images. Every claim below has a test or a gate.
 - **Recovery data** is retained only as the bounded per-project journal
   (frame caps, journal caps, ADR-0011) and is removed by the documented
   journal-cleanup policy on confirmed save/close.
-- **Credentials** are stored only in the OS keychain, scoped by service +
-  account, never in project files or logs.
+- **Credentials** are stored only in the OS keychain, scoped to the fixed
+  `voxel-maker:provider` service and allowlisted provider accounts (the
+  keychain IPC never accepts a service and rejects accounts outside the
+  allowlist), never in project files or logs.
 
 ## Redaction
 
@@ -79,5 +81,5 @@ contents, and images. Every claim below has a test or a gate.
 | Images never retained | `transcript.test.ts` |
 | Redaction is deterministic and secret-safe | `types.test.ts`, `adversarial.test.ts` (agent) |
 | Diagnostics sanitized by default, redacted when opted in | `diagnostics.test.ts` |
-| Credentials only in keychain, scoped | `credentials.test.ts`, `check-native-capabilities.mjs` |
+| Credentials only in keychain, scoped | `lib.rs` keychain-scope tests, `credentials.test.ts`, `check-native-capabilities.mjs` |
 | No telemetry | `check-native-capabilities.mjs` (no network permission), threat model |

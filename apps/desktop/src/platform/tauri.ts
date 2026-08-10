@@ -181,33 +181,50 @@ export class TauriFilePicker implements FilePicker {
 }
 
 /**
- * OS-keychain credential store (plan S12.4, ADR-0010, ticket #34): maps
- * the agent package's credential seam to the shell's allowlisted keychain
- * commands. Secrets travel only between the webview's memory and the
- * operating-system credential store; they are never written to project
- * files, journals, localStorage, logs, or diagnostics. The Rust side
- * validates scope and size before touching the keychain.
+ * OS-keychain credential store (plan S12.4, ADR-0010, ticket #34, issue
+ * #95): maps the agent package's credential seam to the shell's
+ * allowlisted keychain commands. Secrets travel only between the webview's
+ * memory and the operating-system credential store; they are never written
+ * to project files, journals, localStorage, logs, or diagnostics. The Rust
+ * side pins the keychain service to `voxel-maker:provider` and allowlists
+ * provider accounts, so the wire carries only the account (and value) —
+ * the service argument of the `CredentialStore` seam is deliberately not
+ * forwarded, because IPC must never address a keychain entry outside
+ * Voxel Maker's service/provider scope.
  */
 export class TauriCredentialStore implements CredentialStore {
   async save(service: string, account: string, value: Secret): Promise<void> {
+    this.#assertScoped(service);
     await invoke("credential_save", {
-      service,
       account,
       value: value.reveal(),
     });
   }
 
   async get(service: string, account: string): Promise<Secret | undefined> {
-    const raw = await invoke<string | null>("credential_get", {
-      service,
-      account,
-    });
+    this.#assertScoped(service);
+    const raw = await invoke<string | null>("credential_get", { account });
     return raw === null ? undefined : new Secret(raw);
   }
 
   async delete(service: string, account: string): Promise<boolean> {
-    await invoke("credential_delete", { service, account });
+    this.#assertScoped(service);
+    await invoke("credential_delete", { account });
     return true;
+  }
+
+  /**
+   * The shell pins the keychain service, so a caller that names any other
+   * service is a composition bug: fail loudly instead of silently writing
+   * under the pinned service. The native allowlist is the real trust
+   * boundary; this guard keeps the seam's two implementations honest.
+   */
+  #assertScoped(service: string): void {
+    if (service !== KEYCHAIN_SERVICE) {
+      throw new Error(
+        `credential service is pinned to ${KEYCHAIN_SERVICE}; refusing ${service}`,
+      );
+    }
   }
 
   async list(): Promise<readonly CredentialReference[]> {

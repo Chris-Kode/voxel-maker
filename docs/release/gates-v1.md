@@ -79,7 +79,7 @@ also ships the Cargo SBOM (`sbom.cdx.json`).
 | Consent before any transmission | `consent.test.ts`, `image-consent` tests, loop tests (agent) |
 | No transcript by default; bounded retention; images never retained | `transcript.test.ts` |
 | Deterministic redaction at write time | `types.test.ts`, `adversarial.test.ts` (agent) |
-| Credentials only in keychain, never logged | `credentials.test.ts`, `check-native-capabilities.mjs` |
+| Credentials only in keychain, never logged | `lib.rs` keychain-scope tests, `credentials.test.ts`, `check-native-capabilities.mjs` |
 | No telemetry; no network permission | `check-native-capabilities.mjs` (capability allowlist) |
 | User-facing disclosure published | `docs/release/privacy-disclosure-v1.md` |
 
