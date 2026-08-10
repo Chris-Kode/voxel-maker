@@ -84,7 +84,12 @@ class StrokeToolImpl implements StrokeTool {
   readonly #editor: EditorStore;
   #volumeId: ToolDraft["volumeId"] | undefined;
   #voxels: Vec3i[] = [];
-  /** Key set kept in lockstep with #voxels for O(1) dedupe per move. */
+  /**
+   * Key set of every unique rasterized path voxel, changed or not: it
+   * deduplicates path voxels in O(1) per move, feeds the gesture budget
+   * (ADR-0009: voxels inspected by one operation), and therefore holds
+   * more entries than the changed-voxel draft for paint strokes.
+   */
   #voxelKeys = new Set<string>();
   /**
    * The last picked path voxel, tracked separately from the filtered
@@ -138,20 +143,9 @@ class StrokeToolImpl implements StrokeTool {
     this.#volumeId = hit.volumeId;
     this.#active = true;
     this.#lastPathVoxel = hit.voxel;
-    this.#voxelKeys = new Set([voxelKey(hit.voxel)]);
-    if (
-      this.kind !== "paint" ||
-      this.#paintChangesVoxel(
-        this.#host,
-        this.#volumeId,
-        hit.voxel,
-        this.#material,
-      )
-    ) {
-      this.#voxels = [hit.voxel];
-    } else {
-      this.#voxels = [];
-    }
+    this.#voxels = [];
+    this.#voxelKeys = new Set();
+    this.#considerPathVoxel(this.#volumeId, hit.voxel);
     this.#editor.setDraft(this.draft);
     return { ok: true };
   }
@@ -183,25 +177,7 @@ class StrokeToolImpl implements StrokeTool {
       throw error;
     }
     for (const voxel of segment) {
-      const key = voxelKey(voxel);
-      if (this.#voxelKeys.has(key)) continue;
-      if (
-        this.kind === "paint" &&
-        !this.#paintChangesVoxel(
-          this.#host,
-          this.#volumeId,
-          voxel,
-          this.#material,
-        )
-      ) {
-        // Paint recolors only occupied path voxels whose material differs
-        // from the pinned material; everything else never enters the draft
-        // (the preview shows exactly the change that will commit).
-        this.#voxelKeys.add(key);
-        continue;
-      }
-      this.#voxelKeys.add(key);
-      this.#voxels.push(voxel);
+      this.#considerPathVoxel(this.#volumeId, voxel);
     }
     this.#lastPathVoxel = hit.voxel;
     this.#editor.setDraft(this.draft);
@@ -259,6 +235,27 @@ class StrokeToolImpl implements StrokeTool {
 
   pointerCancel(): void {
     this.reset();
+  }
+
+  /**
+   * Registers one rasterized path voxel: every unique path voxel enters
+   * the key set (dedupe and gesture budget), while only actual paint
+   * changes enter the changed-voxel draft. Paint recolors only occupied
+   * path voxels whose material differs from the pinned material; empty
+   * stretches and already-matching voxels never enter the draft (the
+   * preview shows exactly the change that will commit).
+   */
+  #considerPathVoxel(volumeId: ToolDraft["volumeId"], voxel: Vec3i): void {
+    const key = voxelKey(voxel);
+    if (this.#voxelKeys.has(key)) return;
+    this.#voxelKeys.add(key);
+    if (
+      this.kind === "paint" &&
+      !this.#paintChangesVoxel(this.#host, volumeId, voxel, this.#material)
+    ) {
+      return;
+    }
+    this.#voxels.push(voxel);
   }
 
   /**

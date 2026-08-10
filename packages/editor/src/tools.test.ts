@@ -480,9 +480,9 @@ describe("paint tool", () => {
     expect(harness.editor.draft?.voxels).toEqual([[4, 0, 0]]);
     const up = harness.paint.pointerUp();
     expect(up).toEqual({ ok: true });
-    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(1);
+    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(MATERIAL);
     expect(harness.voxels(VOLUME).get("3,0,0")).toBeUndefined();
-    expect(harness.voxels(VOLUME).get("2,0,0")).toBe(1); // untouched
+    expect(harness.voxels(VOLUME).get("2,0,0")).toBe(MATERIAL); // untouched
     const history = harness.bus.historySnapshot();
     expect(history.past).toHaveLength(3); // prefill + seed + paint
     expect(history.past[2]?.label).toBe("Paint stroke");
@@ -493,7 +493,7 @@ describe("paint tool", () => {
       source: "ui",
     });
     expect(undo.ok).toBe(true);
-    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(2);
+    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(REPLACEMENT);
   });
 
   it("paints a differently colored voxel when the stroke starts on empty space", () => {
@@ -507,7 +507,7 @@ describe("paint tool", () => {
     expect(harness.editor.draft?.voxels).toEqual([[4, 0, 0]]);
     const up = harness.paint.pointerUp();
     expect(up).toEqual({ ok: true });
-    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(1);
+    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(MATERIAL);
     expect(harness.voxels(VOLUME).get("0,0,0")).toBeUndefined();
     expect(harness.voxels(VOLUME).size).toBe(1);
     expect(harness.bus.historySnapshot().past).toHaveLength(2);
@@ -540,8 +540,8 @@ describe("paint tool", () => {
     ]);
     const up = harness.paint.pointerUp();
     expect(up).toEqual({ ok: true });
-    expect(harness.voxels(VOLUME).get("3,0,0")).toBe(1);
-    expect(harness.voxels(VOLUME).get("6,0,0")).toBe(1);
+    expect(harness.voxels(VOLUME).get("3,0,0")).toBe(MATERIAL);
+    expect(harness.voxels(VOLUME).get("6,0,0")).toBe(MATERIAL);
     expect(harness.voxels(VOLUME).get("4,0,0")).toBeUndefined();
     expect(harness.voxels(VOLUME).get("5,0,0")).toBeUndefined();
     expect(harness.bus.historySnapshot().past).toHaveLength(3); // prefill + seed + paint
@@ -559,7 +559,7 @@ describe("paint tool", () => {
     expect(errorCode(result)).toBe("TOO_MANY_VOXELS");
     expect(harness.paint.active).toBe(false);
     expect(harness.editor.draft).toBeUndefined();
-    expect(harness.voxels(VOLUME).get("6,0,0")).toBe(2); // untouched
+    expect(harness.voxels(VOLUME).get("6,0,0")).toBe(REPLACEMENT); // untouched
     expect(harness.bus.historySnapshot().past).toHaveLength(1); // seed only
   });
 });
