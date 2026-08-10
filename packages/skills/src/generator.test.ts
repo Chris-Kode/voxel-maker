@@ -62,7 +62,7 @@ describe("versioned generator interface (AC1)", () => {
     expect(proposal.voxelEstimate).toBe(3 * 4 * 2 * 1);
     expect(proposal.bounds).toEqual({
       min: [0, 0, 0],
-      max: [4, 3, 6],
+      max: [6, 3, 4],
     });
     expect(proposal.commands).toHaveLength(3);
     for (const command of proposal.commands) {

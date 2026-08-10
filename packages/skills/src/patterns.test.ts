@@ -147,7 +147,52 @@ describe("generator.stairs", () => {
       expect(command.type).toBe(VOXEL_FILL_BOX_COMMAND);
     }
     expect(proposal.voxelEstimate).toBe(4 * 3 * 1 * 2);
-    expect(proposal.bounds).toEqual({ min: [0, 0, 0], max: [3, 4, 8] });
+    expect(proposal.bounds).toEqual({ min: [0, 0, 0], max: [8, 4, 3] });
+  });
+
+  it("advances only along the requested run axis (issue #109)", () => {
+    // Asymmetric width (perpendicular to the run) vs depth (along the run)
+    // makes a swapped-axis regression visible in the step mins.
+    const cases: ReadonlyArray<{
+      axis: "x" | "z";
+      expectedMins: ReadonlyArray<[number, number, number]>;
+      expectedBounds: {
+        min: [number, number, number];
+        max: [number, number, number];
+      };
+    }> = [
+      {
+        axis: "x",
+        expectedMins: [
+          [0, 0, 0],
+          [3, 1, 0],
+          [6, 2, 0],
+        ],
+        expectedBounds: { min: [0, 0, 0], max: [9, 3, 2] },
+      },
+      {
+        axis: "z",
+        expectedMins: [
+          [0, 0, 0],
+          [0, 1, 3],
+          [0, 2, 6],
+        ],
+        expectedBounds: { min: [0, 0, 0], max: [2, 3, 9] },
+      },
+    ];
+    for (const { axis, expectedMins, expectedBounds } of cases) {
+      const proposal = proposeGenerator(
+        "generator.stairs",
+        { start: [0, 0, 0], count: 3, width: 2, depth: 3, stepHeight: 1, axis },
+        CONTEXT,
+      );
+      const mins = proposal.commands.map(
+        (command) =>
+          (command.payload as { region: { min: number[] } }).region.min,
+      );
+      expect(mins).toEqual(expectedMins);
+      expect(proposal.bounds).toEqual(expectedBounds);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 import type { GeneratorDefinition, GeneratorContext } from "../generator.js";
 import { createCommandFactory } from "../generator.js";
 import type { Command } from "@voxel-maker/commands";
-import type { IntAabb, ShapeAxis, Vec3i } from "../geometry.js";
+import type { IntAabb, Vec3i } from "../geometry.js";
 import { boxFromMinSize, unionAabb, type Vec3Size } from "../geometry.js";
 import { AXIS_SCHEMA, VEC3I_SCHEMA, boundedIntSchema } from "../schemas.js";
 
@@ -25,7 +25,7 @@ export type StairsParams = {
   /** Step height in voxels. */
   readonly stepHeight: number;
   /** Horizontal axis the staircase runs along ("x" or "z"). */
-  readonly axis: ShapeAxis;
+  readonly axis: "x" | "z";
 };
 
 export const MAX_STAIRS_COUNT = 256;
@@ -57,24 +57,29 @@ export const STAIRS_GENERATOR: GeneratorDefinition<StairsParams> = {
     const commands = createCommandFactory(this, params, context);
     const proposed: Command[] = [];
     let bounds: IntAabb | undefined;
+    // One layout per run axis: `advance` is the unit run direction (each
+    // step advances `depth` voxels along it) and `size` is the step
+    // extent with `depth` along the run axis and `width` across it.
+    // Keeping both in one table makes a swapped-axis mismatch between
+    // the min and the size structurally impossible (issue #109).
+    const layout: Record<"x" | "z", { advance: Vec3i; size: Vec3Size }> = {
+      x: {
+        advance: [1, 0, 0],
+        size: [params.depth, params.stepHeight, params.width],
+      },
+      z: {
+        advance: [0, 0, 1],
+        size: [params.width, params.stepHeight, params.depth],
+      },
+    };
+    const run = layout[params.axis];
     for (let index = 0; index < params.count; index += 1) {
-      const min: Vec3i =
-        params.axis === "x"
-          ? [
-              params.start[0],
-              params.start[1] + index * params.stepHeight,
-              params.start[2] + index * params.depth,
-            ]
-          : [
-              params.start[0] + index * params.depth,
-              params.start[1] + index * params.stepHeight,
-              params.start[2],
-            ];
-      const size: Vec3Size =
-        params.axis === "x"
-          ? [params.width, params.stepHeight, params.depth]
-          : [params.depth, params.stepHeight, params.width];
-      const step = boxFromMinSize(min, size);
+      const min: Vec3i = [
+        params.start[0] + index * params.depth * run.advance[0],
+        params.start[1] + index * params.stepHeight,
+        params.start[2] + index * params.depth * run.advance[2],
+      ];
+      const step = boxFromMinSize(min, run.size);
       proposed.push(commands.fillBox(step));
       bounds = bounds === undefined ? step : unionAabb(bounds, step);
     }

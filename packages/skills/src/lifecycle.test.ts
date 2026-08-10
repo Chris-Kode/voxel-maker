@@ -187,14 +187,14 @@ describe("previewed and inspected (AC3)", () => {
     const inspector = createInspector({ store: session });
     const query = inspector.inspect("queryVoxels", {
       volumeId: FIXTURE_IDS.volume,
-      region: { min: [0, 0, 0], max: [4, 3, 6] },
+      region: { min: [0, 0, 0], max: [6, 3, 4] },
       maxVoxels: 10_000,
     });
     expect(query.ok, JSON.stringify(query)).toBe(true);
     if (!query.ok) throw new Error("unreachable");
     const value = query.value as Readonly<Record<string, unknown>>;
-    // Region [0..4)x[0..3)x[0..6): 3 of the seed block's 4 y-layers (48
-    // voxels) plus the top stair step's 8 voxels in z [4..6); the two
+    // Region [0..6)x[0..3)x[0..4): 3 of the seed block's 4 y-layers (48
+    // voxels) plus the top stair step's 8 voxels in x [4..6); the two
     // lower steps overlap the seed block.
     expect(value.total).toBe(48 + 8);
     expect(value.revision).toBe(store.revision + 3);
@@ -214,9 +214,9 @@ describe("previewed and inspected (AC3)", () => {
     expect(applied.value.revisionAfter).toBe(2);
     expect(store.revision).toBe(2);
     // Stairs voxels are live now: the seed block is unchanged and the
-    // top step (z in [4..6)) is new geometry from the proposal.
+    // top step (x in [4..6)) is new geometry from the proposal.
     expect(store.getVoxel(FIXTURE_IDS.volume, [1, 0, 0])).toBe(1);
-    expect(store.getVoxel(FIXTURE_IDS.volume, [1, 2, 5])).toBe(1);
+    expect(store.getVoxel(FIXTURE_IDS.volume, [5, 2, 1])).toBe(1);
     expect(store.getVoxel(FIXTURE_IDS.volume, [9, 9, 9])).toBe(0);
     // The apply is one labeled history entry.
     expect(bus.historySnapshot().past).toHaveLength(2);
@@ -237,7 +237,7 @@ describe("discarded with zero live side effects (AC3)", () => {
     expect(session.closed).toBe(true);
     expect(session.stagedCount).toBe(0);
     expect(store.revision).toBe(1);
-    expect(store.getVoxel(FIXTURE_IDS.volume, [1, 2, 5])).toBe(0);
+    expect(store.getVoxel(FIXTURE_IDS.volume, [5, 2, 1])).toBe(0);
     expect(bus.historySnapshot().past).toHaveLength(1);
     // A closed session rejects further staging.
     const later = session.stage(proposal.commands[0] as never);
@@ -253,7 +253,7 @@ describe("undone through history (AC3)", () => {
     const session = createPreviewSession({ live: store, applyBus: bus });
     expect(session.stageMany(proposal.commands).ok).toBe(true);
     expect(session.apply().ok).toBe(true);
-    expect(store.getVoxel(FIXTURE_IDS.volume, [1, 2, 5])).toBe(1);
+    expect(store.getVoxel(FIXTURE_IDS.volume, [5, 2, 1])).toBe(1);
 
     const undone = bus.undo({
       transactionId: transactionId("transaction:fixture:undo:0001"),
@@ -262,7 +262,7 @@ describe("undone through history (AC3)", () => {
     });
     expect(undone.ok, JSON.stringify(undone)).toBe(true);
     if (!undone.ok) throw new Error("unreachable");
-    expect(store.getVoxel(FIXTURE_IDS.volume, [1, 2, 5])).toBe(0);
+    expect(store.getVoxel(FIXTURE_IDS.volume, [5, 2, 1])).toBe(0);
     // The seed transaction remains in the past; the apply is undone.
     expect(bus.historySnapshot().past).toHaveLength(1);
     expect(bus.canUndo()).toBe(true);
@@ -275,7 +275,7 @@ describe("undone through history (AC3)", () => {
       source: "ui",
     });
     expect(redone.ok, JSON.stringify(redone)).toBe(true);
-    expect(store.getVoxel(FIXTURE_IDS.volume, [1, 2, 5])).toBe(1);
+    expect(store.getVoxel(FIXTURE_IDS.volume, [5, 2, 1])).toBe(1);
   });
 });
 
@@ -309,7 +309,7 @@ describe("saved and replayed through the journal seam (AC3)", () => {
     }
     expect(replay.store.revision).toBe(2);
     expect(replay.store.getVoxel(FIXTURE_IDS.volume, [1, 0, 0])).toBe(1);
-    expect(replay.store.getVoxel(FIXTURE_IDS.volume, [1, 2, 5])).toBe(1);
+    expect(replay.store.getVoxel(FIXTURE_IDS.volume, [5, 2, 1])).toBe(1);
     expect(replay.store.getVoxel(FIXTURE_IDS.volume, [9, 9, 9])).toBe(0);
     // The replayed store is a fully ordinary open document.
     expect(replay.store.getDocument().documentId).toBe(FIXTURE_IDS.document);
