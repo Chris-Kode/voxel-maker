@@ -436,6 +436,186 @@ describe("buildTrackSamples", () => {
     expect([...(samples?.input ?? [])]).toEqual([0, 1]);
   });
 
+  it("holds the first and last values across the whole clip duration (issue #99)", () => {
+    // A 4-second clip keyed at 1s and 2s must export the runtime's
+    // leading and trailing hold intervals: strictly increasing inputs
+    // [0, 1, 2, 4] with the endpoint values held bit for bit, so a
+    // consumer sampling the exported sampler matches the runtime
+    // (packages/animation/src/sample.ts holds the first value before the
+    // first keyframe and the last value after the last keyframe).
+    const track: AnimationTrack = {
+      trackId: trackId("track:issue99:linear"),
+      targetNodeId: BODY,
+      interpolation: "linear",
+      keyframes: [
+        {
+          keyframeId: keyframeId("key:issue99:linear:0"),
+          time: 1,
+          property: { channel: "translation", value: [10, 0, 0] },
+        },
+        {
+          keyframeId: keyframeId("key:issue99:linear:1"),
+          time: 2,
+          property: { channel: "translation", value: [20, 0, 0] },
+        },
+      ],
+    };
+    const samples = buildTrackSamples(track, 4, LOW_LIMITS);
+    expect(samples?.interpolation).toBe("LINEAR");
+    expect([...(samples?.input ?? [])]).toEqual([0, 1, 2, 4]);
+    expect([...(samples?.output ?? [])]).toEqual([
+      10,
+      0,
+      0, //
+      10,
+      0,
+      0, //
+      20,
+      0,
+      0, //
+      20,
+      0,
+      0,
+    ]);
+  });
+
+  it("holds STEP boundaries without changing the interpolation mode (issue #99)", () => {
+    const track: AnimationTrack = {
+      trackId: trackId("track:issue99:step"),
+      targetNodeId: BODY,
+      interpolation: "step",
+      keyframes: [
+        {
+          keyframeId: keyframeId("key:issue99:step:0"),
+          time: 1,
+          property: { channel: "translation", value: [10, 0, 0] },
+        },
+        {
+          keyframeId: keyframeId("key:issue99:step:1"),
+          time: 2,
+          property: { channel: "translation", value: [20, 0, 0] },
+        },
+      ],
+    };
+    const samples = buildTrackSamples(track, 4, LOW_LIMITS);
+    expect(samples?.interpolation).toBe("STEP");
+    expect([...(samples?.input ?? [])]).toEqual([0, 1, 2, 4]);
+    expect([...(samples?.output ?? [])]).toEqual([
+      10,
+      0,
+      0, //
+      10,
+      0,
+      0, //
+      20,
+      0,
+      0, //
+      20,
+      0,
+      0,
+    ]);
+  });
+
+  it("holds smoothstep boundaries around the baked segment (issue #99)", () => {
+    const track: AnimationTrack = {
+      trackId: trackId("track:issue99:smooth"),
+      targetNodeId: BODY,
+      interpolation: "smoothstep",
+      keyframes: [
+        {
+          keyframeId: keyframeId("key:issue99:smooth:0"),
+          time: 1,
+          property: { channel: "scale", value: [1, 1, 1] },
+        },
+        {
+          keyframeId: keyframeId("key:issue99:smooth:1"),
+          time: 2,
+          property: { channel: "scale", value: [2, 1, 1] },
+        },
+      ],
+    };
+    const samples = buildTrackSamples(track, 4, LOW_LIMITS);
+    expect(samples?.interpolation).toBe("LINEAR");
+    // Segment [1,2] with 2 interior samples: 1, 4/3, 5/3, 2 (float32),
+    // plus the held boundaries at 0 and 4.
+    expect([...(samples?.input ?? [])]).toEqual([
+      0,
+      1,
+      Math.fround(4 / 3),
+      Math.fround(5 / 3),
+      2,
+      4,
+    ]);
+    const scale = (u: number) => 1 + (2 - 1) * (u * u * (3 - 2 * u));
+    const outputs = [...(samples?.output ?? [])];
+    expect(outputs.slice(0, 3)).toEqual([1, 1, 1]);
+    expect(outputs.slice(3, 6)).toEqual([1, 1, 1]);
+    expect(outputs.slice(6, 9)).toEqual([Math.fround(scale(1 / 3)), 1, 1]);
+    expect(outputs.slice(9, 12)).toEqual([Math.fround(scale(2 / 3)), 1, 1]);
+    expect(outputs.slice(12, 15)).toEqual([2, 1, 1]);
+    expect(outputs.slice(15, 18)).toEqual([2, 1, 1]);
+  });
+
+  it("adds only the missing boundary sample on each side (issue #99)", () => {
+    // First key already at 0: only the trailing hold is added.
+    const leading = buildTrackSamples(
+      {
+        trackId: trackId("track:issue99:leading"),
+        targetNodeId: BODY,
+        interpolation: "linear",
+        keyframes: [
+          {
+            keyframeId: keyframeId("key:issue99:leading:0"),
+            time: 0,
+            property: { channel: "translation", value: [1, 0, 0] },
+          },
+          {
+            keyframeId: keyframeId("key:issue99:leading:1"),
+            time: 0.5,
+            property: { channel: "translation", value: [2, 0, 0] },
+          },
+        ],
+      },
+      1,
+      LOW_LIMITS,
+    );
+    expect([...(leading?.input ?? [])]).toEqual([0, 0.5, 1]);
+    // Last key already at the clip duration: only the leading hold is added.
+    const trailing = buildTrackSamples(
+      {
+        trackId: trackId("track:issue99:trailing"),
+        targetNodeId: BODY,
+        interpolation: "linear",
+        keyframes: [
+          {
+            keyframeId: keyframeId("key:issue99:trailing:0"),
+            time: 0.5,
+            property: { channel: "translation", value: [1, 0, 0] },
+          },
+          {
+            keyframeId: keyframeId("key:issue99:trailing:1"),
+            time: 1,
+            property: { channel: "translation", value: [2, 0, 0] },
+          },
+        ],
+      },
+      1,
+      LOW_LIMITS,
+    );
+    expect([...(trailing?.input ?? [])]).toEqual([0, 0.5, 1]);
+    expect([...(trailing?.output ?? [])]).toEqual([
+      1,
+      0,
+      0, //
+      1,
+      0,
+      0, //
+      2,
+      0,
+      0,
+    ]);
+  });
+
   it("bakes smoothstep to linear samples with the frozen ease curve", () => {
     const clip = animatedDocument().animations[animationId("animation:anim:a")];
     const track = clip?.tracks.find(

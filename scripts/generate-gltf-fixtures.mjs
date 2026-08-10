@@ -67,7 +67,7 @@ function storeWithEntries(document, entriesByVolume) {
     }
     volumes.set(id, [...chunks.values()]);
   }
-  return createDocumentStore({ document, volumes }).store;
+  return createDocumentStore({ document, volumes });
 }
 
 /** Independent GLB read used for the generator's self-check. */

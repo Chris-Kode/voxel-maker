@@ -36,9 +36,13 @@ import {
  * samples per segment (callers may only lower the default). Rotation
  * samples are the canonical shortest-path values of the model. glTF
  * cannot encode playback looping, so a `loop` clip is reported as a bake
- * loss. Tracks with no keyframes carry no motion and are omitted; a
- * single-keyframe track is constant and is emitted as two samples over
- * the clip duration so the sampler stays valid for every consumer.
+ * loss. The runtime holds the first value before the first keyframe and
+ * the last value after the last keyframe, so every multi-keyframe
+ * sampler also emits held boundary samples at 0 and `clipDuration`
+ * unless an authored key already lies there; a single-keyframe track is
+ * constant and is emitted as two samples over the clip duration so the
+ * sampler stays valid for every consumer. Tracks with no keyframes carry
+ * no motion and are omitted.
  */
 
 /** Where each document node's TRS properties live in the exported chain. */
@@ -121,9 +125,23 @@ export function buildTrackSamples(
   if (track.interpolation === "step" || track.interpolation === "linear") {
     const input: number[] = [];
     const output: number[] = [];
+    const push = (time: number, value: readonly number[]): void => {
+      input.push(time);
+      output.push(...value);
+    };
+    // The runtime holds the first value before the first keyframe and the
+    // last value after the last keyframe (packages/animation/src/sample.ts),
+    // so a sampler over only the authored times would drop the Clip's
+    // leading and trailing hold intervals. Emit held boundary samples at 0
+    // and clipDuration unless an authored key already lies there (issue
+    // #99); identical adjacent values keep LINEAR/STEP segments constant.
+    if (first.time > 0) push(0, first.property.value);
     for (const keyframe of keyframes) {
-      input.push(keyframe.time);
-      output.push(...keyframe.property.value);
+      push(keyframe.time, keyframe.property.value);
+    }
+    const last = keyframes[keyframes.length - 1];
+    if (last !== undefined && last.time < clipDuration) {
+      push(clipDuration, last.property.value);
     }
     return {
       input: Float32Array.from(input),
@@ -149,6 +167,13 @@ export function buildTrackSamples(
     input.push(time);
     output.push(...value);
   };
+  // The runtime holds the first value before the first keyframe and the
+  // last value after the last keyframe (packages/animation/src/sample.ts),
+  // so the baked sampler must cover [0, clipDuration] with the authored
+  // endpoint values held outside the keyframe range (issue #99). The
+  // leading sample is pushed before the segments so inputs stay strictly
+  // increasing; the trailing sample after the final authored key.
+  if (first.time > 0) push(0, first.property.value);
   for (let index = 0; index < keyframes.length - 1; index += 1) {
     const lower = keyframes[index];
     const upper = keyframes[index + 1];
@@ -171,6 +196,9 @@ export function buildTrackSamples(
   }
   const last = keyframes[keyframes.length - 1];
   if (last !== undefined) push(last.time, last.property.value);
+  if (last !== undefined && last.time < clipDuration) {
+    push(clipDuration, last.property.value);
+  }
   return {
     input: Float32Array.from(input),
     output: Float32Array.from(output),

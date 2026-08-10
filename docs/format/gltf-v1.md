@@ -126,6 +126,14 @@ Interpolation maps as follows:
   `maxSmoothstepSamplesPerSegment` interior samples per segment
   (default 16, callers may only lower). Authored boundary values are
   reproduced exactly.
+- Every multi-keyframe sampler covers the whole Clip: the runtime holds
+  the first value before the first keyframe and the last value after the
+  last keyframe, so held boundary samples are emitted at `0` and
+  `clip.duration` whenever the first/last authored keys do not already
+  lie there (identical adjacent values keep the segments constant; input
+  times stay strictly increasing without duplicates). This preserves the
+  Clip's leading and trailing hold intervals for every interpolation
+  mode.
 - A track with a single keyframe is constant and is emitted as two
   `LINEAR` samples over `[0, clip.duration]`, because glTF samplers
   require at least two strictly increasing input times.
