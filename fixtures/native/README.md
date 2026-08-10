@@ -14,6 +14,12 @@ its source.
   writer must reproduce the exact bytes (writer drift is a test failure).
 - `corpus.json`: machine-readable index; every other fixture is expected
   to be rejected with exactly the listed `family`/`code`.
+- `empty-chunk.vxl`, `over-extent.vxl`, `over-occupied.vxl` (issue #100):
+  volume binaries that are structurally well-formed but violate canonical
+  non-emptiness, the ADR-0009 per-axis occupied extent, or the
+  occupied-voxel limit; the reader must reject them with
+  `EMPTY_CHUNK`/`EXTENT_LIMIT_EXCEEDED`/`TOO_MANY_OCCUPIED_VOXELS`
+  before any seed is returned.
 - The golden semantic hash follows the frozen v1 chunk framing of exactly
   8,192 payload bytes per chunk (issue #85): the writer was corrected to
   the contract (it had framed 16,384 bytes per chunk), so the corpus was

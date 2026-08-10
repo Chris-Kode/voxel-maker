@@ -200,6 +200,24 @@
       "vector": "manifest entry carries a field this version does not know",
       "family": "compatibility",
       "code": "UNKNOWN_MANIFEST_FIELD"
+    },
+    {
+      "file": "empty-chunk.vxl",
+      "vector": "volume chunk record with an all-zero payload (canonical non-emptiness)",
+      "family": "validation",
+      "code": "EMPTY_CHUNK"
+    },
+    {
+      "file": "over-extent.vxl",
+      "vector": "occupied voxel extent exceeds the ADR-0009 per-axis limit",
+      "family": "limit",
+      "code": "EXTENT_LIMIT_EXCEEDED"
+    },
+    {
+      "file": "over-occupied.vxl",
+      "vector": "occupied voxel count exceeds the ADR-0009 1,000,000 limit",
+      "family": "limit",
+      "code": "TOO_MANY_OCCUPIED_VOXELS"
     }
   ]
 }

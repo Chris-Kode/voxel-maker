@@ -99,9 +99,11 @@ export function encodeVoxelVolume(volume: VoxelVolumeReadView): Uint8Array {
 /**
  * Decodes and preflights a v1 volume binary (plan S5.4). Validates magic,
  * encoding version, geometry constants, codec, exact size, sorted non-empty
- * chunk table, in-domain coordinates, sequential offsets, and per-chunk
- * CRC-32 before returning copied chunk seeds. `volumeId` is supplied by the
- * caller (from the manifest index) and is not part of the binary.
+ * chunk table, in-domain coordinates, sequential offsets, per-chunk CRC-32,
+ * canonical chunk non-emptiness, and every supplied VoxelVolumeLimits
+ * (chunk count, occupied voxels, occupied extent) before returning copied
+ * chunk seeds (issue #100). `volumeId` is supplied by the caller (from the
+ * manifest index) and is not part of the binary.
  */
 export function decodeVoxelVolume(
   bytes: Uint8Array,
@@ -176,8 +178,20 @@ export function decodeVoxelVolume(
   }
   const minChunk = -Math.ceil(limits.maxCoordinate / CHUNK_EDGE);
   const maxChunk = Math.floor(limits.maxCoordinate / CHUNK_EDGE);
-  const seeds: VoxelChunkSeed[] = [];
   let previous: readonly [number, number, number] | undefined;
+  // Issue #100: phase 1 preflights every chunk record and the whole volume
+  // against the injected limits before any seed payload is allocated, so a
+  // hostile volume is rejected before it can be copied or hashed past the
+  // reader. Bounds track occupied voxel extremes in the same units as
+  // VoxelVolume.fromChunks, and the limit order (EMPTY_CHUNK, then
+  // TOO_MANY_OCCUPIED_VOXELS, then EXTENT_LIMIT_EXCEEDED) matches it.
+  let occupied = 0;
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
   for (let index = 0; index < chunkCount; index += 1) {
     const recordOffset =
       VXL_VOLUME_HEADER_BYTES + index * VXL_VOLUME_CHUNK_RECORD_BYTES;
@@ -246,6 +260,82 @@ export function decodeVoxelVolume(
         },
       );
     }
+    let chunkOccupied = 0;
+    for (let i = 0; i < CHUNK_VOXEL_COUNT; i += 1) {
+      if (view.getUint16(offset + i * 2, true) === 0) continue;
+      chunkOccupied += 1;
+      const x = coordinate[0] * CHUNK_EDGE + (i % CHUNK_EDGE);
+      const y =
+        coordinate[1] * CHUNK_EDGE + (Math.floor(i / CHUNK_EDGE) % CHUNK_EDGE);
+      const z =
+        coordinate[2] * CHUNK_EDGE + Math.floor(i / (CHUNK_EDGE * CHUNK_EDGE));
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    if (chunkOccupied === 0) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "EMPTY_CHUNK",
+        message: "Volume chunk records must be non-empty",
+        context: { volumeId, coordinate },
+      });
+    }
+    occupied += chunkOccupied;
+    if (occupied > limits.maxOccupiedVoxels) {
+      throw new WorkspaceError({
+        family: "limit",
+        code: "TOO_MANY_OCCUPIED_VOXELS",
+        message: "Volume exceeds its occupied-voxel limit",
+        context: {
+          volumeId,
+          requested: occupied,
+          limit: limits.maxOccupiedVoxels,
+        },
+      });
+    }
+  }
+  if (occupied > 0) {
+    const extents: [number, number, number] = [
+      maxX - minX,
+      maxY - minY,
+      maxZ - minZ,
+    ];
+    for (let axis = 0; axis < 3; axis += 1) {
+      const extent = extents[axis] as number;
+      if (extent > limits.maxExtent) {
+        throw new WorkspaceError({
+          family: "limit",
+          code: "EXTENT_LIMIT_EXCEEDED",
+          message: "Volume occupied extent exceeds its per-axis limit",
+          context: {
+            volumeId,
+            axis,
+            extent,
+            maxExtent: limits.maxExtent,
+          },
+        });
+      }
+    }
+  }
+  // Phase 2: every record and limit already passed, so materialize the
+  // immutable chunk seeds from the payload bytes.
+  const seeds: VoxelChunkSeed[] = [];
+  for (let index = 0; index < chunkCount; index += 1) {
+    const recordOffset =
+      VXL_VOLUME_HEADER_BYTES + index * VXL_VOLUME_CHUNK_RECORD_BYTES;
+    const coordinate: [number, number, number] = [
+      view.getInt32(recordOffset, true),
+      view.getInt32(recordOffset + 4, true),
+      view.getInt32(recordOffset + 8, true),
+    ];
+    const offset =
+      VXL_VOLUME_HEADER_BYTES +
+      VXL_VOLUME_CHUNK_RECORD_BYTES * chunkCount +
+      index * VXL_VOLUME_CHUNK_PAYLOAD_BYTES;
     const values = new Uint16Array(CHUNK_VOXEL_COUNT);
     for (let i = 0; i < CHUNK_VOXEL_COUNT; i += 1) {
       values[i] = view.getUint16(offset + i * 2, true);
