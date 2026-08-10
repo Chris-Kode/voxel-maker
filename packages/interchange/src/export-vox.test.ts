@@ -202,7 +202,7 @@ describe("exportVox", () => {
             },
           ],
         },
-      } as VoxelDocument["animations"],
+      },
     };
     const { store } = storeWithEntries(animated, [
       { coordinate: [1, 2, -3], material: 1 },

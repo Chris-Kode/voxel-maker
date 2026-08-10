@@ -196,8 +196,6 @@ interface VoxelNode {
   readonly transformIsIdentity: boolean;
   readonly hasChildren: boolean;
   readonly name: string | undefined;
-  readonly metadata: VoxelDocument["nodes"][NodeId]["metadata"];
-  readonly components: VoxelDocument["nodes"][NodeId]["components"];
 }
 
 /**
@@ -257,8 +255,6 @@ function collectVoxelNodes(document: VoxelDocument): VoxelNode[] {
       transformIsIdentity: transformEqualsIdentity(node.transform),
       hasChildren: node.children.length > 0,
       name: node.name,
-      metadata: node.metadata,
-      components: node.components,
     });
   }
   return voxelNodes;
@@ -268,10 +264,10 @@ function collectVoxelNodes(document: VoxelDocument): VoxelNode[] {
  * Preflights a document for VOX export (plan S8.4, ADR-0011). Every
  * unsupported feature is either resolved through an explicit choice or
  * blocks the export with a structured loss report; nothing is dropped
- * silently. Clips, joints, constraints, and node/document metadata are
- * the ADR-0011 semantics audited here: Clips have no VOX representation
- * and block the export, while rig annotations and metadata are reported
- * as bake losses.
+ * silently. Clips, pivots, joints, constraints, and node/document
+ * metadata are the ADR-0011 semantics audited here: Clips have no VOX
+ * representation and block the export, while rig annotations and metadata
+ * on any node are reported as bake losses.
  */
 export function preflightVoxExport(
   document: VoxelDocument,
@@ -331,9 +327,10 @@ export function preflightVoxExport(
   // ADR-0011 semantics audit: Clips cannot be represented anywhere in the
   // VOX subset (no animation chunks are written), so their presence blocks
   // the export with a deterministic loss instead of dropping motion
-  // silently. Joints, constraints, and metadata have no VOX representation
-  // either; they are reported as bake losses (the voxel content itself is
-  // still exported, mirroring the node-name policy).
+  // silently. Pivots, joints, constraints, and metadata have no VOX
+  // representation either; they are reported as bake losses on every node
+  // (the voxel content itself is still exported, mirroring the node-name
+  // policy and the glTF preflight's all-node scan).
   const animationCount = Object.keys(document.animations).length;
   if (animationCount > 0) {
     blocked.push({
@@ -352,7 +349,7 @@ export function preflightVoxExport(
       context: { scope: "document" },
     });
   }
-  for (const node of voxelNodes) {
+  for (const node of Object.values(document.nodes)) {
     if (node.metadata !== undefined && Object.keys(node.metadata).length > 0) {
       losses.push({
         code: VOX_EXPORT_LOSSES.metadata,
@@ -377,6 +374,18 @@ export function preflightVoxExport(
           severity: "bake",
           context: { nodeId: node.nodeId },
         });
+      } else if (
+        component.kind === "pivot" &&
+        (component.pivot[0] !== 0 ||
+          component.pivot[1] !== 0 ||
+          component.pivot[2] !== 0)
+      ) {
+        losses.push({
+          code: VOX_EXPORT_LOSSES.pivot,
+          message: "Pivot annotations are not represented in the VOX subset",
+          severity: "bake",
+          context: { nodeId: node.nodeId },
+        });
       }
     }
   }
@@ -389,6 +398,7 @@ export function preflightVoxExport(
           message: "The document has no voxel volumes to export",
           severity: "block",
         },
+        ...blocked,
       ],
     };
   }

@@ -149,6 +149,7 @@ export const VOX_EXPORT_LOSSES = {
   clips: "VOX_LOSS_CLIPS",
   joints: "VOX_LOSS_JOINTS",
   constraints: "VOX_LOSS_CONSTRAINTS",
+  pivot: "VOX_LOSS_PIVOT",
 } as const;
 
 /** One reported export loss; `blocked` losses abort the export. */

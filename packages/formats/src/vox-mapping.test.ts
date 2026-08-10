@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   animationId,
+  componentId,
   keyframeId,
   materialId,
   nodeId,
@@ -560,6 +561,45 @@ describe("preflightVoxExport", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("keeps the Clip loss in the report when no voxel volumes exist", () => {
+    const bare: VoxelDocument = createDocument({
+      documentId: "document:export:0004" as never,
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [],
+          transform: identity,
+          components: [],
+        },
+      ],
+      materials: [],
+      volumes: [],
+      animations: [
+        {
+          animationId: animationId("animation:export:slide"),
+          name: "Slide",
+          duration: 2,
+          loop: "once",
+          tracks: [],
+        },
+      ],
+    });
+    const { handle } = exportHarness(bare, []);
+    const result = preflightVoxExport(bare, (id) => handle.store.getVolume(id));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.blocked.some((loss) => loss.code === "VOX_LOSS_CLIPS"),
+      ).toBe(true);
+      expect(
+        result.blocked.some((loss) => loss.code === "VOX_LOSS_DIMENSIONS"),
+      ).toBe(true);
+    }
+  });
+
   it("blocks documents with Clips (ADR-0011 Clip loss)", () => {
     const animated: VoxelDocument = {
       ...exportDocument(),
@@ -589,7 +629,7 @@ describe("preflightVoxExport", () => {
             },
           ],
         },
-      } as VoxelDocument["animations"],
+      },
     };
     const { handle } = exportHarness(animated, [
       {
@@ -639,12 +679,13 @@ describe("preflightVoxExport", () => {
           components: [
             { kind: "voxel", schemaVersion: 1, volumeId: VOLUME_A },
             { kind: "joint", schemaVersion: 1 },
+            { kind: "pivot", schemaVersion: 1, pivot: [0, 1, 0] },
             {
               kind: "constraint",
               schemaVersion: 1,
               constraints: [
                 {
-                  componentId: "component:export:limit:0001" as never,
+                  componentId: componentId("component:export:limit:0001"),
                   type: "rotation-limits",
                   limits: {
                     min: [0, 0, 0],
@@ -671,6 +712,37 @@ describe("preflightVoxExport", () => {
       const codes = result.losses.map((loss) => loss.code);
       expect(codes).toContain("VOX_LOSS_JOINTS");
       expect(codes).toContain("VOX_LOSS_CONSTRAINTS");
+      expect(codes).toContain("VOX_LOSS_PIVOT");
+      expect(codes).toContain("VOX_LOSS_METADATA");
+    }
+  });
+
+  it("reports rig annotations on non-voxel nodes as bake losses", () => {
+    const base = exportDocument();
+    const riggedContainer: VoxelDocument = {
+      ...base,
+      nodes: {
+        ...base.nodes,
+        [ROOT]: {
+          ...base.nodes[ROOT],
+          metadata: { category: "assembly" },
+          components: [{ kind: "joint", schemaVersion: 1 }],
+        },
+      },
+    };
+    const { handle } = exportHarness(riggedContainer, [
+      {
+        volumeId: VOLUME_A,
+        entries: [{ coordinate: [1, 2, -3], material: 1 }],
+      },
+    ]);
+    const result = preflightVoxExport(riggedContainer, (id) =>
+      handle.store.getVolume(id),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const codes = result.losses.map((loss) => loss.code);
+      expect(codes).toContain("VOX_LOSS_JOINTS");
       expect(codes).toContain("VOX_LOSS_METADATA");
     }
   });

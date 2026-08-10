@@ -88,8 +88,8 @@ release (ADR-0011).
   loss) or block; any non-identity transform blocks with a loss report.
   Children of voxel nodes and node names are reported as losses. Clips
   cannot be represented in the subset and block the export with a
-  `VOX_LOSS_CLIPS` loss; joint and constraint components and node/document
-  metadata are reported as bake losses.
+  `VOX_LOSS_CLIPS` loss; pivot, joint, and constraint components and
+  node/document metadata on any node are reported as bake losses.
 
 ## Dimensions and origin
 
@@ -142,7 +142,7 @@ structured report — never silently dropped:
 | Roughness/metallic/emissive | default 0 | dropped (reported) |
 | Node/material names | synthesized `Model N` | dropped (reported) |
 | Clips | n/a (subset reads no animation chunks) | block (no bake) |
-| Joints/constraints | n/a | dropped (reported) |
+| Pivot/joint/constraint components | n/a | dropped (reported) |
 | Node/document metadata | n/a | dropped (reported) |
 
 ## Limits
