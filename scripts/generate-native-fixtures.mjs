@@ -32,10 +32,12 @@ import {
   crc32Hex,
   decodeManifest,
   DOCUMENT_ENTRY,
+  encodeVoxelVolume,
   encodeVolumeEntryName,
   MANIFEST_ENTRY,
   readVxlProject,
   readZipArchive,
+  seedReadView,
   VXL_VOLUME_CHUNK_PAYLOAD_BYTES,
   VXL_VOLUME_CHUNK_RECORD_BYTES,
   VXL_VOLUME_HEADER_BYTES,
@@ -376,6 +378,24 @@ function volumeBinary(chunkCount, recordBytes = new Uint8Array(0)) {
   view.setUint32(24, 0, true);
   bytes.set(recordBytes, VXL_VOLUME_HEADER_BYTES);
   return bytes;
+}
+
+/**
+ * Encodes hand-crafted chunk seeds into a volume binary (the live encoder
+ * never holds an empty chunk or an over-limit volume, so the limit
+ * fixtures are built from raw seeds via `seedReadView`, the same read
+ * surface the container reader uses after decoding). `values` maps
+ * X-fastest local indexes to material values; missing indexes are 0.
+ */
+function chunkedVolumeBinary(chunks) {
+  const seeds = chunks.map((chunk) => {
+    const values = new Uint16Array(4096);
+    for (const [index, value] of Object.entries(chunk.values)) {
+      values[Number(index)] = value;
+    }
+    return { coordinate: chunk.coordinate, values };
+  });
+  return encodeVoxelVolume(seedReadView(BODY, seeds));
 }
 
 /** Golden body volume binary extracted from the golden container. */
@@ -843,6 +863,57 @@ const fixtures = {
       expected: { family: "compatibility", code: "UNKNOWN_MANIFEST_FIELD" },
     }),
   },
+  "empty-chunk": {
+    vector:
+      "volume chunk record with an all-zero payload (canonical non-emptiness)",
+    build: () => ({
+      bytes: withReplacedEntry(
+        goldenEntries(),
+        encodeVolumeEntryName(BODY),
+        chunkedVolumeBinary([{ coordinate: [0, 0, 0], values: {} }]),
+      ),
+      expected: { family: "validation", code: "EMPTY_CHUNK" },
+    }),
+  },
+  "over-extent": {
+    vector: "occupied voxel extent exceeds the ADR-0009 per-axis limit",
+    build: () => ({
+      // Voxels at x=0 and x=2064 span an occupied extent of 2064 > 2048.
+      bytes: withReplacedEntry(
+        goldenEntries(),
+        encodeVolumeEntryName(BODY),
+        chunkedVolumeBinary([
+          { coordinate: [0, 0, 0], values: { 0: 1 } },
+          { coordinate: [129, 0, 0], values: { 0: 1 } },
+        ]),
+      ),
+      expected: { family: "limit", code: "EXTENT_LIMIT_EXCEEDED" },
+    }),
+  },
+  "over-occupied": {
+    vector: "occupied voxel count exceeds the ADR-0009 1,000,000 limit",
+    build: () => {
+      // 256 fully occupied chunks = 1,048,576 voxels within the 2048
+      // extent box (128 x-chunks by 2 y-chunks), so only the occupied-
+      // voxel limit trips.
+      const full = {};
+      for (let i = 0; i < 4096; i += 1) full[i] = 1;
+      const chunks = [];
+      for (let x = 0; x < 128; x += 1) {
+        for (let y = 0; y < 2; y += 1) {
+          chunks.push({ coordinate: [x, y, 0], values: full });
+        }
+      }
+      return {
+        bytes: withReplacedEntry(
+          goldenEntries(),
+          encodeVolumeEntryName(BODY),
+          chunkedVolumeBinary(chunks),
+        ),
+        expected: { family: "limit", code: "TOO_MANY_OCCUPIED_VOXELS" },
+      };
+    },
+  },
 };
 
 /** Verifies one fixture against the reader; returns nothing or throws. */
@@ -934,6 +1005,12 @@ its source.
   writer must reproduce the exact bytes (writer drift is a test failure).
 - \`corpus.json\`: machine-readable index; every other fixture is expected
   to be rejected with exactly the listed \`family\`/\`code\`.
+- \`empty-chunk.vxl\`, \`over-extent.vxl\`, \`over-occupied.vxl\` (issue #100):
+  volume binaries that are structurally well-formed but violate canonical
+  non-emptiness, the ADR-0009 per-axis occupied extent, or the
+  occupied-voxel limit; the reader must reject them with
+  \`EMPTY_CHUNK\`/\`EXTENT_LIMIT_EXCEEDED\`/\`TOO_MANY_OCCUPIED_VOXELS\`
+  before any seed is returned.
 - The golden semantic hash follows the frozen v1 chunk framing of exactly
   8,192 payload bytes per chunk (issue #85): the writer was corrected to
   the contract (it had framed 16,384 bytes per chunk), so the corpus was

@@ -12,7 +12,12 @@ import {
   createDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import { VoxelVolume, type VoxelWriteCapability } from "@voxel-maker/voxel";
+import {
+  DEFAULT_VOXEL_VOLUME_LIMITS,
+  VoxelVolume,
+  type VoxelVolumeReadView,
+  type VoxelWriteCapability,
+} from "@voxel-maker/voxel";
 import {
   canonicalAssetSemanticHash,
   createDocumentStore,
@@ -202,6 +207,54 @@ function rebuild(
   entries: readonly { name: string; data: Uint8Array }[],
 ): Uint8Array {
   return writeZipArchive(entries);
+}
+
+/**
+ * Builds a one-volume container whose voxel binary is supplied verbatim
+ * (the writer can never emit an empty chunk or an over-limit volume, so
+ * the reader's limit rejections need hand-crafted binaries). The manifest
+ * indexes the binary with correct size/CRC and a semantic hash computed
+ * from the matching read view, so the reader reaches the volume decode.
+ */
+function containerWithVolumeBinary(
+  document: VoxelDocument,
+  volume: VoxelVolumeReadView,
+  volumeBytes: Uint8Array,
+): Uint8Array {
+  const documentBytes = encoder.encode(canonicalDocumentJson(document));
+  const entryName = encodeVolumeEntryName(BODY);
+  const manifestBytes = encoder.encode(
+    JSON.stringify({
+      containerVersion: 1,
+      documentSchemaVersion: 1,
+      chunkEncodingVersion: 1,
+      features: {},
+      semanticHash: canonicalAssetSemanticHash(
+        document,
+        new Map([[BODY, volume]]),
+      ),
+      entries: [
+        {
+          name: DOCUMENT_ENTRY,
+          kind: "document",
+          size: documentBytes.byteLength,
+          crc32: crc32Hex(documentBytes),
+        },
+        {
+          name: entryName,
+          kind: "voxels",
+          volumeId: BODY,
+          size: volumeBytes.byteLength,
+          crc32: crc32Hex(volumeBytes),
+        },
+      ],
+    }),
+  );
+  return writeZipArchive([
+    { name: MANIFEST_ENTRY, data: manifestBytes },
+    { name: DOCUMENT_ENTRY, data: documentBytes },
+    { name: entryName, data: volumeBytes },
+  ]);
 }
 
 /** Asserts that `fn` throws a WorkspaceError with the exact stable code. */
@@ -541,6 +594,70 @@ describe("readVxlProject", () => {
       { name: entryName, data: volumeBytes },
     ]);
     expectErrorCode(() => readVxlProject(bytes), "MISSING_MATERIAL");
+  });
+
+  it("rejects a container whose volume chunk record is empty (issue #100)", () => {
+    // The v1 format omits empty chunks, so an all-zero record with a valid
+    // CRC is a hostile table: the reader must reject it with the canonical
+    // code and never hand the empty seed to the installer.
+    const document = singleVolumeDocument("container:0004", [
+      { materialId: 1, name: "stone", color: "#aabbcc" },
+    ]);
+    const view = seedReadView(BODY, [
+      { coordinate: [0, 0, 0], values: new Uint16Array(4096) },
+    ]);
+    const bytes = containerWithVolumeBinary(
+      document,
+      view,
+      encodeVoxelVolume(view),
+    );
+    expectErrorCode(() => readVxlProject(bytes), "EMPTY_CHUNK");
+  });
+
+  it("rejects a container whose volume exceeds the injected occupied-voxel limit (issue #100)", () => {
+    const document = singleVolumeDocument("container:0005", [
+      { materialId: 1, name: "stone", color: "#aabbcc" },
+    ]);
+    const volume = new VoxelVolume(BODY, limits, capability);
+    volume.setVoxel([0, 0, 0], 1, capability);
+    volume.setVoxel([1, 0, 0], 1, capability);
+    volume.setVoxel([2, 0, 0], 1, capability);
+    const bytes = containerWithVolumeBinary(
+      document,
+      volume,
+      encodeVoxelVolume(volume),
+    );
+    expectErrorCode(
+      () =>
+        readVxlProject(bytes, {
+          volumeLimits: {
+            ...DEFAULT_VOXEL_VOLUME_LIMITS,
+            maxOccupiedVoxels: 2,
+          },
+        }),
+      "TOO_MANY_OCCUPIED_VOXELS",
+    );
+  });
+
+  it("rejects a container whose volume exceeds the injected extent limit (issue #100)", () => {
+    const document = singleVolumeDocument("container:0006", [
+      { materialId: 1, name: "stone", color: "#aabbcc" },
+    ]);
+    const volume = new VoxelVolume(BODY, limits, capability);
+    volume.setVoxel([0, 0, 0], 1, capability);
+    volume.setVoxel([20, 0, 0], 1, capability);
+    const bytes = containerWithVolumeBinary(
+      document,
+      volume,
+      encodeVoxelVolume(volume),
+    );
+    expectErrorCode(
+      () =>
+        readVxlProject(bytes, {
+          volumeLimits: { ...DEFAULT_VOXEL_VOLUME_LIMITS, maxExtent: 10 },
+        }),
+      "EXTENT_LIMIT_EXCEEDED",
+    );
   });
 
   it("rejects a semantic hash that does not match the content", () => {

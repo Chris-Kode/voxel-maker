@@ -97,7 +97,9 @@ offset  size  field
   re-encoding.
 - Readers preflight magic, versions, geometry constants, exact total length,
   chunk count against limits, strict table order, in-domain coordinates,
-  sequential offsets, and per-chunk CRC-32 before returning copied data.
+  sequential offsets, per-chunk CRC-32, canonical chunk non-emptiness, and
+  every supplied volume limit (occupied voxels, per-axis occupied extent)
+  before returning copied data (issue #100).
 
 ## Canonical semantic identity (ADR-0004)
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { volumeId } from "@voxel-maker/shared";
-import { VoxelVolume, type VoxelWriteCapability } from "@voxel-maker/voxel";
+import {
+  CHUNK_VOXEL_COUNT,
+  VoxelVolume,
+  type VoxelWriteCapability,
+} from "@voxel-maker/voxel";
+import { seedReadView } from "./container.js";
 import {
   decodeVoxelVolume,
   encodeVoxelVolume,
@@ -71,6 +76,28 @@ function expectErrorCode(fn: () => unknown, code: string): void {
       thrown instanceof Error ? thrown.name : typeof thrown
     }`,
   );
+}
+
+/**
+ * Encodes a hand-crafted chunk list into a v1 binary (the live encoder
+ * never holds an empty chunk, so limit-rejection fixtures must be built
+ * from raw seeds). Occupancy and bounds come from `seedReadView`, the
+ * same read surface the container reader uses after decoding.
+ */
+function binaryWithChunks(
+  chunks: readonly {
+    coordinate: readonly [number, number, number];
+    values: Readonly<Record<number, number>>;
+  }[],
+): Uint8Array {
+  const seeds = chunks.map((chunk) => {
+    const values = new Uint16Array(CHUNK_VOXEL_COUNT);
+    for (const [index, value] of Object.entries(chunk.values)) {
+      values[Number(index)] = value;
+    }
+    return { coordinate: chunk.coordinate, values };
+  });
+  return encodeVoxelVolume(seedReadView(VID, seeds));
 }
 
 describe("voxel volume binary codec", () => {
@@ -226,5 +253,58 @@ describe("voxel volume binary codec", () => {
       () => decodeVoxelVolume(bytes, VID, { ...limits, maxChunks: 2 }),
       "TOO_MANY_CHUNKS",
     );
+  });
+
+  it("rejects empty chunk records (issue #100)", () => {
+    // The v1 format omits empty chunks (plan S5.3 / ADR-0004), so a
+    // record whose payload is entirely zero is a hostile or corrupt
+    // table: the reader must reject it with the canonical code instead of
+    // handing an empty seed to the installer.
+    const bytes = binaryWithChunks([{ coordinate: [0, 0, 0], values: {} }]);
+    expectErrorCode(() => decodeVoxelVolume(bytes, VID, limits), "EMPTY_CHUNK");
+  });
+
+  it("enforces the occupied-voxel limit before returning seeds (issue #100)", () => {
+    const bytes = binaryWithChunks([
+      { coordinate: [0, 0, 0], values: { 0: 1 } },
+      { coordinate: [1, 0, 0], values: { 0: 1 } },
+    ]);
+    expectErrorCode(
+      () => decodeVoxelVolume(bytes, VID, { ...limits, maxOccupiedVoxels: 1 }),
+      "TOO_MANY_OCCUPIED_VOXELS",
+    );
+    // At the limit exactly the volume still loads.
+    const seeds = decodeVoxelVolume(bytes, VID, {
+      ...limits,
+      maxOccupiedVoxels: 2,
+    });
+    expect(seeds.length).toBe(2);
+  });
+
+  it("enforces the occupied extent limit before returning seeds (issue #100)", () => {
+    // Voxels at x=0 and x=16 span an occupied extent of 16 (max - min),
+    // mirroring the VoxelVolume.fromChunks extent semantics.
+    const bytes = binaryWithChunks([
+      { coordinate: [0, 0, 0], values: { 0: 1 } },
+      { coordinate: [1, 0, 0], values: { 0: 1 } },
+    ]);
+    expectErrorCode(
+      () => decodeVoxelVolume(bytes, VID, { ...limits, maxExtent: 10 }),
+      "EXTENT_LIMIT_EXCEEDED",
+    );
+    // Extent exactly at the limit is accepted, matching the installer.
+    const seeds = decodeVoxelVolume(bytes, VID, {
+      ...limits,
+      maxExtent: 16,
+    });
+    expect(seeds.length).toBe(2);
+  });
+
+  it("rejects an empty chunk before later occupancy could pass (issue #100)", () => {
+    const bytes = binaryWithChunks([
+      { coordinate: [0, 0, 0], values: { 0: 1 } },
+      { coordinate: [1, 0, 0], values: {} },
+    ]);
+    expectErrorCode(() => decodeVoxelVolume(bytes, VID, limits), "EMPTY_CHUNK");
   });
 });
