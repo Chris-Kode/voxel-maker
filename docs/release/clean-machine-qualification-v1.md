@@ -10,6 +10,22 @@ environment ships as scripts/artifacts/templates plus a precise
 procedure, so the remaining work is install-and-run with a fixed
 evidence checklist.
 
+## Local packaging without a native toolchain
+
+`pnpm release:package` treats a failed or empty native bundle as **fatal**
+(issue #70): CI/tag qualification must never upload or publish an artifact
+set without a platform installer. A developer machine without the native
+toolchain can still exercise the packaging flow with the explicit
+local-only flag, which records the failure in the manifest under
+`bundle.reason` and ships the headless probes only:
+
+```sh
+pnpm release:package -- --allow-no-bundle   # or RELEASE_ALLOW_NO_BUNDLE=1
+```
+
+The flag is for documented exceptions only; it must never be used in the
+release workflow.
+
 ## Evidence matrix
 
 | Step | macOS (this machine) | Windows | Linux |

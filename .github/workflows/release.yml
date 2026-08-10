@@ -67,6 +67,31 @@ jobs:
         run: pnpm release:package
       - name: Verify artifact checksums
         run: pnpm release:verify-checksums
+      - name: Assert native installer present
+        # Issue #70: a release set without a platform installer must
+        # never be uploaded or published. release:package already exits
+        # non-zero on bundle failure; this step re-checks the manifest
+        # (bundle.ok plus the expected installer kinds recorded by the
+        # script) so a future --allow-no-bundle misuse cannot slip
+        # through.
+        run: |
+          manifest=$(find release/artifacts -name manifest.json | head -n 1)
+          test -n "$manifest" || { echo "no release manifest found"; exit 1; }
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (manifest.bundle.ok !== true) {
+              console.error("bundle.ok is not true; refusing to upload");
+              process.exit(1);
+            }
+            const expected = manifest.bundle.expectedInstallers ?? [];
+            const present = manifest.bundle.installerKinds ?? [];
+            if (!expected.some((kind) => present.includes(kind))) {
+              console.error("no expected installer kind present; refusing to upload");
+              process.exit(1);
+            }
+            console.log("native installer asserted:", (manifest.bundle.artifacts ?? []).join(", "));
+          ' "$manifest"
       - name: Upload artifact set
         uses: actions/upload-artifact@v4
         with:
