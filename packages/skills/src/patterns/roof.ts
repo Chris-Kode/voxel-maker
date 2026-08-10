@@ -77,11 +77,17 @@ export const ROOF_GENERATOR: GeneratorDefinition<RoofParams> = {
           params.style === "pyramid"
             ? Math.max(1, params.depth - 2 * shrink)
             : params.depth;
+        // Each axis stays centered on the footprint: the offset is half
+        // the amount removed from that axis, so once a dimension clamps
+        // at one voxel the offset stops growing and every layer remains
+        // inside [min, min + size) (issue #110). The gable depth never
+        // shrinks, which also keeps its z origin fixed at the footprint
+        // edge.
         const step = boxFromMinSize(
           [
-            params.min[0] + shrink,
+            params.min[0] + centeredAxisOffset(params.width, layerWidth),
             params.min[1] + layer,
-            params.min[2] + shrink,
+            params.min[2] + centeredAxisOffset(params.depth, layerDepth),
           ],
           [layerWidth, 1, layerDepth],
         );
@@ -96,4 +102,9 @@ export const ROOF_GENERATOR: GeneratorDefinition<RoofParams> = {
 /** Ceiling of `value / 2` (number of shrinking layers for a side). */
 function ceilHalf(value: number): number {
   return Math.ceil(value / 2);
+}
+
+/** Centered offset of a layer of `layerSize` voxels on an axis of `dimension`. */
+function centeredAxisOffset(dimension: number, layerSize: number): number {
+  return Math.floor((dimension - layerSize) / 2);
 }

@@ -8,6 +8,7 @@ import {
   VOXEL_MIRROR_REGION_COMMAND,
 } from "@voxel-maker/commands";
 import { proposeGenerator } from "./registry.js";
+import type { GeneratorProposal } from "./generator.js";
 import { FIXTURE_IDS } from "./fixtures.js";
 
 /**
@@ -21,6 +22,27 @@ const CONTEXT = {
   material: FIXTURE_IDS.material,
   seed: "pattern-seed",
 };
+
+/**
+ * Asserts every proposed fillBox region lies inside the roof footprint
+ * `[min.x, min.x + width) x [min.z, min.z + depth)` (issue #110).
+ */
+function expectContainedInFootprint(
+  proposal: GeneratorProposal,
+  min: readonly [number, number, number],
+  width: number,
+  depth: number,
+): void {
+  for (const command of proposal.commands) {
+    const region = (
+      command.payload as { region: { min: number[]; max: number[] } }
+    ).region;
+    expect(region.min[0]).toBeGreaterThanOrEqual(min[0]);
+    expect(region.max[0]).toBeLessThanOrEqual(min[0] + width);
+    expect(region.min[2]).toBeGreaterThanOrEqual(min[2]);
+    expect(region.max[2]).toBeLessThanOrEqual(min[2] + depth);
+  }
+}
 
 describe("generator.mirror", () => {
   it("mirrors a region with one generic mirrorRegion command", () => {
@@ -275,6 +297,66 @@ describe("generator.roof", () => {
     expect(proposal.commandCount).toBe(3);
     // Layers: 5x3 + 3x1 + 1x1.
     expect(proposal.voxelEstimate).toBe(15 + 3 + 1);
+  });
+
+  it("keeps every gable layer inside the declared footprint (no depth drift)", () => {
+    // Regression for issue #110: gable depth never shrinks, so the z
+    // origin must stay fixed at the footprint edge instead of shifting
+    // with the width shrink.
+    const proposal = proposeGenerator(
+      "generator.roof",
+      { min: [0, 10, 0], width: 5, depth: 4, style: "gable", thickness: 1 },
+      CONTEXT,
+    );
+    expect(proposal.commandCount).toBe(3);
+    const regions = proposal.commands.map(
+      (command) =>
+        (command.payload as { region: { min: number[]; max: number[] } })
+          .region,
+    );
+    // Issue evidence: z previously drifted to [0, 6).
+    expect(regions.map((region) => region.min[2])).toEqual([0, 0, 0]);
+    expect(regions.map((region) => region.max[2])).toEqual([4, 4, 4]);
+    expectContainedInFootprint(proposal, [0, 10, 0], 5, 4);
+  });
+
+  it("keeps every pyramid layer inside the footprint once a dimension clamps to one voxel", () => {
+    // Regression for issue #110: a dimension that shrank to one voxel
+    // kept shifting its offset, leaving the footprint.
+    const cases = [
+      // Tall pyramid: width clamps while depth still shrinks.
+      { width: 3, depth: 7 },
+      // Wide pyramid: depth clamps while width still shrinks.
+      { width: 7, depth: 3 },
+      // Both dimensions even (apex offset already asymmetric).
+      { width: 4, depth: 6 },
+    ];
+    for (const { width, depth } of cases) {
+      const proposal = proposeGenerator(
+        "generator.roof",
+        { min: [0, 10, 0], width, depth, style: "pyramid", thickness: 1 },
+        CONTEXT,
+      );
+      expectContainedInFootprint(proposal, [0, 10, 0], width, depth);
+    }
+  });
+
+  it("keeps sloped roofs inside an asymmetric footprint placement", () => {
+    // Containment must hold relative to min, not just the origin.
+    for (const style of ["gable", "pyramid"] as const) {
+      const proposal = proposeGenerator(
+        "generator.roof",
+        {
+          min: [2, 10, 5],
+          width: 6,
+          depth: 3,
+          style,
+          thickness: 1,
+        },
+        CONTEXT,
+      );
+      expectContainedInFootprint(proposal, [2, 10, 5], 6, 3);
+    }
   });
 });
 
