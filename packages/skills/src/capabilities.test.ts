@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ToolCapability } from "@voxel-maker/agent";
 import { ALL_SKILLS, CREATION_SKILLS } from "./skill-registry.js";
 import {
   TOOL_CAPABILITIES,
@@ -84,5 +85,67 @@ describe("skill usability under a capability set (S14.2)", () => {
       unauthorized.every((tool) => TOOL_CAPABILITIES.get(tool) === "mutate"),
     ).toBe(true);
     expect(unauthorizedTools(furniture, ["inspect", "mutate"])).toHaveLength(0);
+  });
+});
+
+/**
+ * Asserts the full read-only-view contract of the exported capability
+ * map: reads work, the view is not a live Map, mutation methods do not
+ * exist (attempts throw), and the authoritative backing collection is
+ * not reachable through the facade.
+ */
+function expectReadOnlyMapView(
+  view: ReadonlyMap<string, ToolCapability>,
+): void {
+  expect(view instanceof Map).toBe(false);
+  expect("set" in view).toBe(false);
+  expect("delete" in view).toBe(false);
+  expect("clear" in view).toBe(false);
+  expect(() =>
+    (view as Map<string, ToolCapability>).set("fillBox", "inspect"),
+  ).toThrow();
+  // The backing collection must never be reachable as a runtime
+  // property: TS `private` is erased, so the facade holds it in an
+  // ES-private field that no consumer can probe.
+  expect("backing" in view).toBe(false);
+  expect(Object.getOwnPropertyNames(view)).not.toContain("backing");
+  expect(Reflect.get(view, "backing")).toBeUndefined();
+}
+
+describe("public capability view (issue #108)", () => {
+  it("exposes capabilities through a non-mutating read-only map view", () => {
+    expect(TOOL_CAPABILITIES.get("fillBox")).toBe("mutate");
+    expect(TOOL_CAPABILITIES.has("queryVoxels")).toBe(true);
+    expect(TOOL_CAPABILITIES.size).toBeGreaterThan(0);
+    expectReadOnlyMapView(TOOL_CAPABILITIES);
+  });
+
+  it("keeps creation skills blocked under inspect-only capability after a mutation attempt (issue #108 repro)", () => {
+    const furniture = CREATION_SKILLS[0] as (typeof CREATION_SKILLS)[number];
+    expect(skillUsableWith(furniture, ["inspect"])).toBe(false);
+    // A consumer rewriting the public map must fail...
+    expect(() =>
+      (TOOL_CAPABILITIES as Map<string, ToolCapability>).set(
+        "fillBox",
+        "inspect",
+      ),
+    ).toThrow();
+    // ...and the capability decision stays unchanged.
+    expect(skillUsableWith(furniture, ["inspect"])).toBe(false);
+  });
+
+  it("a consumer probing for the backing map cannot corrupt usability (issue #108 repro)", () => {
+    // The full corruption route from the issue must be gone: even a
+    // consumer that probes the facade for its backing reference finds
+    // nothing to mutate, so capability decisions stay authoritative.
+    const backing: unknown = Reflect.get(TOOL_CAPABILITIES, "backing");
+    expect(backing).toBeUndefined();
+    const furniture = CREATION_SKILLS[0] as (typeof CREATION_SKILLS)[number];
+    if (backing !== undefined) {
+      for (const tool of furniture.allowedTools) {
+        (backing as Map<string, string>).set(tool, "inspect");
+      }
+    }
+    expect(skillUsableWith(furniture, ["inspect"])).toBe(false);
   });
 });
