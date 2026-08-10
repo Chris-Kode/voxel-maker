@@ -6,7 +6,9 @@ import {
   appendTrendRow,
   compareWithTrends,
   emptyTrendHistory,
+  latestPassingSameHardwareRow,
   latestSameHardwareRow,
+  parseTrendHistory,
   runBenchmarks,
   type BenchmarkTrendHistory,
   type HardwareInput,
@@ -63,22 +65,32 @@ function formatNumber(value: number | undefined, unit: string): string {
   return `${value.toFixed(digits)}${unit}`;
 }
 
-/** Loads a trend history file, tolerating a missing or fresh file. */
+/**
+ * Loads a trend history file, tolerating a missing or fresh file. The
+ * payload is parsed and schema-migrated by the benchmarks package
+ * (v1 -> v2, issue #73); a malformed or future file fails loudly.
+ */
 async function loadTrends(path: string): Promise<BenchmarkTrendHistory> {
+  let payload: unknown;
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as {
-      schemaVersion?: unknown;
-      rows?: unknown;
-    };
-    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.rows)) {
-      throw new Error(`unsupported trend schema in ${path}`);
-    }
-    const history = parsed as BenchmarkTrendHistory;
-    return history;
+    payload = JSON.parse(await readFile(path, "utf8"));
   } catch (error) {
     const cause = error as { code?: string };
     if (cause.code === "ENOENT") return emptyTrendHistory();
-    throw error;
+    throw new Error(
+      `invalid trend history JSON in ${path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  try {
+    return parseTrendHistory(payload);
+  } catch (error) {
+    throw new Error(
+      `unsupported trend schema in ${path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }
 
@@ -140,20 +152,44 @@ async function main(): Promise<number> {
 
   let exitCode = outcome.gatesPass ? 0 : 1;
 
+  // The JSON report is written before any trend row is persisted: a run
+  // whose artifacts cannot be written exits non-zero without promoting
+  // a baseline (issue #73).
+  if (options.json !== undefined) {
+    const jsonPath = resolve(options.json);
+    await mkdir(dirname(jsonPath), { recursive: true });
+    await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(`report written to ${jsonPath}`);
+  }
+
   if (options.trends !== undefined) {
     const trendsPath = resolve(options.trends);
     const history = await loadTrends(trendsPath);
-    const baseline = latestSameHardwareRow(history, report.hardware);
+    // The comparison baseline is the newest PASSING row on this named
+    // hardware (issue #73): a failed row is retained as evidence but
+    // never promoted, so one regressed run cannot become the next
+    // accepted baseline.
+    const baseline = latestPassingSameHardwareRow(history, report.hardware);
     if (baseline === undefined && history.rows.length > 0) {
-      // No retained row on this named hardware: a different machine
-      // class never regresses against unrelated hardware, so the
-      // appended row below becomes the fresh baseline.
       const latest = history.rows[history.rows.length - 1];
+      const latestOnHardware = latestSameHardwareRow(history, report.hardware);
       console.log("");
       console.log(`latest row: ${latest?.date ?? "none"}`);
-      console.log(
-        `[skip] no retained baseline on this named hardware (latest ${latest?.hardware.cpuModel ?? "unknown"} -> ${report.hardware.cpuModel}); starting a fresh baseline`,
-      );
+      if (latestOnHardware === undefined) {
+        // No retained row on this named hardware: a different machine
+        // class never regresses against unrelated hardware, so the
+        // appended row below becomes the fresh baseline.
+        console.log(
+          `[skip] no retained baseline on this named hardware (latest ${latest?.hardware.cpuModel ?? "unknown"} -> ${report.hardware.cpuModel}); starting a fresh baseline`,
+        );
+      } else {
+        // Rows exist on this hardware but none passed: the retained
+        // evidence never becomes a baseline, so the appended row below
+        // starts a fresh baseline when it passes.
+        console.log(
+          `[skip] no passing baseline on this named hardware (latest ${latestOnHardware.date} is not a passing baseline); starting a fresh baseline`,
+        );
+      }
     }
     const comparisons = compareWithTrends(report, history);
     const regressions = comparisons.filter(
@@ -171,17 +207,16 @@ async function main(): Promise<number> {
       }
       if (regressions.length > 0) exitCode = 1;
     }
-    const updated = appendTrendRow(history, report);
+    // A row is a baseline candidate only when the whole run passed:
+    // gates AND trend comparisons (and the report write above). Failed
+    // rows are still appended as retained evidence (the workflow
+    // publishes them), but they never become the next comparison
+    // baseline.
+    const passed = outcome.gatesPass && regressions.length === 0;
+    const updated = appendTrendRow(history, report, passed);
     await mkdir(dirname(trendsPath), { recursive: true });
     await writeFile(trendsPath, `${JSON.stringify(updated, null, 2)}\n`);
     console.log(`trends appended to ${trendsPath}`);
-  }
-
-  if (options.json !== undefined) {
-    const jsonPath = resolve(options.json);
-    await mkdir(dirname(jsonPath), { recursive: true });
-    await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
-    console.log(`report written to ${jsonPath}`);
   }
 
   return exitCode;
