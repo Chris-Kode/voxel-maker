@@ -11,13 +11,21 @@
  * mismatched artifact.
  *
  * Verification only accepts canonical single-component artifact names and
- * strict 64-hex lowercase hashes (issue #97); traversal, absolute, dot,
+ * strict 64-hex hashes (issue #97). Traversal, absolute, dot,
  * duplicate, malformed-hash, directory, symlink-escape, missing, extra, and
- * mismatched entries all fail, so verification cannot read or endorse files
- * outside the artifact directory.
+ * mismatched entries all fail, the checksum file itself must be a regular
+ * file, and every artifact is resolved and containment-checked, so
+ * verification cannot read or endorse files outside the artifact directory.
  */
 import { createHash } from "node:crypto";
-import { readdir, readFile, writeFile, stat, realpath } from "node:fs/promises";
+import {
+  lstat,
+  readdir,
+  readFile,
+  writeFile,
+  stat,
+  realpath,
+} from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -26,8 +34,8 @@ const CHECKSUM_FILE = "SHASUMS256.txt";
 /** Files that are metadata about the set rather than artifacts. */
 const METADATA_FILES = new Set(["manifest.json"]);
 
-/** Canonical sha256 hex digest of an artifact (lowercase, 64 hex digits). */
-const HASH_PATTERN = /^[0-9a-f]{64}$/u;
+/** Canonical sha256 hex digest of an artifact (exactly 64 hex digits). */
+const HASH_PATTERN = /^[0-9a-f]{64}$/iu;
 
 /**
  * Why `name` cannot appear as a checksum entry, or null when it is a valid
@@ -68,6 +76,11 @@ export async function writeChecksums(directory) {
 
 export async function verifyChecksums(directory) {
   const checksumPath = join(directory, CHECKSUM_FILE);
+  // The checksum file must be a plain file: a symlink could point outside the
+  // set and leak its content through malformed-entry messages (issue #97).
+  const checksumInfo = await lstat(checksumPath);
+  if (!checksumInfo.isFile())
+    throw new Error(`${CHECKSUM_FILE} must be a regular file`);
   const text = await readFile(checksumPath, "utf8");
   const expected = new Map();
   const failures = [];
@@ -76,14 +89,17 @@ export async function verifyChecksums(directory) {
     const line = lines[i].trim();
     if (line === "") continue;
     const fields = line.split(/\s+/u);
-    if (fields.length !== 2) {
+    if (fields.length < 2) {
       const detail = line.length > 80 ? `${line.slice(0, 77)}...` : line;
       failures.push(
         `${CHECKSUM_FILE} line ${i + 1}: malformed entry "${detail}"`,
       );
       continue;
     }
-    const [hash, name] = fields;
+    // sha256sum-style "<hash>  <name>": the name is the rest of the line and
+    // may contain spaces (e.g. "Voxel Maker_0.1.0_aarch64.dmg").
+    const hash = fields[0];
+    const name = fields.slice(1).join(" ");
     if (!HASH_PATTERN.test(hash)) {
       failures.push(`${name}: invalid checksum hash "${hash}"`);
       continue;
@@ -97,7 +113,7 @@ export async function verifyChecksums(directory) {
       failures.push(`${name}: duplicate checksum entry`);
       continue;
     }
-    expected.set(name, hash);
+    expected.set(name, hash.toLowerCase());
   }
   // The set's real location, so symlinked artifacts can be containment-checked.
   const directoryReal = await realpath(directory);
@@ -136,9 +152,11 @@ export async function verifyChecksums(directory) {
       failures.push(`${name}: artifact missing`);
     }
   }
+  // Names the writer refuses to list are ignored here too, so a generated
+  // set always verifies; directories and other unlisted files still fail.
   const present = new Set(
     (await readdir(directory)).filter(
-      (n) => n !== CHECKSUM_FILE && !METADATA_FILES.has(n),
+      (name) => invalidNameReason(name) === null,
     ),
   );
   for (const name of present) {
