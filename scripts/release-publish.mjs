@@ -99,6 +99,9 @@ async function prepareSet(setRoot, platform) {
       (name) => `${prefix}-${name}`,
     );
   }
+  if (typeof manifest.sbom?.file === "string") {
+    manifest.sbom.file = `${prefix}-${manifest.sbom.file}`;
+  }
   manifest.checksums = {
     ...manifest.checksums,
     file: `${prefix}-${CHECKSUM_FILE}`,

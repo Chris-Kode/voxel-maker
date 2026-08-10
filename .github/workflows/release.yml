@@ -37,6 +37,13 @@ jobs:
           cache: pnpm
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install Cargo security tooling
+        # Issue #74: cargo-audit (vulnerabilities), cargo-deny (license
+        # allowlist), and cargo-cyclonedx (SBOM) back the Cargo-side
+        # gates; the SBOM ships inside the release artifact set.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-cyclonedx
       - name: Install Linux bundling dependencies
         if: runner.os == 'Linux'
         run: |
@@ -48,9 +55,13 @@ jobs:
         # gate runs on every OS (the engine is platform-independent).
         run: pnpm check
       - name: Security and audit gates
+        # Issue #74: the Cargo vulnerability and license gates run
+        # alongside the npm-side gates on every qualified platform.
         run: |
           pnpm check:security
           pnpm check:audit
+          pnpm check:rust:audit
+          pnpm check:rust:licenses
       - name: Build release artifacts for this platform
         # tauri build produces the platform installers; the packaging
         # script collects them, adds the headless CLIs, and writes
@@ -91,6 +102,29 @@ jobs:
               process.exit(1);
             }
             console.log("native installer asserted:", (manifest.bundle.artifacts ?? []).join(", "));
+          ' "$manifest"
+      - name: Assert SBOM evidence present
+        # Issue #74: release evidence must include the Cargo SBOM.
+        # release:package already fails when the SBOM cannot be
+        # generated; this step re-checks the manifest and the artifact
+        # set so a future --allow-no-bundle misuse cannot slip through.
+        run: |
+          manifest=$(find release/artifacts -name manifest.json | head -n 1)
+          test -n "$manifest" || { echo "no release manifest found"; exit 1; }
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (manifest.sbom?.ok !== true) {
+              console.error("sbom.ok is not true; refusing to upload");
+              process.exit(1);
+            }
+            const file = manifest.sbom.file;
+            if (!file || !fs.existsSync(path.join(path.dirname(process.argv[1]), file))) {
+              console.error("sbom file missing from artifact set; refusing to upload");
+              process.exit(1);
+            }
+            console.log("SBOM evidence asserted:", file);
           ' "$manifest"
       - name: Upload artifact set
         uses: actions/upload-artifact@v4

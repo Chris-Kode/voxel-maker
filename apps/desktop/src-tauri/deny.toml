@@ -1,0 +1,35 @@
+# Cargo license allowlist (issue #74, plan §11.2 "SBOM/license
+# generation"): `cargo deny check licenses`
+# (scripts/check-cargo-licenses.mjs) fails the gate when any crate in
+# the locked dependency tree carries a license outside this allowlist.
+# The list covers the v1 Tauri shell dependency set and must be widened
+# only by review.
+[licenses]
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+
+# The workspace crate itself is private and unlicensed (like the npm
+# workspace packages, which scripts/check-licenses.mjs exempts); it is
+# never published, so its own license is not gated.
+[licenses.private]
+ignore = true
+
+# r-efi (UEFI bindings pulled in by the Tauri toolchain for Windows
+# targets) is LGPL-2.1-or-later; it is a build-time-only dependency and
+# is allowed by explicit exception rather than widening the allowlist.
+[[licenses.exceptions]]
+name = "r-efi"
+version = "*"
+allow = ["LGPL-2.1-or-later"]

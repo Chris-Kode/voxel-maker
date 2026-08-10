@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -40,9 +40,19 @@ async function packageTree() {
   return root;
 }
 
-/** Fake spawn that records invocations and returns a fixed status. */
+/**
+ * Fake spawn that returns a fixed status and, on success, emulates
+ * cargo cyclonedx writing the SBOM into the crate directory (the real
+ * tool writes <override>.json next to Cargo.toml; generateCargoSbom
+ * then moves it into the artifact set).
+ */
 function fakeSpawn(status) {
-  return () => ({ status, signal: null, error: undefined });
+  return (command, args, options) => {
+    if (status === 0 && command === "cargo" && args.includes("cyclonedx")) {
+      writeFileSync(join(options.cwd, "sbom.cdx.json"), "{}");
+    }
+    return { status, signal: null, error: undefined };
+  };
 }
 
 function artifactSet(root) {
@@ -206,5 +216,78 @@ test("the explicit local-only flag keeps the documented exception path", async (
       "headless-recovery-cli.js",
       "headless-release-smoke-cli.js",
     ],
+  );
+  // The SBOM failure follows the same local-only exception pattern as
+  // the native bundle: recorded in the manifest, never fatal with the
+  // explicit flag.
+  assert.equal(manifest.sbom.ok, false);
+  assert.match(manifest.sbom.reason, /cargo cyclonedx exited with status 17/);
+});
+
+// ---------------------------------------------------------------------------
+// Cargo SBOM evidence (issue #74)
+// ---------------------------------------------------------------------------
+
+/** Creates the platform's expected installer artifacts in the bundle dir. */
+async function writeExpectedInstallers(root) {
+  const bundle = join(root, "apps/desktop/src-tauri/target/release/bundle");
+  for (const kind of EXPECTED_INSTALLER_KINDS[process.platform]) {
+    const dir = join(bundle, kind);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `installer.${kind}`), "x");
+  }
+}
+
+test("a successful packaging ships the Cargo SBOM in the artifact set", async () => {
+  const root = await packageTree();
+  await writeExpectedInstallers(root);
+  await packageRelease({ workspaceRoot: root, spawn: fakeSpawn(0) });
+  const set = artifactSet(root);
+  const manifest = JSON.parse(
+    await readFile(join(set, "manifest.json"), "utf8"),
+  );
+  assert.equal(manifest.sbom.ok, true);
+  assert.equal(manifest.sbom.file, "sbom.cdx.json");
+  assert.equal(manifest.sbom.format, "CycloneDX JSON");
+  assert.equal(manifest.sbom.tool, "cargo-cyclonedx");
+  assert.equal(
+    manifest.artifacts.some((artifact) => artifact.name === "sbom.cdx.json"),
+    true,
+  );
+  assert.equal(existsSync(join(set, "sbom.cdx.json")), true);
+  const checksums = await readFile(join(set, "SHASUMS256.txt"), "utf8");
+  assert.match(checksums, /sbom\.cdx\.json/);
+});
+
+test("a failing SBOM generation is fatal without the local-only flag", async () => {
+  const root = await packageTree();
+  await writeExpectedInstallers(root);
+  const spawn = (command, args) =>
+    command === "cargo" && args.includes("cyclonedx")
+      ? { status: 1, signal: null, error: undefined }
+      : { status: 0, signal: null, error: undefined };
+  await assert.rejects(
+    packageRelease({ workspaceRoot: root, spawn }),
+    /Cargo SBOM generation failed and is fatal/,
+  );
+  assert.equal(existsSync(join(artifactSet(root), "manifest.json")), false);
+});
+
+test("a failing SBOM generation with the local-only flag records the exception", async () => {
+  const root = await packageTree();
+  await writeExpectedInstallers(root);
+  const spawn = (command, args) =>
+    command === "cargo" && args.includes("cyclonedx")
+      ? { status: 1, signal: null, error: undefined }
+      : { status: 0, signal: null, error: undefined };
+  await packageRelease({ workspaceRoot: root, spawn, allowNoBundle: true });
+  const manifest = JSON.parse(
+    await readFile(join(artifactSet(root), "manifest.json"), "utf8"),
+  );
+  assert.equal(manifest.sbom.ok, false);
+  assert.match(manifest.sbom.reason, /cargo cyclonedx exited with status 1/);
+  assert.equal(
+    manifest.artifacts.some((artifact) => artifact.name === "sbom.cdx.json"),
+    false,
   );
 });

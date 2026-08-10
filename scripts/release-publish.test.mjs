@@ -20,6 +20,7 @@ const SHARED_FILES = [
   "headless-persistence-cli.js",
   "headless-recovery-cli.js",
   "headless-release-smoke-cli.js",
+  "sbom.cdx.json",
 ];
 
 /**
@@ -47,6 +48,12 @@ async function fixture() {
           platform,
           arch,
           bundle: { attempted: true, ok: true, artifacts: installers },
+          sbom: {
+            ok: true,
+            file: "sbom.cdx.json",
+            format: "CycloneDX JSON",
+            tool: "cargo-cyclonedx",
+          },
           artifacts: names.map((name) => ({ name, bytes: name.length })),
           checksums: { file: "SHASUMS256.txt", entries: names.length },
         },
@@ -128,6 +135,7 @@ test("checksums and manifest are regenerated to name the published files", async
       `${platform} manifest bundle artifacts must be prefixed too`,
     );
     assert.equal(manifest.checksums.file, `${prefix}-SHASUMS256.txt`);
+    assert.equal(manifest.sbom.file, `${prefix}-sbom.cdx.json`);
   }
 });
 
@@ -204,5 +212,5 @@ console.log("gh: release created with " + names.size + " assets");
     },
   );
   assert.equal(published.status, 0, published.stderr);
-  assert.match(published.stdout, /release created with 21 assets/u);
+  assert.match(published.stdout, /release created with 24 assets/u);
 });
