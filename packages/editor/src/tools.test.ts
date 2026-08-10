@@ -7,6 +7,8 @@ import {
   transactionId,
   volumeId,
   type CommandId,
+  type MaterialId,
+  type WorkspaceError,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import {
@@ -247,6 +249,35 @@ function fillFixture(harness: Harness): void {
   if (!result.ok) throw new Error(`prefill failed: ${result.error.code}`);
 }
 
+function errorCode(result: {
+  ok: boolean;
+  error?: WorkspaceError;
+}): string | undefined {
+  return result.ok ? undefined : result.error?.code;
+}
+
+/** Seeds arbitrary voxels through the real command path (paint fixtures). */
+function seedVoxels(
+  harness: Harness,
+  entries: readonly {
+    readonly coordinate: readonly [number, number, number];
+    readonly material: MaterialId;
+  }[],
+): void {
+  const result = harness.bus.execute(
+    setBatchCommand(commandId("command:test:seed"), {
+      volumeId: VOLUME,
+      entries,
+    }),
+    {
+      transactionId: transactionId("transaction:test:seed"),
+      expectedRevision: harness.store.revision,
+      source: "system",
+    },
+  );
+  if (!result.ok) throw new Error(`seed failed: ${result.error.code}`);
+}
+
 describe("select tool", () => {
   it("selects nodes with plain clicks and clears on a miss", () => {
     const harness = createHarness();
@@ -432,6 +463,104 @@ describe("paint tool", () => {
     harness.paint.pointerUp();
     expect(harness.bus.historySnapshot().past).toHaveLength(1); // prefill only
     expect(harness.editor.draft).toBeUndefined();
+  });
+
+  it("paints a differently colored voxel when the stroke starts on a matching voxel", () => {
+    // Issue #105: a drag that begins on a voxel already using the active
+    // material must still rasterize across the picked path and recolor the
+    // occupied voxels of other materials it crosses.
+    const harness = createHarness();
+    fillFixture(harness);
+    seedVoxels(harness, [{ coordinate: [4, 0, 0], material: REPLACEMENT }]);
+    harness.pick = planePicker();
+    harness.paint.pointerDown(2, 0); // already MATERIAL (== active)
+    harness.paint.pointerMove(4, 0); // crosses empty (3,0,0), lands on material 2
+    // The preview shows exactly the change that will commit: the matching
+    // start and the empty stretch never enter the draft.
+    expect(harness.editor.draft?.voxels).toEqual([[4, 0, 0]]);
+    const up = harness.paint.pointerUp();
+    expect(up).toEqual({ ok: true });
+    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(MATERIAL);
+    expect(harness.voxels(VOLUME).get("3,0,0")).toBeUndefined();
+    expect(harness.voxels(VOLUME).get("2,0,0")).toBe(MATERIAL); // untouched
+    const history = harness.bus.historySnapshot();
+    expect(history.past).toHaveLength(3); // prefill + seed + paint
+    expect(history.past[2]?.label).toBe("Paint stroke");
+    // Undo restores the exact pre-stroke material at the target.
+    const undo = harness.bus.undo({
+      transactionId: transactionId("transaction:test:undo"),
+      expectedRevision: harness.store.revision,
+      source: "ui",
+    });
+    expect(undo.ok).toBe(true);
+    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(REPLACEMENT);
+  });
+
+  it("paints a differently colored voxel when the stroke starts on empty space", () => {
+    // Issue #105: same rasterization guarantee when the drag begins on an
+    // empty voxel instead of a matching one.
+    const harness = createHarness();
+    seedVoxels(harness, [{ coordinate: [4, 0, 0], material: REPLACEMENT }]);
+    harness.pick = planePicker();
+    harness.paint.pointerDown(0, 0); // empty
+    harness.paint.pointerMove(4, 0);
+    expect(harness.editor.draft?.voxels).toEqual([[4, 0, 0]]);
+    const up = harness.paint.pointerUp();
+    expect(up).toEqual({ ok: true });
+    expect(harness.voxels(VOLUME).get("4,0,0")).toBe(MATERIAL);
+    expect(harness.voxels(VOLUME).get("0,0,0")).toBeUndefined();
+    expect(harness.voxels(VOLUME).size).toBe(1);
+    expect(harness.bus.historySnapshot().past).toHaveLength(2);
+  });
+
+  it("rasterizes between consecutive picks once the stroke starts unchanged", () => {
+    // The rasterization cursor follows the picked path, not the filtered
+    // draft: after the first recolor the next move continues from the last
+    // picked voxel, and retracing deduplicates instead of growing.
+    const harness = createHarness();
+    fillFixture(harness);
+    seedVoxels(harness, [
+      { coordinate: [3, 0, 0], material: REPLACEMENT },
+      { coordinate: [6, 0, 0], material: REPLACEMENT },
+    ]);
+    harness.pick = planePicker();
+    harness.paint.pointerDown(1, 0); // matching start
+    harness.paint.pointerMove(3, 0);
+    expect(harness.editor.draft?.voxels).toEqual([[3, 0, 0]]);
+    harness.paint.pointerMove(6, 0);
+    expect(harness.editor.draft?.voxels).toEqual([
+      [3, 0, 0],
+      [6, 0, 0],
+    ]);
+    // Retracing over the changed voxel adds nothing.
+    harness.paint.pointerMove(3, 0);
+    expect(harness.editor.draft?.voxels).toEqual([
+      [3, 0, 0],
+      [6, 0, 0],
+    ]);
+    const up = harness.paint.pointerUp();
+    expect(up).toEqual({ ok: true });
+    expect(harness.voxels(VOLUME).get("3,0,0")).toBe(MATERIAL);
+    expect(harness.voxels(VOLUME).get("6,0,0")).toBe(MATERIAL);
+    expect(harness.voxels(VOLUME).get("4,0,0")).toBeUndefined();
+    expect(harness.voxels(VOLUME).get("5,0,0")).toBeUndefined();
+    expect(harness.bus.historySnapshot().past).toHaveLength(3); // prefill + seed + paint
+  });
+
+  it("rejects a paint stroke that exceeds the gesture budget from an unchanged start", () => {
+    // The gesture budget counts every rasterized path voxel (ADR-0009:
+    // voxels inspected by one operation), including matching/empty ones, so
+    // an unchanged start cannot silently bypass the cap.
+    const harness = createHarness({ maxGestureVoxels: 5 });
+    seedVoxels(harness, [{ coordinate: [6, 0, 0], material: REPLACEMENT }]);
+    harness.pick = planePicker();
+    harness.paint.pointerDown(2, 0); // matching start consumes one path voxel
+    const result = harness.paint.pointerMove(6, 0); // 5-path-voxel segment
+    expect(errorCode(result)).toBe("TOO_MANY_VOXELS");
+    expect(harness.paint.active).toBe(false);
+    expect(harness.editor.draft).toBeUndefined();
+    expect(harness.voxels(VOLUME).get("6,0,0")).toBe(REPLACEMENT); // untouched
+    expect(harness.bus.historySnapshot().past).toHaveLength(1); // seed only
   });
 });
 
