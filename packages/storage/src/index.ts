@@ -10,6 +10,7 @@
 export {
   backupPathFor,
   defaultPhaseError,
+  inputFileLimitError,
   IO_ERROR_CODES,
   IO_ERROR_MESSAGES,
   journalPathFor,

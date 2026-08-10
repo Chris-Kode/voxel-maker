@@ -1,4 +1,8 @@
-import { WorkspaceError } from "@voxel-maker/shared";
+import {
+  INPUT_FILE_LIMIT_EXCEEDED,
+  INPUT_FILE_MAX_BYTES,
+  WorkspaceError,
+} from "@voxel-maker/shared";
 
 /**
  * Phases of one atomic project write (plan S5.7, ADR-0004):
@@ -73,7 +77,15 @@ export interface AtomicWriteResult {
  * Tauri adapter in the desktop app; plan S6.18).
  */
 export interface ProjectStoragePort {
-  /** Reads the complete project file; rejects `IO_NOT_FOUND` when absent. */
+  /**
+   * Reads the complete project file; rejects `IO_NOT_FOUND` when absent.
+   * Filesystem adapters preflight the path (issue #96): a non-regular file
+   * rejects `IO_NOT_REGULAR_FILE` and a file above the 512 MiB input-file
+   * hard cap (ADR-0009) rejects `INPUT_FILE_LIMIT_EXCEEDED` before the body
+   * is read, so an oversized hostile file is never allocated or copied.
+   * In-memory adapters hold caller-supplied bounded bytes and skip the
+   * preflight.
+   */
   readProject(path: string): Promise<Uint8Array>;
   /**
    * Atomically replaces `path` with `bytes`: write and flush a same-directory
@@ -98,10 +110,12 @@ export interface ProjectStoragePort {
 /** Stable io error codes shared by every storage adapter. */
 export const IO_ERROR_CODES = {
   notFound: "IO_NOT_FOUND",
+  notRegular: "IO_NOT_REGULAR_FILE",
   diskFull: "IO_DISK_FULL",
   permissionDenied: "IO_PERMISSION_DENIED",
   renameFailed: "IO_RENAME_FAILED",
   writeInterrupted: "IO_WRITE_INTERRUPTED",
+  readFailed: "IO_READ_FAILED",
   writeFailed: "IO_WRITE_FAILED",
   syncFailed: "IO_SYNC_FAILED",
 } as const;
@@ -140,6 +154,25 @@ export function storageIoError(
     message,
     context,
     ...(cause === undefined ? {} : { cause }),
+  });
+}
+
+/**
+ * Builds the stable limit error for an input file above the 512 MiB hard
+ * cap (ADR-0009, issue #96). Filesystem adapters raise it from a stat
+ * preflight BEFORE reading the body, so a hostile file can never be
+ * allocated or copied into memory.
+ */
+export function inputFileLimitError(
+  path: string,
+  requested: number,
+  limit: number = INPUT_FILE_MAX_BYTES,
+): WorkspaceError {
+  return new WorkspaceError({
+    family: "limit",
+    code: INPUT_FILE_LIMIT_EXCEEDED,
+    message: "The input file exceeds the hard size limit",
+    context: { path, requested, limit },
   });
 }
 
@@ -223,7 +256,10 @@ export function backupPathFor(path: string): string {
 export interface RecoveryJournalPort {
   /**
    * Reads the complete journal file for the project at `path` (the adjacent
-   * `<path>.journal`); resolves `undefined` when absent.
+   * `<path>.journal`); resolves `undefined` when absent. Filesystem
+   * adapters apply the same preflight as `readProject` (issue #96):
+   * non-regular and above-cap journal files reject with stable errors
+   * before the body is read.
    */
   readJournal(path: string): Promise<Uint8Array | undefined>;
   /**

@@ -1,3 +1,4 @@
+import { INPUT_FILE_MAX_BYTES } from "@voxel-maker/shared";
 import { describe, expect, it } from "vitest";
 import {
   VOX_VERSION,
@@ -368,6 +369,20 @@ describe("parseVox", () => {
     expectCode(() => parseVox(bytes, limits), "VOX_FILE_TOO_LARGE");
     const bigLimits: VoxParseLimits = { ...limits, maxFileBytes: 1 << 30 };
     expectCode(() => parseVox(bytes, bigLimits), "VOX_TOO_MANY_CHUNKS");
+  });
+
+  it("pins the default file cap to the shared 512 MiB hard limit (issue #96)", () => {
+    expect(DEFAULT_VOX_PARSE_LIMITS.maxFileBytes).toBe(INPUT_FILE_MAX_BYTES);
+    // One byte above the input-file cap is rejected before any header
+    // parse (the default is the shared ADR-0009 hard limit).
+    expectCode(
+      () =>
+        parseVox(new Uint8Array(65), {
+          ...DEFAULT_VOX_PARSE_LIMITS,
+          maxFileBytes: 64,
+        }),
+      "VOX_FILE_TOO_LARGE",
+    );
   });
 
   describe("validateVoxParseLimits", () => {

@@ -37,6 +37,23 @@ export const PREVIEW_IMAGE_MAX_PIXELS =
   PREVIEW_IMAGE_MAX_DIMENSION * PREVIEW_IMAGE_MAX_DIMENSION;
 
 /**
+ * Hard default for native/external input files (ADR-0009, ARCHITECTURE.md
+ * "input file / archive expansion | 512 MiB / 2 GiB"): a project, backup,
+ * journal, or interchange file larger than this is rejected with a stable
+ * limit error before its body is read or allocated (issue #96). Single
+ * source of truth shared by the storage ports, the container/VOX parsers,
+ * and the native desktop shell.
+ */
+export const INPUT_FILE_MAX_BYTES = 512 * 1024 * 1024;
+
+/**
+ * Stable limit code for inputs above the 512 MiB input-file hard cap
+ * (ADR-0009, issue #96). Defined once here so the storage ports and the
+ * format parsers cannot drift apart in the code they surface.
+ */
+export const INPUT_FILE_LIMIT_EXCEEDED = "INPUT_FILE_LIMIT_EXCEEDED" as const;
+
+/**
  * A small, exception-isolated listener set (ARCHITECTURE.md assigns event
  * utilities to `shared`). `emit` runs every listener and swallows listener
  * failures so one bad subscriber can never break the notifier; `add`

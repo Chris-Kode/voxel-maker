@@ -2,16 +2,16 @@ import { randomBytes } from "node:crypto";
 import {
   copyFile,
   open,
-  readFile,
   rename,
   rm,
   stat,
   type FileHandle,
 } from "node:fs/promises";
 import { dirname } from "node:path";
-import { WorkspaceError } from "@voxel-maker/shared";
+import { INPUT_FILE_MAX_BYTES, WorkspaceError } from "@voxel-maker/shared";
 import {
   backupPathFor,
+  inputFileLimitError,
   IO_ERROR_CODES,
   IO_ERROR_MESSAGES,
   journalPathFor,
@@ -42,6 +42,7 @@ export class NodeProjectStorage
   readonly #faults: AtomicWriteFaultPlan;
   readonly #nonce: () => string;
   readonly #writeChunkBytes: number;
+  readonly #readMaxBytes: number;
 
   constructor(
     options: {
@@ -49,17 +50,26 @@ export class NodeProjectStorage
       readonly nonce?: () => string;
       /** Bytes written per chunk so cancellation can interrupt large saves. */
       readonly writeChunkBytes?: number;
+      /**
+       * Hard read cap enforced before a project/backup/journal body is read
+       * (issue #96; ADR-0009 default `INPUT_FILE_MAX_BYTES`). A test seam so
+       * boundary tests avoid multi-hundred-MiB fixtures; production callers
+       * keep the hard default.
+       */
+      readonly readMaxBytes?: number;
     } = {},
   ) {
     this.#faults = options.faults ?? {};
     this.#nonce = options.nonce ?? (() => randomBytes(6).toString("hex"));
     this.#writeChunkBytes = options.writeChunkBytes ?? 256 * 1024;
+    this.#readMaxBytes = options.readMaxBytes ?? INPUT_FILE_MAX_BYTES;
   }
 
   async readProject(path: string): Promise<Uint8Array> {
     try {
-      return await readFile(path);
+      return await readBoundedFile(path, this.#readMaxBytes);
     } catch (cause) {
+      if (cause instanceof WorkspaceError) throw cause;
       throw mapFsError(cause, path);
     }
   }
@@ -80,8 +90,9 @@ export class NodeProjectStorage
   async readBackup(path: string): Promise<Uint8Array | undefined> {
     const backupPath = backupPathFor(path);
     try {
-      return await readFile(backupPath);
+      return await readBoundedFile(backupPath, this.#readMaxBytes);
     } catch (cause) {
+      if (cause instanceof WorkspaceError) throw cause;
       if (isNotFound(cause)) return undefined;
       throw mapFsError(cause, path);
     }
@@ -90,8 +101,9 @@ export class NodeProjectStorage
   async readJournal(path: string): Promise<Uint8Array | undefined> {
     const journalPath = journalPathFor(path);
     try {
-      return await readFile(journalPath);
+      return await readBoundedFile(journalPath, this.#readMaxBytes);
     } catch (cause) {
+      if (cause instanceof WorkspaceError) throw cause;
       if (isNotFound(cause)) return undefined;
       throw mapFsError(cause, journalPath);
     }
@@ -237,6 +249,68 @@ export class NodeProjectStorage
     }
   }
 }
+
+/**
+ * Reads one file with a stat preflight and a bounded stream (issue #96):
+ * non-regular paths and files above `maxBytes` are rejected before the
+ * body is read, the buffer is allocated only after the preflight (so it is
+ * at most `maxBytes`), and a file that grows mid-read is rejected instead
+ * of being read beyond the cap. Preflight failures throw the stable
+ * `WorkspaceError`; filesystem failures throw the raw cause for
+ * `mapFsError` to translate at the call site.
+ */
+async function readBoundedFile(
+  path: string,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, "r");
+    const info = await handle.stat();
+    if (!info.isFile()) {
+      throw storageIoError(
+        IO_ERROR_CODES.notRegular,
+        "The project file is not a regular file",
+        { path },
+      );
+    }
+    if (info.size > maxBytes) {
+      throw inputFileLimitError(path, info.size, maxBytes);
+    }
+    const bytes = new Uint8Array(info.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset < bytes.byteLength) {
+      // The file shrank between the stat preflight and the read: the bytes
+      // no longer match the preflighted size, so return nothing rather
+      // than a silently truncated body.
+      throw storageIoError(
+        IO_ERROR_CODES.readFailed,
+        "The project file changed while it was being read",
+        { path },
+      );
+    }
+    // Growth check: one probe byte past the preflighted size proves the
+    // file did not grow beyond the cap between stat and read (TOCTOU).
+    const probe = new Uint8Array(1);
+    const { bytesRead: probeRead } = await handle.read(probe, 0, 1);
+    if (probeRead > 0) {
+      throw inputFileLimitError(path, info.size + 1, maxBytes);
+    }
+    return bytes;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 async function writeChunked(
   handle: FileHandle,
   bytes: Uint8Array,

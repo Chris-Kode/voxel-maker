@@ -1,4 +1,4 @@
-import type { MaterialId } from "@voxel-maker/shared";
+import { INPUT_FILE_MAX_BYTES, type MaterialId } from "@voxel-maker/shared";
 import type { Vec3i } from "@voxel-maker/math";
 
 /**
@@ -51,7 +51,7 @@ export interface VoxParseLimits {
 
 /** ADR-0009-style hard defaults for one VOX read. */
 export const DEFAULT_VOX_PARSE_LIMITS: VoxParseLimits = Object.freeze({
-  maxFileBytes: 512 * 1024 * 1024,
+  maxFileBytes: INPUT_FILE_MAX_BYTES,
   maxModels: 1_024,
   maxVoxelsPerModel: 1_000_000,
   maxTotalVoxels: 1_000_000,

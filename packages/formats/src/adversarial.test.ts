@@ -8,6 +8,7 @@ import {
 import { createDocument } from "@voxel-maker/model";
 import { encodeVox, parseVox } from "./vox.js";
 import {
+  DEFAULT_ZIP_ARCHIVE_LIMITS,
   readZipArchive,
   writeZipArchive,
   type ZipArchiveLimits,
@@ -80,6 +81,7 @@ function expectErrorCode(fn: () => unknown, code: string): void {
 }
 
 const tinyZipLimits: ZipArchiveLimits = Object.freeze({
+  ...DEFAULT_ZIP_ARCHIVE_LIMITS,
   maxEntries: 8,
   maxEntryNameBytes: 64,
   maxEntrySize: 1_048_576,
@@ -313,6 +315,7 @@ describe("adversarial ZIP", () => {
 
   it("rejects entries whose declared size exceeds the archive (stored-format size bomb)", () => {
     const looseZipLimits: ZipArchiveLimits = Object.freeze({
+      ...DEFAULT_ZIP_ARCHIVE_LIMITS,
       maxEntries: 8,
       maxEntryNameBytes: 64,
       maxEntrySize: 0x7fff_ffff,
