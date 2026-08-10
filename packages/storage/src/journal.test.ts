@@ -207,10 +207,15 @@ class ScriptedJournalPort extends MemoryProjectStorage {
   failNextAppendAfterWrite: "partial" | "full" | undefined;
   failNextReplace = false;
   failNextSnapshotWrite = false;
+  /** When set, the next appendJournal call waits on this promise before writing. */
+  appendGate: Promise<void> | undefined;
   readonly order: string[] = [];
 
   override async appendJournal(path: string, bytes: Uint8Array): Promise<void> {
     this.order.push(`append:${String(bytes.byteLength)}`);
+    const gate = this.appendGate;
+    this.appendGate = undefined;
+    if (gate !== undefined) await gate;
     if (this.failNextAppend) {
       this.failNextAppend = false;
       throw new WorkspaceError({
@@ -370,6 +375,150 @@ describe("RecoveryJournal", () => {
     const decoded = decodeJournalFrames(bytes as Uint8Array);
     expect(decoded.frames).toHaveLength(1);
     expect(decoded.corruptTail).toBeUndefined();
+  });
+
+  it("a duplicate journal() call joins the pending append and settles with it", async () => {
+    const port = new ScriptedJournalPort();
+    const harness = createJournal(port);
+    let release: (() => void) | undefined;
+    port.appendGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const input = {
+      revisionBefore: 0,
+      revisionAfter: 1,
+      transaction: { revision: 1 } as JsonValue,
+    };
+    const first = harness.journal.journal(input);
+    const duplicate = harness.journal.journal(input);
+    let firstSettled = false;
+    let duplicateSettled = false;
+    void first.then(
+      () => {
+        firstSettled = true;
+      },
+      () => {
+        firstSettled = true;
+      },
+    );
+    void duplicate.then(
+      () => {
+        duplicateSettled = true;
+      },
+      () => {
+        duplicateSettled = true;
+      },
+    );
+    // While the append is gated, neither caller may be told the frame is
+    // durable: no frame is on disk and no revision is journaled.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(firstSettled).toBe(false);
+    expect(duplicateSettled).toBe(false);
+    expect(harness.journal.lastJournaledRevision()).toBeUndefined();
+    const bytesWhileGated = await port.readJournal("project.vxl");
+    expect(
+      decodeJournalFrames(bytesWhileGated as Uint8Array).frames,
+    ).toHaveLength(0);
+
+    release?.();
+    await Promise.all([first, duplicate]);
+    expect(harness.journal.lastJournaledRevision()).toBe(1);
+    const bytes = await port.readJournal("project.vxl");
+    const decoded = decodeJournalFrames(bytes as Uint8Array);
+    expect(decoded.frames.map((entry) => entry.frame.revisionAfter)).toEqual([
+      1,
+    ]);
+    // The duplicate coalesced onto the pending append: only one frame was
+    // ever written.
+    expect(port.order.filter((step) => step.startsWith("append"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("a duplicate journal() call rejects when the pending append fails", async () => {
+    const port = new ScriptedJournalPort();
+    const harness = createJournal(port);
+    port.failNextAppend = true;
+    let release: (() => void) | undefined;
+    port.appendGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const input = {
+      revisionBefore: 0,
+      revisionAfter: 1,
+      transaction: { revision: 1 } as JsonValue,
+    };
+    const first = harness.journal.journal(input);
+    const duplicate = harness.journal.journal(input);
+    release?.();
+    await expect(first).rejects.toMatchObject({ code: "IO_DISK_FULL" });
+    await expect(duplicate).rejects.toMatchObject({ code: "IO_DISK_FULL" });
+    expect(harness.journal.isDegraded()).toBe(true);
+    expect(harness.journal.lastJournaledRevision()).toBeUndefined();
+    // The failure consumed one append attempt: the duplicate never issued
+    // its own write.
+    expect(port.order.filter((step) => step.startsWith("append"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("a duplicate journal() call joins an append queued behind an in-flight one", async () => {
+    const port = new ScriptedJournalPort();
+    const harness = createJournal(port);
+    let release: (() => void) | undefined;
+    port.appendGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = harness.journal.journal({
+      revisionBefore: 0,
+      revisionAfter: 1,
+      transaction: { revision: 1 } as JsonValue,
+    });
+    // The second append queues behind the gated first one; its duplicate
+    // must join that queued task instead of resolving early.
+    const second = harness.journal.journal({
+      revisionBefore: 1,
+      revisionAfter: 2,
+      transaction: { revision: 2 } as JsonValue,
+    });
+    const secondDuplicate = harness.journal.journal({
+      revisionBefore: 1,
+      revisionAfter: 2,
+      transaction: { revision: 2 } as JsonValue,
+    });
+    let secondSettled = false;
+    let duplicateSettled = false;
+    void second.then(
+      () => {
+        secondSettled = true;
+      },
+      () => {
+        secondSettled = true;
+      },
+    );
+    void secondDuplicate.then(
+      () => {
+        duplicateSettled = true;
+      },
+      () => {
+        duplicateSettled = true;
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(secondSettled).toBe(false);
+    expect(duplicateSettled).toBe(false);
+    release?.();
+    await Promise.all([first, second, secondDuplicate]);
+    expect(harness.journal.lastJournaledRevision()).toBe(2);
+    const bytes = await port.readJournal("project.vxl");
+    const decoded = decodeJournalFrames(bytes as Uint8Array);
+    expect(decoded.frames.map((entry) => entry.frame.revisionAfter)).toEqual([
+      1, 2,
+    ]);
+    // Two appends total: the queued duplicate coalesced and never wrote.
+    expect(port.order.filter((step) => step.startsWith("append"))).toHaveLength(
+      2,
+    );
   });
 
   it("retry never appends a duplicate frame after a complete unconfirmed write", async () => {

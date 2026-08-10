@@ -166,7 +166,9 @@ export interface RecoveryJournal {
    * Enqueues one committed transaction frame. Appends never overlap and
    * run in call order. Resolves when the frame is durable; rejects on
    * failure, but the record is retained and retried by `retry()` or by the
-   * next `journal()` call.
+   * next `journal()` call. A duplicate of a queued or in-flight frame
+   * joins that append and settles with it: it never resolves before the
+   * frame is confirmed durable (ticket #53).
    */
   journal(input: JournalAppendInput): Promise<void>;
   /** Re-attempts a failed append (after repairing any partial tail). */
@@ -568,13 +570,23 @@ function toJournalError(error: unknown, path: string): WorkspaceError {
   );
 }
 
-/** One queued append; the request stays queued after a durable-io failure. */
+/** One caller waiting on an append's durable success or failure. */
+interface AppendWaiter {
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+}
+
+/**
+ * One queued append; the request stays queued after a durable-io failure.
+ * Identical duplicate `journal()` calls coalesce onto the same pending
+ * append and settle with it, so no caller is told a frame is durable
+ * before the append confirms (ticket #53).
+ */
 interface PendingAppend {
   readonly bytes: Uint8Array;
   readonly revisionBefore: number;
   readonly revisionAfter: number;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
+  readonly waiters: AppendWaiter[];
 }
 
 /** One queued journal operation; appends, resets, compacts, and moves are serialized. */
@@ -685,13 +697,21 @@ class RecoveryJournalImpl implements RecoveryJournal {
     ) {
       return Promise.resolve();
     }
-    if (
-      this.#queue.some(
-        (task) =>
-          task.kind === "append" && bytesEqual(task.pending.bytes, frameBytes),
-      )
-    ) {
-      return Promise.resolve();
+    const queued = this.#queue.find(
+      (task) =>
+        task.kind === "append" && bytesEqual(task.pending.bytes, frameBytes),
+    );
+    if (queued !== undefined && queued.kind === "append") {
+      // The frame is already queued or in flight: coalesce this caller onto
+      // that append so the promise settles only with the confirmed append
+      // (ticket #53). Pump again in case a failed append is parked at the
+      // queue head awaiting an explicit retry; like a fresh `journal()`
+      // call, a duplicate call re-attempts it first.
+      const pending = queued.pending;
+      return new Promise<void>((resolve, reject) => {
+        pending.waiters.push({ resolve, reject });
+        this.#pump();
+      });
     }
     return new Promise<void>((resolve, reject) => {
       this.#queue.push({
@@ -700,8 +720,7 @@ class RecoveryJournalImpl implements RecoveryJournal {
           bytes: frameBytes,
           revisionBefore: input.revisionBefore,
           revisionAfter: input.revisionAfter,
-          resolve,
-          reject,
+          waiters: [{ resolve, reject }],
         },
       });
       this.#pump();
@@ -787,8 +806,11 @@ class RecoveryJournalImpl implements RecoveryJournal {
       { path: this.#projectPath },
     );
     for (const task of this.#queue.splice(0)) {
-      if (task.kind === "append") task.pending.reject(disposed);
-      else task.reject(disposed);
+      if (task.kind === "append") {
+        for (const waiter of task.pending.waiters) waiter.reject(disposed);
+      } else {
+        task.reject(disposed);
+      }
     }
     this.#listeners.clear();
   }
@@ -824,7 +846,9 @@ class RecoveryJournalImpl implements RecoveryJournal {
         this.#emit({ kind: "append-failed", error: outcome.error });
         if (atHead) {
           if (outcome.dropped) this.#queue.shift();
-          task.pending.reject(outcome.error);
+          for (const waiter of task.pending.waiters) {
+            waiter.reject(outcome.error);
+          }
         }
         if (!this.#disposed && outcome.dropped) this.#pump();
         return;
@@ -935,7 +959,7 @@ class RecoveryJournalImpl implements RecoveryJournal {
       this.#queue.shift();
     }
     this.#emit({ kind: "appended", revisionAfter: pending.revisionAfter });
-    pending.resolve();
+    for (const waiter of pending.waiters) waiter.resolve();
   }
 
   async #ensureRepair(projectPath: string): Promise<void> {
