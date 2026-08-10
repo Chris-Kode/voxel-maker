@@ -462,6 +462,40 @@ describe("RecoveryJournal", () => {
     );
   });
 
+  it("a duplicate journal() call after a failed append joins the parked task and retries it", async () => {
+    const port = new ScriptedJournalPort();
+    const harness = createJournal(port);
+    port.failNextAppend = true;
+    const input = {
+      revisionBefore: 0,
+      revisionAfter: 1,
+      transaction: { revision: 1 } as JsonValue,
+    };
+    const first = harness.journal.journal(input);
+    await expect(first).rejects.toMatchObject({ code: "IO_DISK_FULL" });
+    expect(harness.journal.isDegraded()).toBe(true);
+    expect(port.order.filter((step) => step.startsWith("append"))).toHaveLength(
+      1,
+    );
+    // The failed append is parked at the queue head; a later duplicate
+    // joins that parked task and re-attempts it instead of resolving early
+    // (the frame is still not durable).
+    const duplicate = harness.journal.journal(input);
+    await expect(duplicate).resolves.toBeUndefined();
+    expect(harness.journal.isDegraded()).toBe(false);
+    expect(harness.journal.lastJournaledRevision()).toBe(1);
+    // One retry append only: the duplicate coalesced onto the parked task
+    // and never issued its own write.
+    expect(port.order.filter((step) => step.startsWith("append"))).toHaveLength(
+      2,
+    );
+    const bytes = await port.readJournal("project.vxl");
+    const decoded = decodeJournalFrames(bytes as Uint8Array);
+    expect(decoded.frames.map((entry) => entry.frame.revisionAfter)).toEqual([
+      1,
+    ]);
+  });
+
   it("a duplicate journal() call joins an append queued behind an in-flight one", async () => {
     const port = new ScriptedJournalPort();
     const harness = createJournal(port);

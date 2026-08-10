@@ -849,6 +849,9 @@ class RecoveryJournalImpl implements RecoveryJournal {
           for (const waiter of task.pending.waiters) {
             waiter.reject(outcome.error);
           }
+          // Settled waiters are dead weight; drop them so a persistently
+          // failing append cannot accumulate unbounded duplicates.
+          task.pending.waiters.length = 0;
         }
         if (!this.#disposed && outcome.dropped) this.#pump();
         return;
