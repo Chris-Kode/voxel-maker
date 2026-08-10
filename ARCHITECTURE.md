@@ -168,7 +168,7 @@ Rules:
 | `AgentSession` | Context summary, budgets, base revision, tool state, cancellation | Agent runtime and preview only |
 | `FileService` | Open, atomic save, save-as, autosave, journal, recovery, and recent projects through scoped ports; prompts and pickers are injected (ticket #22) | External effects; never semantic mutation |
 
-Public reads return immutable snapshots, copies, or immutable accessors. A mutable `Uint16Array`, map, or record owned by authoritative state never escapes through a public interface.
+Public reads return immutable snapshots, copies, or immutable accessors. A mutable `Uint16Array`, map, or record owned by authoritative state never escapes through a public interface. The public `@voxel-maker/document` entrypoint exposes only the immutable read surface: `createDocumentStore` returns a `DocumentStoreRead` with no `stageVolume`/`commit` members and never hands out the write capability. The mutation surface (mutable store, staged-commit contract, minted capability) lives behind the `@voxel-maker/document/internal` integration subpath, which the root entrypoint never exports; ESLint and the package/app boundary check restrict the subpath to the command bus, the lifecycle coordinator, the headless and desktop composition roots, and monorepo fixture/test infrastructure (issue #91).
 
 ## Canonical semantic model
 

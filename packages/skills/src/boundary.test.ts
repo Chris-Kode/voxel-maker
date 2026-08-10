@@ -24,9 +24,9 @@ import {
 } from "./rig-motion-fixtures.js";
 import {
   canonicalAssetSemanticHash,
-  createDocumentStore,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   createPreviewRegistry,
   createPreviewSession,
@@ -331,7 +331,7 @@ describe("skill catalog removal (AC4, plan S14 boundary test)", () => {
     // ordinary preview seam (two labeled applies, two journal frames).
     const fixture = rigMotionFixtureById(RIG_MOTION_FIXTURE_IDS.bipedRig);
     expect(fixture).toBeDefined();
-    const handle = createDocumentStore({
+    const handle = createDocumentStoreHandle({
       document: fixture?.start as VoxelDocument,
     });
     const records: CommittedTransactionRecord[] = [];

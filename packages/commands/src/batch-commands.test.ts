@@ -10,10 +10,8 @@ import {
   createDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import {
-  createDocumentStore,
-  type DocumentStoreRead,
-} from "@voxel-maker/document";
+import { type DocumentStoreRead } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
 import { registerVoxelCommands, setVoxelCommand } from "./voxel-commands.js";
@@ -105,7 +103,7 @@ function createHarness(): {
   bus: CommandBus;
   store: DocumentStoreRead;
 } {
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: createBatchDocument(),
   });
   const registry = new CommandRegistry();
@@ -312,7 +310,7 @@ describe("voxel.replaceMaterial", () => {
 
 describe("voxel.fillBox boundary voxels", () => {
   it("fills the boundary voxel with a half-open region ending at max+1", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createBatchDocument(),
       limits: {
         ...DEFAULT_DOCUMENT_LIMITS,

@@ -1,9 +1,9 @@
 import { CommandBus } from "@voxel-maker/commands";
 import {
   canonicalAssetSemanticHash,
-  type DocumentStoreHandle,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import { type DocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   estimateCostUsd,
   resolveAgentBudgets,

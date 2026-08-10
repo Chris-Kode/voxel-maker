@@ -64,7 +64,7 @@ describe("evaluateAnimationRuntime", () => {
 
   it("lays animation over base transforms without touching the document", () => {
     const document = createAnimatedWheelDocument();
-    const { store } = createDocumentStore({ document });
+    const store = createDocumentStore({ document });
     const frozen = store.getDocument();
     const runtime = evaluateAnimationRuntime(
       frozen,

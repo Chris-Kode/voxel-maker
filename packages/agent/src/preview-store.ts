@@ -7,10 +7,12 @@ import type { Vec3i } from "@voxel-maker/math";
 import { validateDocument, type VoxelDocument } from "@voxel-maker/model";
 import type {
   DocumentCommitted,
-  DocumentStore,
   DocumentStoreRead,
-  StagedState,
 } from "@voxel-maker/document";
+import type {
+  DocumentStore,
+  StagedState,
+} from "@voxel-maker/document/internal";
 import {
   VoxelVolume,
   type VoxelVolumeReadView,

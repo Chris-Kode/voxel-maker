@@ -1,5 +1,8 @@
 import type { RecoverySessionId } from "@voxel-maker/shared";
-import { createDocumentStore, type DocumentStore } from "@voxel-maker/document";
+import {
+  createDocumentStoreHandle,
+  type DocumentStore,
+} from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -346,7 +349,7 @@ function installRecovered(
   readonly writeCapability: VoxelWriteCapability;
   readonly bus: CommandBus;
 } {
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: loaded.document,
     volumes: new Map(
       [...loaded.volumes.entries()].map(([id, volume]) => [id, volume.chunks]),

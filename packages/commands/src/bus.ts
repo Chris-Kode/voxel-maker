@@ -14,11 +14,8 @@ import {
   type VolumeId,
 } from "@voxel-maker/shared";
 import type { IntAabb, Vec3i } from "@voxel-maker/math";
-import type {
-  ChangedVolume,
-  DocumentCommitted,
-  DocumentStore,
-} from "@voxel-maker/document";
+import type { ChangedVolume, DocumentCommitted } from "@voxel-maker/document";
+import type { DocumentStore } from "@voxel-maker/document/internal";
 import type { VoxelDocument } from "@voxel-maker/model";
 import {
   VoxelVolume,

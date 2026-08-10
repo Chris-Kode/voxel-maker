@@ -65,3 +65,53 @@ test("the package graph rejects unsupported edges and cycles", async () => {
     "math may not import editor",
   ]);
 });
+
+test("the document internal mutation surface is gated to integration packages", async () => {
+  const internalImport = 'import "@voxel-maker/document/internal";\n';
+  const root = await workspace({
+    commands: {
+      dependencies: { "@voxel-maker/document": "workspace:*" },
+      source: internalImport,
+    },
+    animation: {
+      dependencies: { "@voxel-maker/document": "workspace:*" },
+      source: internalImport,
+    },
+  });
+  assert.deepEqual(await inspectBoundaries(root), [
+    "animation uses forbidden deep import @voxel-maker/document/internal",
+  ]);
+});
+
+test("allowlisted integration packages may use the internal mutation surface", async () => {
+  const root = await workspace({
+    commands: {
+      dependencies: { "@voxel-maker/document": "workspace:*" },
+      source: 'import "@voxel-maker/document/internal";\n',
+    },
+    formats: {
+      dependencies: { "@voxel-maker/document": "workspace:*" },
+      source: 'import "@voxel-maker/document";\n',
+    },
+  });
+  assert.deepEqual(await inspectBoundaries(root), []);
+});
+
+test("apps are scanned for the deep-import rule and composition roots are allowlisted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "voxel-boundaries-apps-"));
+  for (const [app, source] of [
+    ["headless", 'import "@voxel-maker/document/internal";\n'],
+    ["desktop", 'import "@voxel-maker/document/internal";\n'],
+    ["web", 'import "@voxel-maker/shared/internal";\n'],
+  ]) {
+    await mkdir(join(root, `apps/${app}/src`), { recursive: true });
+    await writeFile(
+      join(root, `apps/${app}/package.json`),
+      JSON.stringify({ name: `@voxel-maker/${app}` }),
+    );
+    await writeFile(join(root, `apps/${app}/src/index.ts`), source);
+  }
+  assert.deepEqual(await inspectBoundaries(root), [
+    "web uses forbidden deep import @voxel-maker/shared/internal",
+  ]);
+});

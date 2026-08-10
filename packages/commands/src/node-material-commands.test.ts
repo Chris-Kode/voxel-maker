@@ -8,7 +8,7 @@ import {
   volumeId,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
 import {
@@ -128,9 +128,9 @@ function createBehaviorDocument(): VoxelDocument {
 
 function createHarness(): {
   bus: CommandBus;
-  store: ReturnType<typeof createDocumentStore>["store"];
+  store: ReturnType<typeof createDocumentStoreHandle>["store"];
 } {
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: createBehaviorDocument(),
   });
   const registry = new CommandRegistry();
@@ -148,7 +148,7 @@ const options = (id: string, expectedRevision: number) => ({
 });
 
 const node = (
-  store: ReturnType<typeof createDocumentStore>["store"],
+  store: ReturnType<typeof createDocumentStoreHandle>["store"],
   id: string,
 ) => store.getDocument().nodes[id as never];
 
@@ -310,9 +310,11 @@ describe("node commands", () => {
         },
       ],
     });
-    const { store: animatedStore, writeCapability } = createDocumentStore({
-      document: animatedDoc,
-    });
+    const { store: animatedStore, writeCapability } = createDocumentStoreHandle(
+      {
+        document: animatedDoc,
+      },
+    );
     const registry = new CommandRegistry();
     registerNodeCommands(registry);
     const animatedBus = new CommandBus(
@@ -417,7 +419,7 @@ describe("node commands", () => {
       materials: [],
       volumes: [],
     });
-    const { store, writeCapability } = createDocumentStore({ document });
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
     const registry = new CommandRegistry();
     registerNodeCommands(registry);
     const bus = new CommandBus(store, registry, writeCapability);
@@ -446,7 +448,7 @@ describe("node commands", () => {
   });
 
   it("undo of reparent restores the exact children order", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDocument({
         documentId: "document:behavior:0003" as never,
         rootNodeId: ROOT,
@@ -713,7 +715,7 @@ describe("node commands", () => {
   });
 
   it("enforces the node count limit", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createBehaviorDocument(),
       limits: {
         maxNodes: 3,
@@ -914,7 +916,7 @@ describe("material commands", () => {
   });
 
   it("enforces the material count limit", () => {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createBehaviorDocument(),
       limits: {
         maxNodes: 10000,

@@ -16,7 +16,7 @@ import {
   type Vec3,
 } from "@voxel-maker/math";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -188,14 +188,14 @@ const xRotateRay = (dy: number, dz: number): CameraRay => {
 
 interface Harness {
   bus: CommandBus;
-  store: ReturnType<typeof createDocumentStore>["store"];
+  store: ReturnType<typeof createDocumentStoreHandle>["store"];
   tool: NodeTransformTool;
   setRay: (ray: CameraRay | undefined) => void;
   notices: string[];
 }
 
 function createHarness(selection: readonly SelectionEntry[]): Harness {
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: createDemoDocument(),
     volumes: seedVolume(),
   });

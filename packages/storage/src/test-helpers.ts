@@ -8,13 +8,13 @@ import {
 } from "@voxel-maker/shared";
 import type { Vec3i } from "@voxel-maker/math";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
+import { type DocumentCommitted } from "@voxel-maker/document";
 import {
-  createDocumentStore,
-  type DocumentCommitted,
+  createDocumentStoreHandle,
   type DocumentStore,
   type DocumentStoreHandle,
   type StagedState,
-} from "@voxel-maker/document";
+} from "@voxel-maker/document/internal";
 import { WorkspaceError } from "@voxel-maker/shared";
 import { MemoryProjectStorage } from "./memory-storage.js";
 import type {
@@ -77,7 +77,7 @@ export function createDemoDocument(): VoxelDocument {
 }
 
 export function createStore(): DocumentStoreHandle {
-  return createDocumentStore({ document: createDemoDocument() });
+  return createDocumentStoreHandle({ document: createDemoDocument() });
 }
 
 /** Commits one voxel write as a new transaction (revision + 1). */

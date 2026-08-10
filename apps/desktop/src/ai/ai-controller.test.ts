@@ -25,7 +25,7 @@ import {
   createSaveCoordinator,
   createVxlProjectEncoder,
 } from "@voxel-maker/storage";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   createConsent,
   createImageConsent,
@@ -381,7 +381,9 @@ describe("ai controller: save and reload retain rig/clip guarantees (AC)", () =>
     const storage = new MemoryProjectStorage();
     // Seed a project file so the file service binds the session to it
     // (the save path requires a file-bound session).
-    const seedHandle = createDocumentStore({ document: fixtureDocument() });
+    const seedHandle = createDocumentStoreHandle({
+      document: fixtureDocument(),
+    });
     const seedCoordinator = createSaveCoordinator({
       store: seedHandle.store,
       port: storage,

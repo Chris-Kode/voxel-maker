@@ -1,9 +1,9 @@
 import type {
   DocumentCommitted,
-  DocumentStoreHandle,
   DocumentStoreRead,
 } from "@voxel-maker/document";
-import { createDocumentStore } from "@voxel-maker/document";
+import type { DocumentStoreHandle } from "@voxel-maker/document/internal";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   commandId,
   documentId,
@@ -243,7 +243,7 @@ export function createChairStore(withArmrest = false): {
   readonly store: DocumentStoreRead;
   readonly handle: DocumentStoreHandle;
 } {
-  const handle = createDocumentStore({
+  const handle = createDocumentStoreHandle({
     document: createChairDocument(withArmrest),
   });
   commitFixtureVoxels(
@@ -262,7 +262,7 @@ export function createEmptyScaffoldStore(): {
   readonly store: DocumentStoreRead;
   readonly handle: DocumentStoreHandle;
 } {
-  const handle = createDocumentStore({
+  const handle = createDocumentStoreHandle({
     document: createEmptyScaffoldDocument(),
   });
   return { store: handle.store, handle };

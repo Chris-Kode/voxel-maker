@@ -1,10 +1,12 @@
 import {
   canonicalAssetSemanticHash,
-  createDocumentStore,
   type DocumentCommitted,
+} from "@voxel-maker/document";
+import {
+  createDocumentStoreHandle,
   type DocumentStore,
   type DocumentStoreHandle,
-} from "@voxel-maker/document";
+} from "@voxel-maker/document/internal";
 import type { Vec3i } from "@voxel-maker/math";
 import type { VoxelVolumeReadView } from "@voxel-maker/voxel";
 import {
@@ -236,7 +238,7 @@ export function createBenchmarkFixture(
       },
     ],
   });
-  const handle = createDocumentStore({ document });
+  const handle = createDocumentStoreHandle({ document });
   const { store, writeCapability } = handle;
   const staged = store.stageVolume(ids.volumeId);
   if (staged === undefined) throw new Error("benchmark volume missing");

@@ -17,10 +17,8 @@ import {
   createDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import {
-  canonicalAssetSemanticHash,
-  createDocumentStore,
-} from "@voxel-maker/document";
+import { canonicalAssetSemanticHash } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -79,7 +77,7 @@ const EXTRA = nodeId("node:demo:persist:extra");
  */
 export async function runPersistenceTrace(): Promise<string> {
   const document = createPersistenceDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerBatchCommands(registry);
@@ -194,7 +192,7 @@ export async function runPersistenceTrace(): Promise<string> {
 
   // Validated lifecycle replacement: reinstall into a fresh store.
   const { store: reloadedStore, writeCapability: reloadedWriteCapability } =
-    createDocumentStore({
+    createDocumentStoreHandle({
       document: loaded.document,
       volumes: new Map(
         [...loaded.volumes.entries()].map(([id, volume]) => [

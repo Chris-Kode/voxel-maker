@@ -31,7 +31,10 @@ import {
   type CommittedTransactionRecord,
 } from "@voxel-maker/commands";
 import type { CommandRegistryRegistrar } from "@voxel-maker/session";
-import { createDocumentStore, type DocumentStore } from "@voxel-maker/document";
+import {
+  createDocumentStoreHandle,
+  type DocumentStore,
+} from "@voxel-maker/document/internal";
 import {
   captureRevisionSnapshot,
   createRecoveryJournal,
@@ -136,7 +139,7 @@ function createFixtureStore(): {
   bus: CommandBus;
 } {
   const document = buildDocument("lifecycle-fixture");
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   for (const register of REGISTRARS) register(registry);
   const records: CommittedTransactionRecord[] = [];

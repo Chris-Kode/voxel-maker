@@ -155,7 +155,7 @@ function createStoreWithoutMaterialRecords(): DocumentStoreRead {
     });
   // The installed store must be valid (material 1 declared); the projection
   // handed to the renderer drops the record to exercise the fallback.
-  const { store } = createDocumentStore({
+  const store = createDocumentStore({
     document: buildDocument([
       { materialId: 1, name: "stone", color: "#aabbcc" },
     ]),
@@ -274,7 +274,7 @@ function createAlignedDepthStore(
       [nearVolume, [{ coordinate: [0, 0, 0], values: nearValues }]],
       [farVolume, [{ coordinate: [0, 0, 0], values: farValues }]],
     ]),
-  }).store;
+  });
 }
 
 describe("renderStandardPreview", () => {

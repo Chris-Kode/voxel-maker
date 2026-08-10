@@ -12,7 +12,7 @@ import {
   createDocument,
   type VoxelDocument,
 } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -77,7 +77,7 @@ function baseDocument(): VoxelDocument {
 }
 
 function harness(document: VoxelDocument = baseDocument()) {
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerBatchCommands(registry);

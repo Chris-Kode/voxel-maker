@@ -8,10 +8,10 @@ import {
 import { canonicalDocumentHash } from "@voxel-maker/model";
 import {
   canonicalAssetSemanticHash,
-  createDocumentStore,
   type DocumentCommitted,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   createChunkHalo,
   createChunkScheduler,
@@ -473,7 +473,8 @@ function installLoaded(loaded: LoadedVxlProject): DocumentStoreRead {
   for (const [id, volume] of loaded.volumes) {
     volumes.set(id, volume.chunks);
   }
-  return createDocumentStore({ document: loaded.document, volumes }).store;
+  return createDocumentStoreHandle({ document: loaded.document, volumes })
+    .store;
 }
 
 /**
@@ -596,7 +597,7 @@ export function measureAnimationScale(
   // Playback integrity is evidenced through the REAL session seams: the
   // store and command bus observe every evaluation, so revision and
   // history growth would be caught (ADR-0006: playback never writes).
-  const handle = createDocumentStore({ document });
+  const handle = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   const bus = new CommandBus(handle.store, registry, handle.writeCapability);
   const revisionBefore = handle.store.revision;

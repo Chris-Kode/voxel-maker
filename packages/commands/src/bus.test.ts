@@ -6,7 +6,7 @@ import {
   volumeId,
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import type { TransactionOptions } from "./types.js";
 import { CommandRegistry } from "./registry.js";
@@ -69,9 +69,9 @@ const VOLUME = volumeId("volume:bus:0001");
 
 function createBus(limits?: ConstructorParameters<typeof CommandBus>[3]): {
   bus: CommandBus;
-  store: ReturnType<typeof createDocumentStore>["store"];
+  store: ReturnType<typeof createDocumentStoreHandle>["store"];
 } {
-  const { store, writeCapability } = createDocumentStore({
+  const { store, writeCapability } = createDocumentStoreHandle({
     document: createDemoDocument(),
   });
   const registry = new CommandRegistry();
@@ -602,10 +602,10 @@ describe("undo and redo", () => {
 describe("CommandBus.revoke", () => {
   function createHookedBus(): {
     bus: CommandBus;
-    store: ReturnType<typeof createDocumentStore>["store"];
+    store: ReturnType<typeof createDocumentStoreHandle>["store"];
     records: Array<{ revisionAfter: number; transactionId: string }>;
   } {
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: createDemoDocument(),
     });
     const registry = new CommandRegistry();

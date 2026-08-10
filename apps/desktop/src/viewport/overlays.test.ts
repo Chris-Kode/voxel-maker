@@ -107,7 +107,7 @@ function buildStore(boxComponents?: readonly Component[]): DocumentStoreRead {
     ],
     volumes: [{ volumeId: VOLUME, bounds: { min: [0, 0, 0], max: [5, 5, 5] } }],
   });
-  const { store } = createDocumentStore({
+  const store = createDocumentStore({
     document,
     volumes: new Map([[VOLUME, boxSeeds()]]),
   });

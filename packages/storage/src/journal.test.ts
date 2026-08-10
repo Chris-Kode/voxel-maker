@@ -14,7 +14,7 @@ import {
 import { createVxlProjectEncoder } from "./encoder.js";
 import { MemoryProjectStorage } from "./memory-storage.js";
 import type { ProjectStoragePort, RecoveryJournalPort } from "./port.js";
-import type { DocumentStoreHandle } from "@voxel-maker/document";
+import type { DocumentStoreHandle } from "@voxel-maker/document/internal";
 import { commitVoxel, createStore, VOLUME } from "./test-helpers.js";
 
 const SESSION = recoverySessionId("session:journal:test:0001");

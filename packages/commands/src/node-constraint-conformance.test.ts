@@ -21,7 +21,7 @@ import {
   registerNodeCommands,
   setNodeComponentsCommand,
 } from "./node-commands.js";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   NODE_ADD_CONSTRAINT_COMMAND,
   NODE_REMOVE_CONSTRAINT_COMMAND,
@@ -110,7 +110,7 @@ const fixture = buildFixtureDocument();
 const createFixture = (): VoxelDocument => cloneDocument(fixture);
 
 const createDocumentStoreFor = () =>
-  createDocumentStore({ document: createFixture() });
+  createDocumentStoreHandle({ document: createFixture() });
 
 const nodeRecord = (store: DocumentStoreRead, id: string) =>
   store.getDocument().nodes[id as never];

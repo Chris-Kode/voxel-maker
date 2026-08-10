@@ -17,7 +17,7 @@ import {
   registerBatchCommands,
   registerVoxelCommands,
 } from "@voxel-maker/commands";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { MemoryProjectStorage } from "@voxel-maker/storage";
 import { writeVxlProject } from "@voxel-maker/formats";
 import {
@@ -99,7 +99,7 @@ function buildFixtureProject(filled = true): Uint8Array {
       },
     ],
   });
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   if (filled) {
     const registry = new CommandRegistry();
     registerVoxelCommands(registry);

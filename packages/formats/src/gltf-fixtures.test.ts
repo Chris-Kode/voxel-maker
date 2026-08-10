@@ -65,7 +65,7 @@ interface Corpus {
 /** Rebuilds the session store from the retained document and volume JSON. */
 async function rebuildStore(
   entry: CorpusGolden,
-): Promise<ReturnType<typeof createDocumentStore>["store"]> {
+): Promise<ReturnType<typeof createDocumentStore>> {
   const document = parseDocument(
     await readFile(new URL(entry.documentJson, CORPUS_DIR), "utf8"),
   );
@@ -92,7 +92,7 @@ async function rebuildStore(
     }
     volumes.set(volumeId(id), [...chunks.values()]);
   }
-  return createDocumentStore({ document, volumes }).store;
+  return createDocumentStore({ document, volumes });
 }
 
 /** Independent GLB reader: header, chunks, and structural counts. */

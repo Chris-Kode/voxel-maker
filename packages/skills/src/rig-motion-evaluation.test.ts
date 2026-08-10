@@ -5,9 +5,9 @@ import {
 } from "@voxel-maker/commands";
 import {
   canonicalAssetSemanticHash,
-  createDocumentStore,
   type DocumentStoreRead,
 } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   createPreviewRegistry,
   createPreviewSession,
@@ -57,7 +57,7 @@ function fixtureOf(skill: SkillManifest): RigMotionFixture {
 }
 
 function storeOf(document: RigMotionFixture["end"]): DocumentStoreRead {
-  return createDocumentStore({ document }).store;
+  return createDocumentStoreHandle({ document }).store;
 }
 
 function runChecks(
@@ -231,7 +231,7 @@ describe("recorded golden traces apply through the preview seam (AC3/AC4)", () =
       );
 
       const records: CommittedTransactionRecord[] = [];
-      const handle = createDocumentStore({ document: fixture.start });
+      const handle = createDocumentStoreHandle({ document: fixture.start });
       const bus = new CommandBus(
         handle.store,
         createPreviewRegistry(),
@@ -288,7 +288,7 @@ describe("recorded golden traces apply through the preview seam (AC3/AC4)", () =
       );
 
       const records: CommittedTransactionRecord[] = [];
-      const handle = createDocumentStore({ document: fixture.start });
+      const handle = createDocumentStoreHandle({ document: fixture.start });
       const bus = new CommandBus(
         handle.store,
         createPreviewRegistry(),

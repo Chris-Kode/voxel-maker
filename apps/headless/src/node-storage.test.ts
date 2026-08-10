@@ -14,7 +14,7 @@ import {
   type AtomicWriteResult,
   type ProjectStoragePort,
 } from "@voxel-maker/storage";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { createDocument } from "@voxel-maker/model";
 import {
   commandId,
@@ -331,7 +331,9 @@ describe("NodeProjectStorage real filesystem behavior", () => {
           { volumeId: volume, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
         ],
       });
-      const { store, writeCapability } = createDocumentStore({ document });
+      const { store, writeCapability } = createDocumentStoreHandle({
+        document,
+      });
       const inner = new NodeProjectStorage();
       const gated = new GatedWritePort(inner);
       const coordinator = createSaveCoordinator({

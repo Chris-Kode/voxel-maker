@@ -10,9 +10,9 @@ import {
 } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import {
-  createDocumentStore,
+  createDocumentStoreHandle,
   type DocumentStoreHandle,
-} from "@voxel-maker/document";
+} from "@voxel-maker/document/internal";
 import {
   mapVoxImport,
   planVoxExport,
@@ -191,7 +191,7 @@ function storeWithVolumes(
     }
     seeds.set(volumeIdValue, [...chunks.values()]);
   }
-  return createDocumentStore({ document, volumes: seeds });
+  return createDocumentStoreHandle({ document, volumes: seeds });
 }
 
 const ROOT = nodeId("node:export:root");

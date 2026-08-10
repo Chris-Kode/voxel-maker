@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { materialId, nodeId, transactionId } from "@voxel-maker/shared";
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -68,7 +68,7 @@ describe("VOX round trip through the interchange service", () => {
       materials: [],
       volumes: [],
     });
-    const { store, writeCapability } = createDocumentStore({ document });
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
     const registry = new CommandRegistry();
     registerVoxelCommands(registry);
     registerBatchCommands(registry);

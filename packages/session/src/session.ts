@@ -5,10 +5,8 @@ import {
   type JsonValue,
   type VolumeId,
 } from "@voxel-maker/shared";
-import {
-  createDocumentStore,
-  type DocumentStoreRead,
-} from "@voxel-maker/document";
+import { type DocumentStoreRead } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -246,7 +244,7 @@ class DocumentSessionImpl implements DocumentSession {
     // createDocumentStore fully validates the aggregate and installs copied
     // chunk seeds under every hard limit, so an invalid load can never
     // produce a partial session (plan S5.3/S5.15).
-    const { store, writeCapability } = createDocumentStore({
+    const { store, writeCapability } = createDocumentStoreHandle({
       document: input.document,
       ...(input.volumes === undefined ? {} : { volumes: input.volumes }),
     });

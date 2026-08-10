@@ -34,7 +34,7 @@ import {
   type AnimationRuntimeState,
 } from "@voxel-maker/animation";
 import { chunkCoordinate, localCoordinate } from "@voxel-maker/voxel";
-import { createDocumentStore } from "@voxel-maker/document";
+import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import {
   CommandBus,
   CommandRegistry,
@@ -125,7 +125,7 @@ const DEMO_COORDINATE = [-1, 0, 1] as const;
  */
 export function runHeadlessTrace(): string {
   const document = createDemoDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerVoxelCommands(registry);
   registerNodeCommands(registry);
@@ -303,7 +303,7 @@ export function runHeadlessTrace(): string {
  */
 export function runAnimationTrace(): string {
   const document = createAnimatedWheelDocument();
-  const { store, writeCapability } = createDocumentStore({ document });
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
   const registry = new CommandRegistry();
   registerNodeCommands(registry);
   registerAnimationCommands(registry);
