@@ -19,6 +19,7 @@ import {
   materialId,
   nodeId,
   trackId,
+  type JsonValue,
   volumeId,
 } from "@voxel-maker/shared";
 
@@ -210,6 +211,29 @@ describe("canonicalDocumentJson", () => {
     });
     expect(canonicalDocumentJson(document)).toBe(
       '{"animations":{},"documentId":"document:golden:0001","documentSchemaVersion":1,"materials":{},"metadata":{"a":[1,2],"b":2},"nodes":{"node:golden:root":{"children":[],"components":[{"kind":"voxel","schemaVersion":1,"volumeId":"volume:golden:0001"},{"kind":"joint","schemaVersion":1}],"nodeId":"node:golden:root","parentId":null,"transform":{"pivot":[0,0,0],"rotation":[0.7071067811865476,0,0,0.7071067811865476],"scale":[1,2,3],"translation":[1.5,0,0]}}},"revision":3,"rootNodeId":"node:golden:root","volumes":{"volume:golden:0001":{"volumeId":"volume:golden:0001"}}}',
+    );
+  });
+
+  it("defensively rejects sparse metadata arrays with a stable error", () => {
+    const document = baseDocument();
+    const sparse = new Array(2);
+    sparse[1] = 1;
+    const mutated = { ...document, metadata: { sparse } };
+    expect(() => canonicalDocumentJson(mutated)).toThrowError(
+      /cannot contain holes/u,
+    );
+  });
+
+  it("defensively rejects metadata slots that are not JSON values", () => {
+    const document = baseDocument();
+    const mutated = {
+      ...document,
+      metadata: {
+        list: [0, undefined, 2] as unknown as readonly JsonValue[],
+      },
+    };
+    expect(() => canonicalDocumentJson(mutated)).toThrowError(
+      /only JSON values/u,
     );
   });
 

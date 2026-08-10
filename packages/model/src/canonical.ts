@@ -156,9 +156,34 @@ function serializeJsonValue(value: JsonValue, seen: Set<object>): string {
     }
     seen.add(value);
     const items = value as readonly JsonValue[];
-    const parts = items.map((item) => serializeJsonValue(item, seen));
+    const parts: string[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+      if (!(index in items)) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "SPARSE_ARRAY",
+          message: "Canonical JSON cannot contain holes in arrays",
+        });
+      }
+      const item = items[index];
+      if (item === undefined) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "INVALID_METADATA",
+          message: "Metadata must contain only JSON values",
+        });
+      }
+      parts.push(serializeJsonValue(item, seen));
+    }
     seen.delete(value);
     return `[${parts.join(",")}]`;
+  }
+  if (typeof value !== "object") {
+    throw new WorkspaceError({
+      family: "validation",
+      code: "INVALID_METADATA",
+      message: "Metadata must contain only JSON values",
+    });
   }
   return serializeMetadata(value as MetadataRecord, seen);
 }

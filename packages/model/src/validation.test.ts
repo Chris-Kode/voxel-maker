@@ -786,6 +786,48 @@ describe("validateDocument", () => {
       ).toEqual(["nodes", "node:test:child", "metadata", "value"]);
     });
 
+    it("rejects sparse metadata arrays with a stable code and path", () => {
+      const document = buildDocument();
+      const sparse = new Array(2);
+      sparse[1] = 1;
+      document.metadata = { sparse };
+      const issue = expectSingleCode(document, "SPARSE_ARRAY");
+      expect(issue.family).toBe("validation");
+      expect(issue.path).toEqual(["metadata", "sparse", 0]);
+
+      const document2 = buildDocument();
+      const nodes2 = document2.nodes as Record<string, unknown>;
+      (nodes2["node:test:child"] as Record<string, unknown>).metadata = {
+        list: [0, 1, 2, 3],
+      };
+      const list = (nodes2["node:test:child"] as Record<string, unknown>)
+        .metadata as Record<string, unknown>;
+      const sparseNested = new Array(4);
+      sparseNested[2] = "kept";
+      list.list = sparseNested;
+      expect(expectSingleCode(document2, "SPARSE_ARRAY").path).toEqual([
+        "nodes",
+        "node:test:child",
+        "metadata",
+        "list",
+        0,
+      ]);
+    });
+
+    it("rejects metadata slots that are not JSON values", () => {
+      const document = buildDocument();
+      document.metadata = { list: [0, undefined, 2] };
+      const issue = expectSingleCode(document, "INVALID_METADATA");
+      expect(issue.path).toEqual(["metadata", "list", 1]);
+    });
+
+    it("reports an over-limit metadata array at the array path without walking it", () => {
+      const document = buildDocument();
+      document.metadata = { big: new Array(10_001) };
+      const issue = expectSingleCode(document, "LIMIT_EXCEEDED");
+      expect(issue.path).toEqual(["metadata", "big"]);
+    });
+
     it("honors injected limits", () => {
       const limits: DocumentLimits = {
         maxNodes: 1,

@@ -68,15 +68,36 @@ function copyJson(
     });
   }
   seen.add(value);
-  const items = value as readonly JsonValue[];
-  const copied = Array.isArray(value)
-    ? items.map((item) => copyJson(item, seen, depth + 1))
-    : Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [
-          key,
-          copyJson(item, seen, depth + 1),
-        ]),
-      );
+  if (Array.isArray(value)) {
+    const items = value as readonly JsonValue[];
+    const copied: JsonValue[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+      if (!(index in items)) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "SPARSE_ARRAY",
+          message: "Metadata arrays cannot contain holes",
+        });
+      }
+      const item = items[index];
+      if (item === undefined) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "INVALID_METADATA",
+          message: "Metadata must contain only JSON values",
+        });
+      }
+      copied.push(copyJson(item, seen, depth + 1));
+    }
+    seen.delete(value);
+    return copied;
+  }
+  const copied = Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      copyJson(item, seen, depth + 1),
+    ]),
+  );
   seen.delete(value);
   return copied;
 }
