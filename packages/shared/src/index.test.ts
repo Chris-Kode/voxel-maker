@@ -7,6 +7,7 @@ import {
   createListenerSet,
   commandId,
   componentId,
+  documentId,
   err,
   keyframeId,
   materialId,
@@ -14,6 +15,8 @@ import {
   ok,
   recoverySessionId,
   trackId,
+  transactionId,
+  volumeId,
 } from "./index.js";
 
 describe("shared contracts", () => {
@@ -42,6 +45,77 @@ describe("shared contracts", () => {
     expect(materialId(65_535)).toBe(65_535);
     expect(() => materialId(0)).toThrow(/1 through 65535/u);
     expect(() => materialId(1.5)).toThrow(/1 through 65535/u);
+  });
+
+  function expectInvalidIdError(
+    parse: (value: unknown) => unknown,
+    name: string,
+    inputLabel: string,
+    input: unknown,
+    code: string,
+  ): void {
+    try {
+      parse(input);
+      expect.unreachable(`expected ${name}(${inputLabel}) to throw`);
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkspaceError);
+      expect(JSON.parse(JSON.stringify(error))).toMatchObject({
+        family: "validation",
+        code,
+      });
+    }
+  }
+
+  it("rejects non-string opaque IDs with a serializable INVALID_ID error", () => {
+    const parsers: Array<[string, (value: unknown) => unknown]> = [
+      ["animationId", animationId],
+      ["commandId", commandId],
+      ["componentId", componentId],
+      ["documentId", documentId],
+      ["keyframeId", keyframeId],
+      ["nodeId", nodeId],
+      ["recoverySessionId", recoverySessionId],
+      ["trackId", trackId],
+      ["transactionId", transactionId],
+      ["volumeId", volumeId],
+    ];
+    const invalidInputs: Array<[string, unknown]> = [
+      ["42", 42],
+      ["null", null],
+      ["true", true],
+      ["{}", {}],
+      ["undefined", undefined],
+      ["1n", 1n],
+      ['Symbol("s")', Symbol("s")],
+    ];
+    for (const [name, parse] of parsers) {
+      for (const [label, invalid] of invalidInputs) {
+        expectInvalidIdError(parse, name, label, invalid, "INVALID_ID");
+      }
+    }
+  });
+
+  it("rejects non-number material IDs with a serializable INVALID_MATERIAL_ID error", () => {
+    const invalidInputs: Array<[string, unknown]> = [
+      ["1n", 1n],
+      ['"5"', "5"],
+      ["true", true],
+      ["null", null],
+      ["{}", {}],
+      ["undefined", undefined],
+      ['Symbol("m")', Symbol("m")],
+      ["NaN", NaN],
+      ["Infinity", Infinity],
+    ];
+    for (const [label, invalid] of invalidInputs) {
+      expectInvalidIdError(
+        materialId,
+        "materialId",
+        label,
+        invalid,
+        "INVALID_MATERIAL_ID",
+      );
+    }
   });
 
   it("rejects nesting bombs with a structured limit error, not a stack overflow", () => {
