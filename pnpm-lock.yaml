@@ -110,6 +110,9 @@ importers:
       '@voxel-maker/benchmarks':
         specifier: workspace:*
         version: link:../../packages/benchmarks
+      '@voxel-maker/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
     devDependencies:
       typescript:
         specifier: 'catalog:'

@@ -6,12 +6,16 @@ import {
   type BenchmarkSceneKind,
 } from "./fixtures.js";
 import {
+  QUALIFICATION_MIN_ANIMATION_FRAMES,
+  QUALIFICATION_MIN_SAMPLES,
+  QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   detectHardware,
   evaluateGates,
   resolveTier,
   summarizeGates,
   type GateResult,
 } from "./gates.js";
+import { WorkspaceError } from "@voxel-maker/shared";
 import {
   collectGarbage,
   measureAnimationScale,
@@ -70,6 +74,117 @@ export interface BenchmarkRunOutcome {
   readonly gatesPass: boolean;
 }
 
+/**
+ * The effective fixture/sample matrix of one invocation (defaults
+ * applied), validated against the resolved tier before any measurement
+ * (issue #72).
+ */
+export interface QualificationMatrix {
+  readonly sizes: readonly number[];
+  readonly kinds: readonly BenchmarkSceneKind[];
+  readonly samples: number;
+  readonly saveLoadRuns: number;
+  readonly animationFrames: number;
+}
+
+/**
+ * Stable error code of the pre-flight qualification rejection (issue
+ * #72): a named-tier invocation whose fixture/sample matrix cannot
+ * produce protocol-compliant evidence for every mandatory gate. The
+ * code is part of the CLI contract, so tests and scripts assert on the
+ * exported constant instead of a literal string.
+ */
+export const INCOMPLETE_BENCHMARK_MATRIX = "INCOMPLETE_BENCHMARK_MATRIX";
+
+/**
+ * Required fixture matrix per tier (ADR-0008, issue #72). The named
+ * reference tier qualifies the full 100k/500k/1M matrix in all three
+ * surface classes; the named low tier qualifies the 100k interactive
+ * target (the 1M fixture is a reference-tier viewability gate, not a
+ * low-tier promise). The ci-smoke tier is explicitly non-qualifying:
+ * it never constrains the matrix, so exploratory and CI smoke runs stay
+ * possible with any fixture/sample selection.
+ */
+export interface TierMatrixRequirement {
+  /** Sizes a named-tier qualification must measure. */
+  readonly sizes: readonly number[];
+  /** Kinds a named-tier qualification must measure. */
+  readonly kinds: readonly BenchmarkSceneKind[];
+  /** Minimum latency samples per p95 gate (ADR-0008: >= 100). */
+  readonly minSamples: number;
+  /** Minimum save/load repetitions (ADR-0008: five runs). */
+  readonly minSaveLoadRuns: number;
+  /** Minimum animation evaluation frames (ADR-0008: >= 100 samples). */
+  readonly minAnimationFrames: number;
+}
+
+/** The ADR-0008 qualification matrix requirements per tier. */
+export const TIER_MATRIX_REQUIREMENTS: Readonly<
+  Record<TierName, TierMatrixRequirement>
+> = Object.freeze({
+  reference: Object.freeze({
+    sizes: Object.freeze([100_000, 500_000, 1_000_000]),
+    kinds: BENCHMARK_SCENE_KINDS,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
+    minSaveLoadRuns: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
+    minAnimationFrames: QUALIFICATION_MIN_ANIMATION_FRAMES,
+  }),
+  low: Object.freeze({
+    sizes: Object.freeze([100_000]),
+    kinds: BENCHMARK_SCENE_KINDS,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
+    minSaveLoadRuns: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
+    minAnimationFrames: QUALIFICATION_MIN_ANIMATION_FRAMES,
+  }),
+  "ci-smoke": Object.freeze({
+    sizes: Object.freeze([]),
+    kinds: Object.freeze([]),
+    minSamples: 0,
+    minSaveLoadRuns: 0,
+    minAnimationFrames: 0,
+  }),
+});
+
+/**
+ * Problems that make a named-tier invocation non-qualifying (issue #72):
+ * missing required sizes/kinds or below-protocol sample/run/frame
+ * counts. The ci-smoke tier is explicitly non-qualifying and never
+ * reports problems. An empty result means the matrix can qualify.
+ */
+export function qualificationProblems(
+  matrix: QualificationMatrix,
+  tier: TierName,
+): readonly string[] {
+  const requirement = TIER_MATRIX_REQUIREMENTS[tier];
+  const problems: string[] = [];
+  for (const size of requirement.sizes) {
+    if (!matrix.sizes.includes(size)) {
+      problems.push(`missing required size ${String(size)} (${tier} tier)`);
+    }
+  }
+  for (const kind of requirement.kinds) {
+    if (!matrix.kinds.includes(kind)) {
+      problems.push(`missing required kind ${kind} (${tier} tier)`);
+    }
+  }
+  if (matrix.samples < requirement.minSamples) {
+    problems.push(
+      `samples ${String(matrix.samples)} < ${String(requirement.minSamples)} (ADR-0008 requires at least ${String(requirement.minSamples)} p95 samples)`,
+    );
+  }
+  if (matrix.saveLoadRuns < requirement.minSaveLoadRuns) {
+    problems.push(
+      `save-load-runs ${String(matrix.saveLoadRuns)} < ${String(requirement.minSaveLoadRuns)} (ADR-0008 requires five save/load runs)`,
+    );
+  }
+  if (matrix.animationFrames < requirement.minAnimationFrames) {
+    problems.push(
+      `animation-frames ${String(matrix.animationFrames)} < ${String(requirement.minAnimationFrames)} (ADR-0008 requires at least ${String(requirement.minAnimationFrames)} frame samples)`,
+    );
+  }
+  return problems;
+}
+
 const progress = (
   onProgress: ((message: string) => void) | undefined,
   message: string,
@@ -94,16 +209,36 @@ export async function runBenchmarks(
   const started = performance.now();
   const sizes = options.sizes ?? BENCHMARK_SIZES;
   const kinds = options.kinds ?? BENCHMARK_SCENE_KINDS;
-  const samples = options.samples ?? 100;
-  const saveLoadRuns = options.saveLoadRuns ?? 5;
+  // The defaults are the ADR-0008 protocol minimums, so a default
+  // invocation on a named tier is a compliant qualification run.
+  const samples = options.samples ?? QUALIFICATION_MIN_SAMPLES;
+  const saveLoadRuns = options.saveLoadRuns ?? QUALIFICATION_MIN_SAVE_LOAD_RUNS;
   const previewSamples = options.previewSamples ?? 10;
   const previewSize = options.previewSize ?? 256;
-  const animationFrames = options.animationFrames ?? 60;
+  const animationFrames =
+    options.animationFrames ?? QUALIFICATION_MIN_ANIMATION_FRAMES;
   const full = options.full ?? false;
   const tier = resolveTier(
     options.tier ?? "auto",
     options.hardwareInput?.cpuModel ?? "unknown",
   );
+  // Pre-flight qualification check (issue #72): a named-tier invocation
+  // that cannot produce protocol-compliant evidence for every mandatory
+  // gate fails with a structured error BEFORE any fixture allocation or
+  // measurement, so a partial matrix can never be reported as a
+  // successful qualification.
+  const problems = qualificationProblems(
+    { sizes, kinds, samples, saveLoadRuns, animationFrames },
+    tier,
+  );
+  if (problems.length > 0) {
+    throw new WorkspaceError({
+      family: "validation",
+      code: INCOMPLETE_BENCHMARK_MATRIX,
+      message: `incomplete benchmark matrix for ${tier} qualification: ${problems.join("; ")}`,
+      context: { tier, problems: [...problems] },
+    });
+  }
   const hardware: HardwareInfo = detectHardware(tier, options.hardwareInput);
 
   progress(options.onProgress, `tier resolved: ${tier} (${hardware.cpuModel})`);

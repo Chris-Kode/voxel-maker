@@ -55,7 +55,11 @@ export function parseArgs(argv: readonly string[]): CliOptions {
     saveLoadRuns: 5,
     previewSamples: 10,
     previewSize: 256,
-    animationFrames: 60,
+    // The default is the ADR-0008 protocol minimum (issue #72): a
+    // default invocation on a named tier must be a compliant
+    // qualification run, and the CLI always passes this value to the
+    // runner (whose own default is unreachable from the CLI).
+    animationFrames: 100,
     full: false,
     json: undefined,
     trends: undefined,

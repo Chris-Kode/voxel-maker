@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { INCOMPLETE_BENCHMARK_MATRIX } from "@voxel-maker/benchmarks";
 
 const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
@@ -184,6 +185,47 @@ describe("bench CLI numeric option validation (ticket #57)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 180_000);
+
+  it("rejects an incomplete named-tier matrix with a structured error (issue #72)", () => {
+    // The issue-72 repro: a reference-tier invocation that measures no
+    // mandatory 100k/500k/1M scene gate must exit non-zero with a
+    // structured incomplete-matrix error and must not write a report.
+    const dir = mkdtempSync(join(tmpdir(), "bench-cli-issue-72-"));
+    try {
+      const jsonPath = join(dir, "out.json");
+      const result = runCli(
+        [
+          "--tier",
+          "reference",
+          "--sizes",
+          "10000",
+          "--kinds",
+          "compact",
+          "--samples",
+          "1",
+          "--save-load-runs",
+          "1",
+          "--preview-samples",
+          "1",
+          "--preview-size",
+          "1",
+          "--animation-frames",
+          "1",
+          "--json",
+          jsonPath,
+          "--no-progress",
+        ],
+        dir,
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(INCOMPLETE_BENCHMARK_MATRIX);
+      expect(result.stderr).toContain("missing required size 100000");
+      expect(result.stdout).not.toContain("report written");
+      expect(existsSync(jsonPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("accepts positive integer counts and writes numeric JSON options", () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-cli-ok-"));

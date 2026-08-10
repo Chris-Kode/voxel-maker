@@ -8,7 +8,7 @@ describe("parseArgs numeric validation (ticket #57)", () => {
     expect(options.saveLoadRuns).toBe(5);
     expect(options.previewSamples).toBe(10);
     expect(options.previewSize).toBe(256);
-    expect(options.animationFrames).toBe(60);
+    expect(options.animationFrames).toBe(100);
     expect(options.sizes).toEqual([100_000, 500_000, 1_000_000]);
     expect(options.kinds).toEqual(["compact", "sparse", "checkerboard"]);
     expect(options.tier).toBe("auto");

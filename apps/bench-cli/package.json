@@ -15,7 +15,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@voxel-maker/benchmarks": "workspace:*"
+    "@voxel-maker/benchmarks": "workspace:*",
+    "@voxel-maker/shared": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:"
