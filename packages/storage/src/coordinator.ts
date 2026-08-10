@@ -9,6 +9,7 @@ import {
 } from "./port.js";
 import { captureRevisionSnapshot, type RevisionSnapshot } from "./snapshot.js";
 import type { ProjectEncoder } from "./encoder.js";
+import type { SnapshotWriteGate } from "./snapshot-writer.js";
 
 /** Outcome of one completed save request. */
 export interface SaveOutcome {
@@ -107,6 +108,16 @@ export interface SaveCoordinatorOptions {
   readonly store: DocumentStoreRead;
   readonly port: ProjectStoragePort;
   readonly encoder: ProjectEncoder;
+  /**
+   * Optional shared snapshot-write gate (ticket #51). When provided, every
+   * atomic snapshot write for this document goes through the gate, so it
+   * is serialized and revision-fenced against compaction snapshot writes
+   * made by the document's recovery journal (which must share the same
+   * gate instance). Without a shared gate, a save captured at an older
+   * revision can finish after compaction installed a newer snapshot and
+   * overwrite it, leaving a stale snapshot beside a newer journal anchor.
+   */
+  readonly snapshotWriteGate?: SnapshotWriteGate;
 }
 
 interface PendingSave {
@@ -125,13 +136,19 @@ interface PendingSave {
 export function createSaveCoordinator(
   options: SaveCoordinatorOptions,
 ): SaveCoordinator {
-  return new SaveCoordinatorImpl(options.store, options.port, options.encoder);
+  return new SaveCoordinatorImpl(
+    options.store,
+    options.port,
+    options.encoder,
+    options.snapshotWriteGate,
+  );
 }
 
 class SaveCoordinatorImpl implements SaveCoordinator {
   readonly #store: DocumentStoreRead;
   readonly #port: ProjectStoragePort;
   readonly #encoder: ProjectEncoder;
+  readonly #snapshotWriteGate: SnapshotWriteGate | undefined;
   readonly #listeners = new Set<(event: SaveCoordinatorEvent) => void>();
   readonly #queue: PendingSave[] = [];
   #inflight: PendingSave | undefined;
@@ -157,10 +174,12 @@ class SaveCoordinatorImpl implements SaveCoordinator {
     store: DocumentStoreRead,
     port: ProjectStoragePort,
     encoder: ProjectEncoder,
+    snapshotWriteGate: SnapshotWriteGate | undefined,
   ) {
     this.#store = store;
     this.#port = port;
     this.#encoder = encoder;
+    this.#snapshotWriteGate = snapshotWriteGate;
     this.#unsubscribeStore = store.subscribe(() => {
       this.#liveHashCache = undefined;
     });
@@ -297,19 +316,41 @@ class SaveCoordinatorImpl implements SaveCoordinator {
       // replace. A resolved port write means the replace committed: an
       // abort that races the rename must not turn a durable save into a
       // reported failure, so no post-write abort check happens here.
-      await this.#port.writeProjectAtomic(request.path, bytes, {
-        signal: request.controller.signal,
-        onPhase: (phase) => {
-          this.#emit({
-            kind: "save-progress",
-            path: request.path,
-            phase,
-          });
-        },
-      });
+      const gate = this.#snapshotWriteGate;
+      const onPhase = (phase: AtomicWritePhase): void => {
+        this.#emit({
+          kind: "save-progress",
+          path: request.path,
+          phase,
+        });
+      };
+      if (gate === undefined) {
+        await this.#port.writeProjectAtomic(request.path, bytes, {
+          signal: request.controller.signal,
+          onPhase,
+        });
+      } else {
+        // Shared serialization/fencing owner (ticket #51): the write is
+        // ordered against compaction snapshot writes from the document's
+        // recovery journal, and an older captured revision can never
+        // replace a newer durable snapshot. A superseded write leaves the
+        // captured state durably covered by a strictly newer snapshot at
+        // the same path, which is handled like an installed write below.
+        await gate.write({
+          path: request.path,
+          bytes,
+          revision: request.snapshot.revision,
+          signal: request.controller.signal,
+          onPhase,
+        });
+      }
       // Completion records R as the durable snapshot and marks the project
       // clean only when the live semantic hash still equals captured H_R
       // (ADR-0004, plan S5.14); it never compares a hash with a Revision.
+      // A superseded write still resolves `saved`: the captured state is
+      // durably covered by the strictly newer snapshot already installed,
+      // and recording the captured revision keeps the stale completion
+      // honest about the newer unsaved edits.
       this.#durable = {
         revision: request.snapshot.revision,
         hash: request.snapshot.semanticHash,

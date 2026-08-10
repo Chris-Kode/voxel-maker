@@ -18,6 +18,7 @@ import {
 } from "./port.js";
 import type { ProjectEncoder } from "./encoder.js";
 import type { RevisionSnapshot } from "./snapshot.js";
+import type { SnapshotWriteGate } from "./snapshot-writer.js";
 
 /**
  * Version 1 recovery journal (plan S5.6/S5.9/S5.10, ADR-0004, ticket #14;
@@ -203,6 +204,17 @@ export interface RecoveryJournalOptions {
   readonly encoder: ProjectEncoder;
   /** Live snapshot capture; used by compaction (snapshot work). */
   readonly capture: () => RevisionSnapshot;
+  /**
+   * Optional shared snapshot-write gate (ticket #51). When provided,
+   * compaction (and save-as reassociation) install replacement snapshots
+   * through the gate, so they are serialized and revision-fenced against
+   * saves made by the document's save coordinator (which must share the
+   * same gate instance). Without a shared gate, a slow save captured at an
+   * older revision can finish after compaction installed a newer snapshot
+   * and overwrite it, leaving a stale snapshot beside a newer journal
+   * anchor that recovery rejects.
+   */
+  readonly snapshotWriteGate?: SnapshotWriteGate;
   readonly containerVersion?: number;
   readonly documentSchemaVersion?: number;
   readonly commandEnvelopeVersion?: number;
@@ -593,6 +605,7 @@ class RecoveryJournalImpl implements RecoveryJournal {
   readonly #port: ProjectStoragePort & RecoveryJournalPort;
   readonly #encoder: ProjectEncoder;
   readonly #capture: () => RevisionSnapshot;
+  readonly #snapshotWriteGate: SnapshotWriteGate | undefined;
   readonly #limits: JournalLimits;
   readonly #identity: JournalIdentity;
   readonly #listeners = new Set<(event: RecoveryJournalEvent) => void>();
@@ -613,6 +626,7 @@ class RecoveryJournalImpl implements RecoveryJournal {
     this.#port = options.port;
     this.#encoder = options.encoder;
     this.#capture = options.capture;
+    this.#snapshotWriteGate = options.snapshotWriteGate;
     this.#limits = resolveLimits(options.limits);
     this.#identity = {
       recoverySessionId: options.sessionId,
@@ -1095,9 +1109,30 @@ class RecoveryJournalImpl implements RecoveryJournal {
   async #performCompact(): Promise<void> {
     const snapshot = this.#capture();
     const bytes = await this.#encoder.encodeProject(snapshot);
-    await this.#port.writeProjectAtomic(this.#projectPath, bytes);
+    await this.#writeSnapshot(this.#projectPath, bytes, snapshot.revision);
     this.#emit({ kind: "compacted", revision: snapshot.revision });
     await this.#performReset(snapshot.revision, snapshot.semanticHash);
+  }
+
+  /**
+   * Installs a replacement snapshot through the shared snapshot-write gate
+   * when one is provided (ticket #51); otherwise writes the port directly.
+   * A superseded write is skipped: a strictly newer snapshot is already
+   * durable at the path, and the caller's anchor reset stays safe because
+   * recovery treats a snapshot newer than the journal anchor as a
+   * confirmed save and skips covered frames.
+   */
+  async #writeSnapshot(
+    path: string,
+    bytes: Uint8Array,
+    revision: number,
+  ): Promise<void> {
+    const gate = this.#snapshotWriteGate;
+    if (gate === undefined) {
+      await this.#port.writeProjectAtomic(path, bytes);
+      return;
+    }
+    await gate.write({ path, bytes, revision });
   }
 
   /**
@@ -1117,7 +1152,11 @@ class RecoveryJournalImpl implements RecoveryJournal {
     }
     if (await this.#port.exists(oldPath)) {
       const snapshotBytes = await this.#port.readProject(oldPath);
-      await this.#port.writeProjectAtomic(newPath, snapshotBytes);
+      // The copied file is at least the journal base revision (the base is
+      // a confirmed snapshot; the file may have advanced past it), so the
+      // copy is tagged with the base: a superseded copy means the new path
+      // already holds a strictly newer snapshot and the move stays safe.
+      await this.#writeSnapshot(newPath, snapshotBytes, this.#baseRevision);
     }
     const journalBytes = await this.#port.readJournal(oldPath);
     if (journalBytes !== undefined) {

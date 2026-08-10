@@ -91,6 +91,35 @@ Stable `io`-family error codes:
   before the atomic replace leaves destination and backup untouched; if the
   replace already committed, the save completes normally. `dispose()`
   cancels, rejects queued requests, and stops observing the store.
+
+### Shared snapshot-write gate
+
+Saves are not the only snapshot replacements for a project path: journal
+compaction (`RecoveryJournal.compact()`, recovery-journal contract) also
+installs a replacement snapshot, and save-as reassociation copies the
+snapshot to the new path. Without a shared owner, a save captured at an
+older revision can finish after compaction installed a newer snapshot and
+overwrite it, leaving a stale snapshot beside a newer journal anchor that
+recovery rejects (ticket #51).
+
+The composition root therefore creates one `SnapshotWriteGate` per open
+document and passes the same instance to both `SaveCoordinator` and
+`RecoveryJournal`:
+
+- **Serialization per path**: one atomic write runs per path at a time and
+  later requests queue in submission order, so an older captured revision
+  can never finish last and regress the durable snapshot.
+- **Stale-write fencing**: a queued write whose revision is strictly older
+  than the snapshot already installed at that path is skipped with
+  `superseded` instead of touching the port; a superseded save still
+  resolves `saved` because the captured state is durably covered by the
+  newer snapshot.
+- `dispose()` rejects queued writes; an in-flight write completes normally
+  (a resolved port write means the replace committed).
+
+The gate owns no semantic state: it never parses or validates bytes and
+never decides which revision is correct; it only orders and fences
+replacements for a path.
 - Dirty state is runtime projection: the project is dirty exactly when the
   live semantic hash differs from the hash of the last completed save. It is
   never persisted and never part of semantic identity. Because the document

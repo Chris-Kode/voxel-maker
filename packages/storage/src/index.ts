@@ -1,10 +1,11 @@
 /**
  * Public entry point for the storage package: the project storage port,
  * atomic-save coordination with immutable revision snapshot isolation,
- * the memory adapter, and the shared adapter conformance matrix (plan
- * S5.6/S5.7/S5.14, ADR-0004, ticket #13). Platform filesystem adapters
- * live at the composition root (Node adapter in the headless app, Tauri
- * adapter in the desktop app).
+ * the shared snapshot-write gate that serializes and fences snapshot
+ * replacements, the memory adapter, and the shared adapter conformance
+ * matrix (plan S5.6/S5.7/S5.14, ADR-0004, tickets #13/#51). Platform
+ * filesystem adapters live at the composition root (Node adapter in the
+ * headless app, Tauri adapter in the desktop app).
  */
 export {
   backupPathFor,
@@ -43,6 +44,12 @@ export {
   type RecoveryJournalOptions,
 } from "./journal.js";
 export { captureRevisionSnapshot, type RevisionSnapshot } from "./snapshot.js";
+export {
+  createSnapshotWriteGate,
+  type SnapshotWriteGate,
+  type SnapshotWriteOutcome,
+  type SnapshotWriteRequest,
+} from "./snapshot-writer.js";
 export { createVxlProjectEncoder, type ProjectEncoder } from "./encoder.js";
 export {
   createSaveCoordinator,
