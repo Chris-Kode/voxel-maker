@@ -6,7 +6,11 @@ import {
   summarizeGates,
   type GateResult,
 } from "./gates.js";
-import type { BenchmarkReport, ByteTransferMeasurement } from "./report.js";
+import type {
+  BenchmarkReport,
+  ByteTransferMeasurement,
+  MeasurementSummary,
+} from "./report.js";
 import { createBenchmarkFixture } from "./fixtures.js";
 import { runBenchmarks } from "./run.js";
 
@@ -452,19 +456,41 @@ describe("zero-sample gate defense (ticket #57)", () => {
 });
 
 describe("blocked/failed 100k export gate defense (issue #63)", () => {
-  /** Replaces the compact 100k export measurement of a scene report. */
-  function withExport(
+  /** One deterministic summary with the given sample count and p95. */
+  function summaryOf(samples: number, p95: number): MeasurementSummary {
+    return {
+      samples,
+      mean: p95,
+      min: p95,
+      max: p95,
+      p50: p95,
+      p90: p95,
+      p95,
+      p99: p95,
+    };
+  }
+
+  /**
+   * Replaces one scene's export measurement in a scene report. When the
+   * target scene is absent, the compact 100k scene is cloned as the
+   * template so multi-kind reports can be built from the base fixture.
+   */
+  function withSceneExport(
     report: BenchmarkReport,
+    kind: keyof BenchmarkReport["scenes"],
+    size: number,
     exportMeasurement: ByteTransferMeasurement,
   ): BenchmarkReport {
-    const scene = report.scenes.compact["100000"];
-    if (scene === undefined) throw new Error("test scene missing");
+    const template = report.scenes.compact["100000"];
+    if (template === undefined) throw new Error("test scene missing");
+    const scene = report.scenes[kind][String(size)] ?? template;
     return {
       ...report,
       scenes: {
         ...report.scenes,
-        compact: {
-          "100000": { ...scene, export: exportMeasurement },
+        [kind]: {
+          ...report.scenes[kind],
+          [String(size)]: { ...scene, export: exportMeasurement },
         },
       },
     };
@@ -476,17 +502,8 @@ describe("blocked/failed 100k export gate defense (issue #63)", () => {
     );
 
   it("fails the smoke gate when the 100k export was preflight-blocked", () => {
-    const report = withExport(sceneReport({}), {
-      summary: {
-        samples: 2,
-        mean: 0.5,
-        min: 0.4,
-        max: 0.6,
-        p50: 0.5,
-        p90: 0.6,
-        p95: 0.6,
-        p99: 0.6,
-      },
+    const report = withSceneExport(sceneReport({}), "compact", 100_000, {
+      summary: summaryOf(2, 0.6),
       bytes: 0,
       peakRssMiB: 0,
       blocked: {
@@ -502,17 +519,8 @@ describe("blocked/failed 100k export gate defense (issue #63)", () => {
   });
 
   it("fails the smoke gate when the 100k export crashed", () => {
-    const report = withExport(sceneReport({}), {
-      summary: {
-        samples: 1,
-        mean: 400,
-        min: 400,
-        max: 400,
-        p50: 400,
-        p90: 400,
-        p95: 400,
-        p99: 400,
-      },
+    const report = withSceneExport(sceneReport({}), "compact", 100_000, {
+      summary: summaryOf(1, 400),
       bytes: 0,
       peakRssMiB: 0,
       blocked: {
@@ -529,17 +537,8 @@ describe("blocked/failed 100k export gate defense (issue #63)", () => {
   it("fails the smoke gate when a 100k export produced no bytes", () => {
     // A zero-byte export with no blocked evidence (e.g. a skipped
     // measurement placeholder) is still not a completed export.
-    const report = withExport(sceneReport({}), {
-      summary: {
-        samples: 2,
-        mean: 1,
-        min: 1,
-        max: 1,
-        p50: 1,
-        p90: 1,
-        p95: 1,
-        p99: 1,
-      },
+    const report = withSceneExport(sceneReport({}), "compact", 100_000, {
+      summary: summaryOf(2, 1),
       bytes: 0,
       peakRssMiB: 0,
       blocked: undefined,
@@ -561,44 +560,75 @@ describe("blocked/failed 100k export gate defense (issue #63)", () => {
     // degradation: the blocked evidence stays in the report and the
     // 100k smoke gate (which only asserts the required 100k exports)
     // is unaffected.
-    const report = sceneReport({});
-    const scene = report.scenes.compact["100000"];
-    if (scene === undefined) throw new Error("test scene missing");
-    const withLargeBlock = {
-      ...report,
-      scenes: {
-        ...report.scenes,
-        compact: {
-          "100000": scene,
-          "500000": {
-            ...scene,
-            export: {
-              summary: {
-                samples: 0,
-                mean: 0,
-                min: 0,
-                max: 0,
-                p50: 0,
-                p90: 0,
-                p95: 0,
-                p99: 0,
-              },
-              bytes: 0,
-              peakRssMiB: 0,
-              blocked: {
-                code: "GLTF_FACE_LIMIT",
-                message: "glTF face limit exceeded",
-              },
-            },
-          },
+    const withLargeBlock = withSceneExport(
+      sceneReport({}),
+      "compact",
+      500_000,
+      {
+        summary: summaryOf(0, 0),
+        bytes: 0,
+        peakRssMiB: 0,
+        blocked: {
+          code: "GLTF_FACE_LIMIT",
+          message: "glTF face limit exceeded",
         },
       },
-    };
+    );
     const gate = smokeExportGate(withLargeBlock);
     expect(gate?.pass).toBe(true);
     expect(gate?.skipped).toBe(false);
     // The blocked evidence remains in the report for larger scenes.
-    const largeExport = withLargeBlock.scenes.compact["500000"].export;
-    expect(largeExport.blocked.code).toBe("GLTF_FACE_LIMIT");
+    const largeExport = withLargeBlock.scenes.compact["500000"]?.export;
+    expect(largeExport?.blocked?.code).toBe("GLTF_FACE_LIMIT");
+  });
+
+  it("scopes the smoke gate to the required 100k exports only", () => {
+    // An unexpected larger-scene export failure is outside the smoke
+    // gate's assertion (the required 100k export is the interactive
+    // reference size); the 100k gate must not fail on it.
+    const withLargeCrash = withSceneExport(
+      sceneReport({}),
+      "compact",
+      500_000,
+      {
+        summary: summaryOf(1, 400),
+        bytes: 0,
+        peakRssMiB: 0,
+        blocked: {
+          code: "EXPORT_FAILED",
+          message: "synthetic exporter crash",
+        },
+      },
+    );
+    const gate = smokeExportGate(withLargeCrash);
+    expect(gate?.pass).toBe(true);
+    expect(gate?.skipped).toBe(false);
+  });
+
+  it("reports every incomplete 100k export in the failure reason", () => {
+    const report = withSceneExport(sceneReport({}), "compact", 100_000, {
+      summary: summaryOf(2, 0.6),
+      bytes: 0,
+      peakRssMiB: 0,
+      blocked: {
+        code: "PREFLIGHT_BLOCKED",
+        message: "glTF preflight blocked the export",
+      },
+    });
+    const withSparseCrash = withSceneExport(report, "sparse", 100_000, {
+      summary: summaryOf(1, 400),
+      bytes: 0,
+      peakRssMiB: 0,
+      blocked: {
+        code: "EXPORT_FAILED",
+        message: "synthetic exporter crash",
+      },
+    });
+    const gate = smokeExportGate(withSparseCrash);
+    expect(gate?.pass).toBe(false);
+    expect(gate?.failureReason).toContain("compact");
+    expect(gate?.failureReason).toContain("PREFLIGHT_BLOCKED");
+    expect(gate?.failureReason).toContain("sparse");
+    expect(gate?.failureReason).toContain("EXPORT_FAILED");
   });
 });

@@ -254,21 +254,22 @@ function exportSamples(report: BenchmarkReport): number | undefined {
  * stay reportable as graceful degradation.
  */
 function incompleteExportReason(report: BenchmarkReport): string | undefined {
+  const reasons: string[] = [];
   for (const kind of Object.keys(report.scenes)) {
     const scene = report.scenes[kind as keyof typeof report.scenes]["100000"];
     if (scene === undefined) continue;
     const exportMeasurement = scene.export;
     if (exportMeasurement.blocked !== undefined) {
-      return `100k ${kind} export blocked (${exportMeasurement.blocked.code})`;
-    }
-    if (exportMeasurement.bytes === 0) {
-      return `100k ${kind} export produced no bytes`;
-    }
-    if (exportMeasurement.summary.samples === 0) {
-      return `100k ${kind} export produced no timing samples`;
+      reasons.push(
+        `100k ${kind} export blocked (${exportMeasurement.blocked.code})`,
+      );
+    } else if (exportMeasurement.bytes === 0) {
+      reasons.push(`100k ${kind} export produced no bytes`);
+    } else if (exportMeasurement.summary.samples === 0) {
+      reasons.push(`100k ${kind} export produced no timing samples`);
     }
   }
-  return undefined;
+  return reasons.length === 0 ? undefined : reasons.join("; ");
 }
 
 /** Peak RSS over every measured scene (MiB). */
@@ -772,7 +773,8 @@ export function evaluateGates(
     const zeroSample = !skipped && samples === 0;
     // A gate can also fail on completeness (issue #63): a required
     // operation that did not complete (e.g. a blocked 100k export) must
-    // never certify the gate, even when its measured value is small.
+    // never certify the gate, even when its measured value is small or
+    // the measurement is absent.
     const failureReason = gate.failsOn?.(report);
     return {
       id: gate.id,
@@ -783,8 +785,8 @@ export function evaluateGates(
       measured,
       samples,
       pass:
-        skipped ||
-        (failureReason === undefined && !zeroSample && measured <= gate.limit),
+        failureReason === undefined &&
+        (skipped || (!zeroSample && measured <= gate.limit)),
       skipped,
       failureReason,
     };
