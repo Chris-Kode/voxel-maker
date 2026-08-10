@@ -47,12 +47,19 @@ export interface CreateDocumentInput {
 
 const MAX_METADATA_COPY_DEPTH = 64;
 
-function copyJson(
-  value: JsonValue,
-  seen: Set<object>,
-  depth: number,
-): JsonValue {
-  if (value === null || typeof value !== "object") return value;
+function copyJson(value: unknown, seen: Set<object>, depth: number): JsonValue {
+  if (value === null || typeof value !== "object") {
+    if (
+      typeof value === "boolean" ||
+      typeof value === "number" ||
+      typeof value === "string"
+    ) {
+      return value;
+    }
+    // Non-JSON leaves (undefined, functions, symbols, BigInt) are copied
+    // through so validation can report them with a precise path.
+    return value as JsonValue;
+  }
   if (depth > MAX_METADATA_COPY_DEPTH) {
     throw new WorkspaceError({
       family: "limit",
@@ -68,15 +75,28 @@ function copyJson(
     });
   }
   seen.add(value);
-  const items = value as readonly JsonValue[];
-  const copied = Array.isArray(value)
-    ? items.map((item) => copyJson(item, seen, depth + 1))
-    : Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [
-          key,
-          copyJson(item, seen, depth + 1),
-        ]),
-      );
+  if (Array.isArray(value)) {
+    const items = value as readonly JsonValue[];
+    const copied: JsonValue[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+      if (!(index in items)) {
+        throw new WorkspaceError({
+          family: "validation",
+          code: "SPARSE_ARRAY",
+          message: "Metadata arrays cannot contain holes",
+        });
+      }
+      copied.push(copyJson(items[index], seen, depth + 1));
+    }
+    seen.delete(value);
+    return copied;
+  }
+  const copied = Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      copyJson(item, seen, depth + 1),
+    ]),
+  );
   seen.delete(value);
   return copied;
 }

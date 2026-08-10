@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  WorkspaceError,
   animationId,
   documentId,
   keyframeId,
   materialId,
   nodeId,
   trackId,
+  type JsonValue,
   type NodeId,
   volumeId,
 } from "@voxel-maker/shared";
@@ -38,6 +40,17 @@ function minimalInput() {
       },
     ],
   };
+}
+
+function expectWorkspaceError(run: () => unknown, code: string): void {
+  try {
+    run();
+  } catch (error) {
+    expect(error).toBeInstanceOf(WorkspaceError);
+    expect((error as WorkspaceError).code).toBe(code);
+    return;
+  }
+  throw new Error(`Expected ${code} to be thrown`);
 }
 
 describe("createDocument", () => {
@@ -160,6 +173,45 @@ describe("createDocument", () => {
     ).toEqual({
       list: [1],
     });
+  });
+
+  it("rejects sparse metadata arrays with a stable error", () => {
+    const sparse = new Array(2);
+    sparse[1] = 1;
+    expectWorkspaceError(
+      () => createDocument({ ...minimalInput(), metadata: { sparse } }),
+      "SPARSE_ARRAY",
+    );
+    expectWorkspaceError(
+      () =>
+        createDocument({
+          ...minimalInput(),
+          nodes: [
+            {
+              nodeId: nodeId("node:test:root"),
+              parentId: null,
+              children: [],
+              transform: identity,
+              components: [],
+              metadata: { nested: { sparse } },
+            },
+          ],
+        }),
+      "SPARSE_ARRAY",
+    );
+  });
+
+  it("rejects metadata slots that are not JSON values", () => {
+    expectWorkspaceError(
+      () =>
+        createDocument({
+          ...minimalInput(),
+          metadata: {
+            list: [0, undefined, 2] as unknown as readonly JsonValue[],
+          },
+        }),
+      "INVALID_METADATA",
+    );
   });
 
   it("rejects duplicate identifiers in input arrays", () => {

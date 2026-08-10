@@ -37,7 +37,8 @@ payload at construction time.
   `DUPLICATE_COMPONENT`, `INVALID_CONSTRAINT`, `UNKNOWN_FIELD` — the
   component list must match the closed discriminated union exactly; voxel,
   pivot, and joint are singletons per node.
-- `INVALID_METADATA`, `CYCLIC_VALUE`, `LIMIT_EXCEEDED` — metadata must be
+- `INVALID_METADATA`, `CYCLIC_VALUE`, `SPARSE_ARRAY`, `LIMIT_EXCEEDED` —
+  metadata must be
   JSON-compatible and within `maxMetadataDepth`, `maxMetadataMembers`,
   `maxMetadataBytes`, and `maxMetadataStringBytes`.
 

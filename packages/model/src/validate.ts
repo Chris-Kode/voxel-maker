@@ -535,6 +535,18 @@ function checkMetadata(
             ),
           );
         }
+      } else if (current !== null && typeof current !== "boolean") {
+        // Non-JSON values (undefined, functions, symbols, BigInt) must be
+        // rejected before any accepted document is serialized; array holes
+        // are reported separately by the index walk below.
+        issues.push(
+          issue(
+            "validation",
+            "INVALID_METADATA",
+            currentPath,
+            "Metadata must contain only JSON values",
+          ),
+        );
       }
       return;
     }
@@ -551,10 +563,36 @@ function checkMetadata(
     }
     visited.add(current);
     if (Array.isArray(current)) {
+      if (state.members + current.length > limits.maxMetadataMembers) {
+        // Bound the index walk up front: a hostile sparse array can have an
+        // enormous length with no allocated slots, so report the limit at
+        // the array path instead of iterating every index.
+        issues.push(
+          issue(
+            "limit",
+            "LIMIT_EXCEEDED",
+            currentPath,
+            `Metadata member count exceeds the ${String(limits.maxMetadataMembers)}-member limit`,
+          ),
+        );
+        visited.delete(current);
+        return;
+      }
       state.members += current.length;
-      current.forEach((item, index) => {
-        walk(item, at(currentPath, index), depth + 1);
-      });
+      for (let index = 0; index < current.length; index += 1) {
+        if (!(index in current)) {
+          issues.push(
+            issue(
+              "validation",
+              "SPARSE_ARRAY",
+              at(currentPath, index),
+              "Metadata arrays must not contain holes",
+            ),
+          );
+          continue;
+        }
+        walk(current[index], at(currentPath, index), depth + 1);
+      }
     } else {
       const record = current as Record<string, unknown>;
       state.members += Object.keys(record).length;

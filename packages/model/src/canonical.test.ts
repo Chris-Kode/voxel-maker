@@ -19,6 +19,7 @@ import {
   materialId,
   nodeId,
   trackId,
+  type JsonValue,
   volumeId,
 } from "@voxel-maker/shared";
 
@@ -213,6 +214,29 @@ describe("canonicalDocumentJson", () => {
     );
   });
 
+  it("defensively rejects sparse metadata arrays with a stable error", () => {
+    const document = baseDocument();
+    const sparse = new Array(2);
+    sparse[1] = 1;
+    const mutated = { ...document, metadata: { sparse } };
+    expect(() => canonicalDocumentJson(mutated)).toThrowError(
+      /cannot contain holes/u,
+    );
+  });
+
+  it("defensively rejects metadata slots that are not JSON values", () => {
+    const document = baseDocument();
+    const mutated = {
+      ...document,
+      metadata: {
+        list: [0, undefined, 2] as unknown as readonly JsonValue[],
+      },
+    };
+    expect(() => canonicalDocumentJson(mutated)).toThrowError(
+      /only JSON values/u,
+    );
+  });
+
   it("serializes the release fixtures byte-identically across runs", () => {
     for (const fixture of [
       createHouseFixture(),
@@ -311,6 +335,33 @@ describe("canonicalSemanticBytes", () => {
 });
 
 describe("round-trip identity", () => {
+  it("round-trips dense metadata arrays with nulls exactly", () => {
+    const document = createDocument({
+      documentId: documentId("document:roundtrip:0001"),
+      rootNodeId: nodeId("node:roundtrip:root"),
+      metadata: {
+        list: [null, 1, "two", true],
+        nested: { deep: [0, null, [1, 2]] },
+      },
+      nodes: [
+        {
+          nodeId: nodeId("node:roundtrip:root"),
+          parentId: null,
+          children: [],
+          transform: identity,
+          components: [],
+          metadata: { tags: ["a", "b"] },
+        },
+      ],
+    });
+    const serialized = canonicalDocumentJson(document);
+    const reloaded = parseDocument(serialized);
+    expect(canonicalDocumentJson(reloaded)).toBe(serialized);
+    expect(canonicalDocumentHash(reloaded)).toBe(
+      canonicalDocumentHash(document),
+    );
+  });
+
   it("reloads every fixture to the identical canonical bytes and hash", () => {
     for (const fixture of [
       createHouseFixture(),
