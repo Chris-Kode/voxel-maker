@@ -34,8 +34,12 @@ export function promptVersion(prompt: string): string {
 /** Version of the agent system prompt (changes with AGENT_SYSTEM_PROMPT). */
 export const SYSTEM_PROMPT_VERSION = promptVersion(AGENT_SYSTEM_PROMPT);
 
-/** Version of the fixed budget profile the suite runs under. */
-export const BUDGET_VERSION = "agent-budgets-default-v1";
+/**
+ * Version of the budget-profile schema recorded with every result
+ * (issue #77: the profile itself is identified by its hash, so lowered
+ * profiles still record this schema version).
+ */
+export const BUDGET_VERSION = "agent-budgets-v1";
 
 /** Stable hash of one budget profile (snapshot identity). */
 export function budgetHash(budgets: AgentBudgets): string {
@@ -96,6 +100,12 @@ export function evaluationVersions(options: {
   readonly model: string;
   /** Suite version override (rig/animation suite, ticket #36). */
   readonly evaluationVersion?: string;
+  /**
+   * The exact immutable budget profile the run enforced (issue #77).
+   * Defaults to EVALUATION_BUDGETS; callers that lower the profile must
+   * pass the resolved profile so provenance matches enforcement.
+   */
+  readonly budgets?: AgentBudgets;
 }): EvaluationVersions {
   return {
     evaluation: options.evaluationVersion ?? EVALUATION_VERSION,
@@ -115,7 +125,7 @@ export function evaluationVersions(options: {
     },
     budget: {
       version: BUDGET_VERSION,
-      hash: budgetHash(EVALUATION_BUDGETS),
+      hash: budgetHash(options.budgets ?? EVALUATION_BUDGETS),
     },
   };
 }

@@ -12,6 +12,8 @@ import {
   type ScenarioId,
 } from "./scenarios.js";
 import {
+  budgetHash,
+  EVALUATION_BUDGETS,
   EVALUATION_VERSION,
   PROVIDER_VERSION,
   RIG_EVALUATION_VERSION,
@@ -121,7 +123,7 @@ describe("fixed geometry evaluation: golden scenarios", () => {
       expect(versions.toolSchema.mutation).toBeGreaterThan(0);
       expect(versions.fixture.version).toBe("v1");
       expect(versions.fixture.inputDocumentHash).toMatch(/^[0-9a-f]{64}$/u);
-      expect(versions.budget.version).toBe("agent-budgets-default-v1");
+      expect(versions.budget.version).toBe("agent-budgets-v1");
       expect(versions.budget.hash).toMatch(/^[0-9a-f]{16}$/u);
     }
   });
@@ -445,6 +447,24 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
     expect(report.promotable).toBe(false);
     expect(report.blocks.some((block) => block.includes("over-budget"))).toBe(
       true,
+    );
+  });
+
+  it("records the effective budget profile hash when budgets are overridden (issue #77)", async () => {
+    // A lowered budget is enforced by the agent session...
+    const result = await evaluateScenario({
+      scenarioId: "red-seat",
+      budgets: { maxRounds: 1 },
+    });
+    expect(result.run.ok).toBe(false);
+    expect(result.run.reason).toBe("limit");
+    // ...and the recorded provenance identifies the enforced profile
+    // instead of the default one (issue #77 AC). The exact hash is
+    // pinned so accidental clamping changes in resolveAgentBudgets
+    // also fail this test.
+    expect(result.versions.budget.hash).toBe("b7e907fabc6196d8");
+    expect(result.versions.budget.hash).not.toBe(
+      budgetHash(EVALUATION_BUDGETS),
     );
   });
 
