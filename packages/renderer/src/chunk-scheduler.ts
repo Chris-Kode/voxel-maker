@@ -34,8 +34,12 @@ import { meshingKey } from "./worker-protocol.js";
  *   numbers are more important). Dispatches the pool rejects stay
  *   pending and retry on a later frame.
  * - The pending set is bounded (`maxPending`); on overflow the least
- *   important pending chunk is dropped and its mesh simply stays as it
- *   was until the next edit touches it.
+ *   important pending chunk moves to a deferred dirty source (one entry
+ *   per chunk, never dropped) and `flush` re-enqueues deferred chunks
+ *   whenever capacity frees up, so every invalidated chunk eventually
+ *   meshes (issue #59). The deferred queue is the bounded dirty source
+ *   plan S6.8 implies: its memory is bounded by the number of dirty
+ *   chunks and it drains at the per-frame dispatch rate.
  *
  * The scheduler is Three-free: scene concerns (frustum, geometry, GPU
  * disposal) live in the scene adapter, which supplies `install` and
@@ -96,7 +100,10 @@ export interface ChunkSchedulerOptions {
    * frustum. Defaults to 1 for every chunk.
    */
   readonly priorityFor?: (spec: ChunkScheduleSpec) => number;
-  /** Bounded pending set; on overflow the least important chunk drops. */
+  /**
+   * Bounded pending set; on overflow the least important chunk defers to
+   * the dirty source and is re-enqueued on a later flush (default 256).
+   */
   readonly maxPending?: number;
   /** Pending jobs dispatched per flush (default 4). */
   readonly maxDispatchesPerFrame?: number;
@@ -112,6 +119,8 @@ export interface ChunkSchedulerOptions {
 export interface ChunkSchedulerDiagnostics {
   /** Dirty chunks waiting to be dispatched. */
   readonly pending: number;
+  /** Evicted dirty chunks waiting for pending capacity (issue #59). */
+  readonly deferred: number;
   /** Jobs currently executing in the pool. */
   readonly inFlight: number;
   /** Fresh results waiting for the main-thread upload budget. */
@@ -173,6 +182,14 @@ class ChunkSchedulerImpl implements ChunkScheduler {
   readonly #pool: MeshingPool;
   /** Dirty chunks awaiting dispatch, by identity key. */
   readonly #pending = new Map<string, PendingEntry>();
+  /**
+   * Dirty source for chunks evicted from the bounded pending set (issue
+   * #59): one spec per chunk, keyed by identity. Never dropped — eviction
+   * only defers, and `flush` re-enqueues from here when capacity frees.
+   */
+  readonly #deferred = new Map<string, ChunkScheduleSpec>();
+  /** FIFO order of deferred keys, so evicted chunks drain oldest first. */
+  readonly #deferredOrder: string[] = [];
   /** Jobs dispatched to the pool, by identity key. */
   readonly #submitted = new Map<string, SubmittedEntry>();
   /** Fresh results awaiting the upload budget, in completion order. */
@@ -236,6 +253,12 @@ class ChunkSchedulerImpl implements ChunkScheduler {
       previous.spec = { ...previous.spec, revision: spec.revision };
       return;
     }
+    const deferred = this.#deferred.get(key);
+    if (deferred !== undefined) {
+      // Newest revision wins while deferred (keeps its FIFO position).
+      this.#deferred.set(key, { ...deferred, revision: spec.revision });
+      return;
+    }
     const submitted = this.#submitted.get(key);
     if (submitted !== undefined) {
       // A newer edit invalidated the in-flight mesh: cancel the job and
@@ -251,8 +274,10 @@ class ChunkSchedulerImpl implements ChunkScheduler {
     };
     this.#pending.set(key, entry);
 
-    // Bound the pending set: drop the least important pending chunk. Its
-    // mesh simply stays as it was until a later edit touches it.
+    // Bound the pending set: defer the least important pending chunk to
+    // the dirty source. Eviction is never completion (issue #59) — the
+    // chunk is re-enqueued on a later flush, so its latest revision
+    // still meshes.
     if (this.#pending.size > this.#maxPending) {
       let evictKey: string | undefined;
       let evictPriority = Number.NEGATIVE_INFINITY;
@@ -262,7 +287,14 @@ class ChunkSchedulerImpl implements ChunkScheduler {
           evictPriority = candidate.priority;
         }
       }
-      if (evictKey !== undefined) this.#pending.delete(evictKey);
+      if (evictKey !== undefined) {
+        const evicted = this.#pending.get(evictKey);
+        this.#pending.delete(evictKey);
+        if (evicted !== undefined) {
+          this.#deferred.set(evictKey, evicted.spec);
+          this.#deferredOrder.push(evictKey);
+        }
+      }
     }
   }
 
@@ -270,6 +302,9 @@ class ChunkSchedulerImpl implements ChunkScheduler {
     if (this.#disposed) return;
     const key = meshingKey(spec.namespace, spec.volumeId, spec.coordinate);
     this.#pending.delete(key);
+    if (this.#deferred.delete(key)) {
+      this.#deferredOrder.splice(this.#deferredOrder.indexOf(key), 1);
+    }
     const submitted = this.#submitted.get(key);
     if (submitted !== undefined) {
       if (submitted.handle !== undefined) {
@@ -279,11 +314,27 @@ class ChunkSchedulerImpl implements ChunkScheduler {
     }
   }
 
+  /** Removes deferred entries matching `predicate`, keeping FIFO order. */
+  #removeDeferred(predicate: (spec: ChunkScheduleSpec) => boolean): void {
+    const survivors: string[] = [];
+    for (const key of this.#deferredOrder) {
+      const spec = this.#deferred.get(key);
+      if (spec !== undefined && !predicate(spec)) {
+        survivors.push(key);
+      } else {
+        this.#deferred.delete(key);
+      }
+    }
+    this.#deferredOrder.length = 0;
+    this.#deferredOrder.push(...survivors);
+  }
+
   cancelVolume(volumeId: VolumeId): void {
     if (this.#disposed) return;
     for (const [key, entry] of [...this.#pending]) {
       if (entry.spec.volumeId === volumeId) this.#pending.delete(key);
     }
+    this.#removeDeferred((spec) => spec.volumeId === volumeId);
     for (const [key, entry] of [...this.#submitted]) {
       if (entry.spec.volumeId === volumeId) {
         if (entry.handle !== undefined) {
@@ -304,6 +355,9 @@ class ChunkSchedulerImpl implements ChunkScheduler {
         this.#pending.delete(key);
       }
     }
+    this.#removeDeferred(
+      (spec) => spec.namespace === namespace && spec.volumeId === volumeId,
+    );
     for (const [key, entry] of [...this.#submitted]) {
       if (
         entry.spec.namespace === namespace &&
@@ -322,6 +376,7 @@ class ChunkSchedulerImpl implements ChunkScheduler {
     for (const [key, entry] of [...this.#pending]) {
       if (entry.spec.namespace === namespace) this.#pending.delete(key);
     }
+    this.#removeDeferred((spec) => spec.namespace === namespace);
     for (const [key, entry] of [...this.#submitted]) {
       if (entry.spec.namespace === namespace) {
         if (entry.handle !== undefined) {
@@ -344,6 +399,8 @@ class ChunkSchedulerImpl implements ChunkScheduler {
   cancelAll(): void {
     if (this.#disposed) return;
     this.#pending.clear();
+    this.#deferred.clear();
+    this.#deferredOrder.length = 0;
     for (const entry of this.#submitted.values()) {
       if (entry.handle !== undefined) {
         this.#pool.cancel(entry.handle);
@@ -393,7 +450,27 @@ class ChunkSchedulerImpl implements ChunkScheduler {
       dispatched += 1;
     }
 
-    // 2. Install fresh results within the upload budget. With a
+    // 2. Top the pending set back up from the deferred dirty source so
+    // evicted chunks (issue #59) re-enter dispatch on the next flush.
+    // FIFO order keeps every deferred chunk moving toward meshing, and
+    // the pending bound still holds: capacity just freed by dispatch.
+    while (
+      this.#pending.size < this.#maxPending &&
+      this.#deferredOrder.length > 0
+    ) {
+      const deferredKey = this.#deferredOrder.shift();
+      if (deferredKey === undefined) break;
+      const deferredSpec = this.#deferred.get(deferredKey);
+      if (deferredSpec !== undefined) {
+        this.#deferred.delete(deferredKey);
+        this.#pending.set(deferredKey, {
+          spec: deferredSpec,
+          priority: this.#priorityFor?.(deferredSpec) ?? 1,
+        });
+      }
+    }
+
+    // 3. Install fresh results within the upload budget. With a
     // synchronous executor this installs the work dispatched above; with
     // a worker it installs whatever completed since the last frame.
     while (
@@ -411,6 +488,7 @@ class ChunkSchedulerImpl implements ChunkScheduler {
   diagnostics(): ChunkSchedulerDiagnostics {
     return {
       pending: this.#pending.size,
+      deferred: this.#deferred.size,
       inFlight: this.#pool.diagnostics.inFlight,
       completedQueue: this.#completed.length,
       uploadsThisFrame: this.#uploadsThisFrame,
@@ -424,6 +502,8 @@ class ChunkSchedulerImpl implements ChunkScheduler {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#pending.clear();
+    this.#deferred.clear();
+    this.#deferredOrder.length = 0;
     for (const entry of this.#submitted.values()) {
       if (entry.handle !== undefined) {
         this.#pool.cancel(entry.handle);

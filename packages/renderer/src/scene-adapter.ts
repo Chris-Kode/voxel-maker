@@ -102,6 +102,8 @@ interface ChunkMeshEntry {
 export interface RendererDiagnostics {
   /** Dirty chunks waiting to be dispatched. */
   readonly pendingChunks: number;
+  /** Dirty chunks evicted from the pending set, awaiting capacity. */
+  readonly deferredChunks: number;
   /** Mesh jobs currently computing. */
   readonly inFlightMeshes: number;
   /** Chunk meshes currently installed in the scene (live projection). */
@@ -846,6 +848,7 @@ class SceneAdapterImpl implements SceneAdapter {
     const scheduler = this.#scheduler.diagnostics();
     return {
       pendingChunks: scheduler.pending,
+      deferredChunks: scheduler.deferred,
       inFlightMeshes: scheduler.inFlight,
       installedChunks: this.chunkMeshCount,
       triangles: this.#projections.get("live")?.installedTriangles ?? 0,
