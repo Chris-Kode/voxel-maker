@@ -143,6 +143,48 @@ describe("bench CLI numeric option validation (ticket #57)", () => {
     },
   );
 
+  it("starts a fresh baseline when no retained row matches the named hardware (issue #64)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-cli-issue-64-"));
+    try {
+      const trendsPath = join(dir, "trends.json");
+      // A fake CPU model can never match the runner's named hardware,
+      // so the CLI must skip comparison and start a fresh baseline.
+      const retained = JSON.stringify({
+        schemaVersion: 1,
+        rows: [
+          {
+            date: "2025-01-01T00:00:00.000Z",
+            hardware: {
+              tier: "ci-smoke",
+              cpuModel: "Issue-64 Fake CPU",
+              platform: "linux",
+              arch: "x64",
+              cores: 2,
+              totalMemoryGiB: 7,
+              nodeVersion: "v22",
+            },
+            values: { "compact.10000.command.p95": 4 },
+          },
+        ],
+      });
+      writeFileSync(trendsPath, retained, "utf8");
+
+      const result = runCli([...MINIMAL_ARGS, "--trends", trendsPath], dir);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "[skip] no retained baseline on this named hardware",
+      );
+      expect(result.stdout).toContain("trends appended");
+      const appended = JSON.parse(readFileSync(trendsPath, "utf8")) as {
+        readonly rows: readonly unknown[];
+      };
+      expect(appended.rows).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   it("accepts positive integer counts and writes numeric JSON options", () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-cli-ok-"));
     const jsonPath = join(dir, "out.json");

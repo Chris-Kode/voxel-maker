@@ -6,7 +6,7 @@ import {
   appendTrendRow,
   compareWithTrends,
   emptyTrendHistory,
-  sameNamedHardware,
+  latestSameHardwareRow,
   runBenchmarks,
   type BenchmarkTrendHistory,
   type HardwareInput,
@@ -138,17 +138,16 @@ async function main(): Promise<number> {
   if (options.trends !== undefined) {
     const trendsPath = resolve(options.trends);
     const history = await loadTrends(trendsPath);
-    const latest = history.rows[history.rows.length - 1];
-    if (
-      latest !== undefined &&
-      !sameNamedHardware(report.hardware, latest.hardware)
-    ) {
-      // A different machine class never regresses against unrelated
-      // hardware; the appended row below becomes the fresh baseline.
+    const baseline = latestSameHardwareRow(history, report.hardware);
+    if (baseline === undefined && history.rows.length > 0) {
+      // No retained row on this named hardware: a different machine
+      // class never regresses against unrelated hardware, so the
+      // appended row below becomes the fresh baseline.
+      const latest = history.rows[history.rows.length - 1];
       console.log("");
-      console.log(`trend baseline: ${latest.date}`);
+      console.log(`latest row: ${latest?.date ?? "none"}`);
       console.log(
-        `[skip] named hardware changed since baseline (${latest.hardware.cpuModel} -> ${report.hardware.cpuModel}); starting a fresh baseline`,
+        `[skip] no retained baseline on this named hardware (latest ${latest?.hardware.cpuModel ?? "unknown"} -> ${report.hardware.cpuModel}); starting a fresh baseline`,
       );
     }
     const comparisons = compareWithTrends(report, history);
@@ -157,9 +156,7 @@ async function main(): Promise<number> {
     );
     if (comparisons.length > 0) {
       console.log("");
-      console.log(
-        `trend baseline: ${history.rows[history.rows.length - 1]?.date ?? "none"}`,
-      );
+      console.log(`trend baseline: ${baseline?.date ?? "none"}`);
       for (const comparison of comparisons) {
         const flag = comparison.regressed ? " REGRESSED" : "";
         const unit = comparison.key.endsWith("rssMiB") ? "MiB" : "ms";

@@ -78,19 +78,23 @@ A missed gate fails the CLI (exit code 1) and blocks the CI step.
 
 ## Retained trends
 
-`--trends <path>` compares the run against the latest retained row and
-appends a new row. Rows are flattened to stable keys
-(`<kind>.<size>.<metric>`, e.g. `compact.100000.command.p95`), tagged
-with the named hardware (CPU model, platform, arch, cores, memory, Node
-version). A value regressing beyond tolerance (+20% relative and > 2 ms
-absolute) fails the run, so regressions are detected against retained
-evidence on the same hardware, not only against absolute thresholds.
+`--trends <path>` compares the run against the newest retained row on the
+same named hardware and appends a new row. Rows are flattened to stable
+keys (`<kind>.<size>.<metric>`, e.g. `compact.100000.command.p95`),
+tagged with the named hardware (CPU model, platform, arch, cores,
+memory, Node version). A value regressing beyond tolerance (+20%
+relative and > 2 ms absolute) fails the run, so regressions are
+detected against retained evidence on the same hardware, not only
+against absolute thresholds.
 
-A run whose named hardware differs from the latest baseline (for
-example a different runner CPU generation on the same `ci-smoke` tier)
-never compares against it — the tier alone is not the hardware
-identity. It appends its row as a fresh baseline instead, so hardware
-rotation cannot masquerade as a regression.
+The tier alone is not the hardware identity: a row from a different
+machine class (for example a rotated runner CPU generation on the same
+`ci-smoke` tier) is never used as a baseline, so hardware rotation
+cannot masquerade as a regression. The search skips such rows and uses
+the newest row that matches the current named hardware, so alternating
+machines (A, B, A) still compare each run against its own machine's
+prior baseline; a fresh baseline starts only when no matching row
+exists.
 
 ## Running
 

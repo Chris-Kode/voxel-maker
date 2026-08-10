@@ -17,7 +17,10 @@ import type {
 /** The latest trend history file format. */
 export interface BenchmarkTrendHistory {
   readonly schemaVersion: 1;
-  /** Rows in chronological order; the last row is the latest baseline. */
+  /**
+   * Rows in chronological order; the newest row on the same named
+   * hardware is the comparison baseline.
+   */
   readonly rows: readonly TrendRow[];
 }
 
@@ -42,7 +45,7 @@ export const DEFAULT_TREND_TOLERANCE: TrendTolerance = Object.freeze({
   absoluteFloorMs: 2,
 });
 
-/** One compared value of the latest baseline. */
+/** One compared value of the newest same-named-hardware baseline. */
 export interface TrendComparison {
   readonly key: string;
   readonly previous: number;
@@ -114,19 +117,43 @@ export function sameNamedHardware(a: HardwareInfo, b: HardwareInfo): boolean {
   );
 }
 
-/** Compares a report against the latest row of a trend history. */
+/**
+ * Finds the newest row whose named-hardware identity matches the given
+ * hardware, searching backward through the chronological history (issue
+ * #64). Rows from other machines (e.g. a rotated CI runner CPU) never
+ * become a baseline, so alternating hardware cannot bypass retained
+ * trend comparisons; a fresh baseline starts only when no matching row
+ * exists.
+ */
+export function latestSameHardwareRow(
+  history: BenchmarkTrendHistory,
+  hardware: HardwareInfo,
+): TrendRow | undefined {
+  for (let i = history.rows.length - 1; i >= 0; i -= 1) {
+    const row = history.rows[i];
+    if (row !== undefined && sameNamedHardware(hardware, row.hardware)) {
+      return row;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Compares a report against the newest retained row on the same named
+ * hardware. A different machine class (CPU model, platform, cores, ...)
+ * gets a fresh baseline, never a false regression against unrelated
+ * hardware; the tier is not enough because ci-smoke covers every runner
+ * CPU. When rows alternate between machines, the newest matching row is
+ * still found, so a severe regression is never skipped just because a
+ * newer row came from another machine.
+ */
 export function compareWithTrends(
   report: BenchmarkReport,
   history: BenchmarkTrendHistory,
   tolerance: TrendTolerance = DEFAULT_TREND_TOLERANCE,
 ): readonly TrendComparison[] {
-  const latest = history.rows[history.rows.length - 1];
+  const latest = latestSameHardwareRow(history, report.hardware);
   if (latest === undefined) return [];
-  // Retained trends are only comparable on the same named hardware; a
-  // different machine class (CPU model, platform, cores, ...) gets a
-  // fresh baseline, never a false regression against unrelated
-  // hardware. The tier is not enough: ci-smoke covers every runner CPU.
-  if (!sameNamedHardware(report.hardware, latest.hardware)) return [];
   const current = flattenReport(report);
   const comparisons: TrendComparison[] = [];
   for (const key of Object.keys(latest.values)) {
