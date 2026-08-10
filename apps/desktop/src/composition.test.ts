@@ -286,7 +286,13 @@ describe("desktop composition root", () => {
       );
     expect(freshMesh?.geometry.getAttribute("position").count).toBe(408);
     void positions;
-    expect(composition.session.current?.revision).toBe(1);
+    // The session surface is live (issue #55): after the commit it must
+    // report the store revision (fixture at 1 plus this commit), never a
+    // stale install value.
+    expect(composition.session.current?.revision).toBe(
+      composition.session.current?.store.revision,
+    );
+    expect(composition.session.current?.revision).toBe(2);
     composition.dispose();
   });
 
@@ -392,8 +398,6 @@ describe("desktop composition root", () => {
       },
     );
     expect(created.ok).toBe(true);
-    const fresh = composition.session.current;
-    if (fresh === undefined) throw new Error("no open session");
     const deleted = state.bus.execute(
       deleteMaterialCommand(commandId("command:test:delete-material"), {
         materialId: materialId(1),
@@ -401,9 +405,9 @@ describe("desktop composition root", () => {
       }),
       {
         transactionId: transactionId("transaction:test:delete-material"),
-        // The session state revision is frozen at install; the store's
-        // revision is live after the create commit above.
-        expectedRevision: fresh.store.revision,
+        // The session revision is live (issue #55): a sequential command
+        // can use the installed state's revision as its expected base.
+        expectedRevision: state.revision,
         source: "ui",
       },
     );
