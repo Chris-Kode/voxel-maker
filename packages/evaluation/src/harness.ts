@@ -6,6 +6,7 @@ import {
 } from "@voxel-maker/document";
 import {
   estimateCostUsd,
+  resolveAgentBudgets,
   type AgentBudgets,
   type ProviderUsage,
 } from "@voxel-maker/agent";
@@ -322,6 +323,10 @@ export async function evaluateScenario(
     options.onEvent?.(event);
   };
   const sessionHolder: { session?: ReturnType<typeof createAgentSession> } = {};
+  // Resolve/clamp the effective budget profile ONCE (issue #77): the
+  // same immutable profile is enforced by the agent session and hashed
+  // into the recorded versions, so provenance matches enforcement.
+  const effectiveBudgets = resolveAgentBudgets(options.budgets);
   const loopOptions: AgentLoopOptions = {
     provider,
     inspector,
@@ -331,7 +336,7 @@ export async function evaluateScenario(
     userPrompt: scenario.prompt,
     clock,
     sleep: clock.sleep,
-    ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
+    budgets: effectiveBudgets,
     onEvent,
     ...(options.isLiveCurrent === undefined
       ? {}
@@ -444,6 +449,7 @@ export async function evaluateScenario(
       inputDocumentHash: inputHash,
       providerId: provider.providerId,
       model: provider.defaultModel,
+      budgets: effectiveBudgets,
       ...(scenario.playbackClipId === undefined
         ? {}
         : { evaluationVersion: RIG_EVALUATION_VERSION }),
