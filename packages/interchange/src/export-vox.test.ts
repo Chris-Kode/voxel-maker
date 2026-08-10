@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  animationId,
+  keyframeId,
   materialId,
   nodeId,
+  trackId,
   volumeId,
   type VolumeId,
 } from "@voxel-maker/shared";
@@ -168,6 +171,71 @@ describe("exportVox", () => {
       outcome.blocked.some((loss) => loss.code === "VOX_LOSS_TRANSFORM"),
     ).toBe(true);
     expect(storage.files().size).toBe(0);
+  });
+
+  it("blocks export when the document has Clips and writes nothing", async () => {
+    const animated: VoxelDocument = {
+      ...exportDocument(),
+      animations: {
+        [animationId("animation:export:slide")]: {
+          animationId: animationId("animation:export:slide"),
+          name: "Slide",
+          duration: 2,
+          loop: "once",
+          tracks: [
+            {
+              trackId: trackId("track:export:slide"),
+              targetNodeId: nodeId("node:export:a"),
+              interpolation: "linear",
+              keyframes: [
+                {
+                  keyframeId: keyframeId("key:export:slide:0"),
+                  time: 0,
+                  property: { channel: "translation", value: [0, 0, 0] },
+                },
+                {
+                  keyframeId: keyframeId("key:export:slide:1"),
+                  time: 2,
+                  property: { channel: "translation", value: [1, 0, 0] },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const { store } = storeWithEntries(animated, [
+      { coordinate: [1, 2, -3], material: 1 },
+    ]);
+    const storage = new MemoryProjectStorage();
+    const outcome = await exportVox({
+      document: animated,
+      getVolume: (id) => store.getVolume(id),
+      storagePort: storage,
+      path: "animated.vox",
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.blocked.some((loss) => loss.code === "VOX_LOSS_CLIPS")).toBe(
+      true,
+    );
+    // Nothing is written while the Clip loss is pending.
+    expect(storage.files().size).toBe(0);
+    // The Clip-free equivalent exports without the Clip loss.
+    const { store: plainStore } = storeWithEntries(exportDocument(), [
+      { coordinate: [1, 2, -3], material: 1 },
+    ]);
+    const plain = await exportVox({
+      document: exportDocument(),
+      getVolume: (id) => plainStore.getVolume(id),
+      storagePort: storage,
+      path: "plain.vox",
+    });
+    expect(plain.ok).toBe(true);
+    if (!plain.ok) return;
+    expect(plain.losses.some((loss) => loss.code === "VOX_LOSS_CLIPS")).toBe(
+      false,
+    );
   });
 
   it("reports material-semantics losses on a successful export", async () => {
