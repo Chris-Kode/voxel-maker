@@ -4,6 +4,7 @@ import {
   WorkspaceError,
 } from "@voxel-maker/shared";
 import { crc32 } from "./crc32.js";
+import { assertNotAboveDefault } from "./limits.js";
 
 /**
  * Deterministic stored-entry ZIP archive codec (plan S5.4/S5.5, ADR-0004).
@@ -258,26 +259,35 @@ interface CentralRecord {
 /**
  * Reads and fully validates a stored-entry ZIP archive before returning
  * entry data (plan S5.4): end-of-central-directory sanity, central directory
- * integrity, path safety, duplicate rejection, stored-only method, size and
- * total limits, local-header consistency, non-overlapping data ranges, and
- * per-entry CRC-32 verification. Any violation throws a structured error
- * before the caller can allocate from untrusted data.
+ * integrity, path safety, entry-name byte limits, duplicate rejection,
+ * stored-only method, size and total limits, local-header consistency,
+ * non-overlapping data ranges, and per-entry CRC-32 verification. Any
+ * violation throws a structured error before the caller can allocate from
+ * untrusted data. The supplied limit profile may only lower the hard
+ * defaults (ADR-0009).
  */
 export function readZipArchive(
   bytes: Uint8Array,
   limits: ZipArchiveLimits = DEFAULT_ZIP_ARCHIVE_LIMITS,
 ): ZipEntry[] {
+  // ADR-0009: hard defaults are immutable; callers may only lower them, and
+  // a raised profile is rejected before any byte of the archive is parsed.
+  const safeLimits = assertNotAboveDefault(
+    limits,
+    DEFAULT_ZIP_ARCHIVE_LIMITS,
+    "ZIP archive",
+  );
   // ADR-0009 input-file cap (issue #96): the raw input is bounded before
   // any scan, so a hostile oversized file is rejected without touching its
   // body. This is independent of the per-entry and expanded-total limits,
   // which only apply once the archive is known to fit.
-  if (bytes.byteLength > limits.maxInputBytes) {
+  if (bytes.byteLength > safeLimits.maxInputBytes) {
     throw limitError(
       INPUT_FILE_LIMIT_EXCEEDED,
       "ZIP archive exceeds the input-file size limit",
       {
         requested: bytes.byteLength,
-        limit: limits.maxInputBytes,
+        limit: safeLimits.maxInputBytes,
       },
     );
   }
@@ -306,13 +316,13 @@ export function readZipArchive(
       { entriesOnDisk, entryCount },
     );
   }
-  if (entryCount > limits.maxEntries) {
+  if (entryCount > safeLimits.maxEntries) {
     throw limitError(
       "ENTRY_LIMIT_EXCEEDED",
       "ZIP archive exceeds its entry limit",
       {
         requested: entryCount,
-        limit: limits.maxEntries,
+        limit: safeLimits.maxEntries,
       },
     );
   }
@@ -360,6 +370,26 @@ export function readZipArchive(
         "ZIP central directory record is truncated",
       );
     }
+    // ZIP64 name-length marker: reject the unsupported marker before the
+    // byte-limit check, matching how the other marker fields are handled
+    // (markers are format corruption; limits are caller profiles).
+    if (nameLength === 0xffff) {
+      throw corrupt(
+        "INVALID_ZIP_ARCHIVE",
+        "ZIP record uses unsupported sizes or ZIP64 markers",
+        { nameLength },
+      );
+    }
+    // Issue #98: enforce the configured byte limit on the raw name length
+    // before slicing or decoding, so a lowered profile rejects oversized
+    // names with a stable limit error before any name allocation.
+    if (nameLength > safeLimits.maxEntryNameBytes) {
+      throw limitError(
+        "ENTRY_NAME_LIMIT_EXCEEDED",
+        "ZIP entry name exceeds its byte limit",
+        { requested: nameLength, limit: safeLimits.maxEntryNameBytes },
+      );
+    }
     const nameBytes = bytes.slice(
       cursor + CENTRAL_HEADER_BYTES,
       cursor + CENTRAL_HEADER_BYTES + nameLength,
@@ -393,7 +423,6 @@ export function readZipArchive(
       compressedSize !== uncompressedSize ||
       compressedSize === U32_MAX ||
       uncompressedSize === U32_MAX ||
-      nameLength === 0xffff ||
       extraLength === 0xffff ||
       commentLength === 0xffff ||
       localOffset === U32_MAX
@@ -404,14 +433,14 @@ export function readZipArchive(
         { name },
       );
     }
-    if (uncompressedSize > limits.maxEntrySize) {
+    if (uncompressedSize > safeLimits.maxEntrySize) {
       throw limitError(
         "ENTRY_SIZE_LIMIT_EXCEEDED",
         "ZIP entry exceeds its size limit",
         {
           name,
           requested: uncompressedSize,
-          limit: limits.maxEntrySize,
+          limit: safeLimits.maxEntrySize,
         },
       );
     }
@@ -450,13 +479,13 @@ export function readZipArchive(
         { requested: totalSize, archiveSize: bytes.byteLength },
       );
     }
-    if (totalSize > limits.maxTotalSize) {
+    if (totalSize > safeLimits.maxTotalSize) {
       throw limitError(
         "TOTAL_SIZE_LIMIT_EXCEEDED",
         "ZIP archive exceeds its total size limit",
         {
           requested: totalSize,
-          limit: limits.maxTotalSize,
+          limit: safeLimits.maxTotalSize,
         },
       );
     }

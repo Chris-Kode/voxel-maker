@@ -237,6 +237,9 @@ describe("fuzz: random bytes never crash a reader", () => {
       if (outcome.ok) {
         for (const entry of outcome.value) {
           expect(entry.name.length).toBeGreaterThan(0);
+          expect(entry.name.length).toBeLessThanOrEqual(
+            tinyZipLimits.maxEntryNameBytes,
+          );
           expect(entry.data.byteLength).toBeLessThanOrEqual(
             tinyZipLimits.maxEntrySize,
           );
@@ -314,13 +317,10 @@ describe("adversarial ZIP", () => {
   });
 
   it("rejects entries whose declared size exceeds the archive (stored-format size bomb)", () => {
-    const looseZipLimits: ZipArchiveLimits = Object.freeze({
-      ...DEFAULT_ZIP_ARCHIVE_LIMITS,
-      maxEntries: 8,
-      maxEntryNameBytes: 64,
-      maxEntrySize: 0x7fff_ffff,
-      maxTotalSize: 0x7fff_ffff,
-    });
+    // Hard defaults: the forged 256 MiB declarations stay under the 1 GiB
+    // per-entry default, so the stored-format ratio preflight is what
+    // rejects the bomb (raising limits would itself be a LIMIT_ABOVE_DEFAULT
+    // violation since callers may only lower).
     const valid = singleEntryZip("bomb.bin", new TextEncoder().encode("tiny"));
     const forged = patchLocalU32(
       patchLocalU32(
@@ -338,7 +338,9 @@ describe("adversarial ZIP", () => {
       22,
       0x0fff_ffff,
     );
-    const outcome = structured(() => readZipArchive(forged, looseZipLimits));
+    const outcome = structured(() =>
+      readZipArchive(forged, DEFAULT_ZIP_ARCHIVE_LIMITS),
+    );
     expect(failure(outcome).code).toBe("DECLARED_SIZE_EXCEEDS_ARCHIVE");
   });
 

@@ -303,6 +303,81 @@ describe("readZipArchive", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.data.byteLength).toBe(0);
   });
+
+  it("rejects entry names above a lowered byte limit before decoding", () => {
+    // Issue #98: a caller-configured maxEntryNameBytes must be enforced on
+    // the raw central-directory length before the name is sliced or
+    // decoded, not only through the fixed 255-character format rule.
+    const bytes = writeZipArchive([{ name: "123456789.txt", data: text("x") }]);
+    expectErrorCode(
+      () =>
+        readZipArchive(bytes, {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxEntryNameBytes: 4,
+        }),
+      "ENTRY_NAME_LIMIT_EXCEEDED",
+    );
+  });
+
+  it("accepts entry names at the lowered byte limit boundary", () => {
+    const bytes = writeZipArchive([{ name: "1234", data: text("x") }]);
+    const entries = readZipArchive(bytes, {
+      ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+      maxEntryNameBytes: 4,
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toBe("1234");
+  });
+
+  it("accepts the longest writer-produced names under default limits", () => {
+    const bytes = writeZipArchive([{ name: "a".repeat(255), data: text("x") }]);
+    const entries = readZipArchive(bytes);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toHaveLength(255);
+  });
+
+  it("rejects limit profiles that raise hard defaults", () => {
+    const bytes = writeZipArchive([{ name: "a", data: text("x") }]);
+    expectErrorCode(
+      () =>
+        readZipArchive(bytes, {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxEntryNameBytes: 4_096,
+        }),
+      "LIMIT_ABOVE_DEFAULT",
+    );
+    expectErrorCode(
+      () =>
+        readZipArchive(bytes, {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxEntries: 9_999,
+        }),
+      "LIMIT_ABOVE_DEFAULT",
+    );
+    // A non-finite profile value would silently disable every comparison
+    // that uses it (issue #98 "validate limit profiles").
+    expectErrorCode(
+      () =>
+        readZipArchive(bytes, {
+          ...DEFAULT_ZIP_ARCHIVE_LIMITS,
+          maxEntryNameBytes: Number.NaN,
+        }),
+      "LIMIT_ABOVE_DEFAULT",
+    );
+  });
+
+  it("rejects the ZIP64 name-length marker before the byte limit", () => {
+    // The 0xFFFF name length is the ZIP64 marker for a 16-bit length, so it
+    // is format corruption (INVALID_ZIP_ARCHIVE) like the other marker
+    // fields, never a caller-profile limit error. The central directory is
+    // grown so the forged record physically fits and the marker check —
+    // not the truncation check — is what rejects it.
+    const base = writeZipArchive([{ name: "a", data: text("x") }]);
+    const forged = growCentralDirectory(base, 0xffff, (view, centralOffset) => {
+      view.setUint16(centralOffset + 28, 0xffff, true);
+    });
+    expectErrorCode(() => readZipArchive(forged), "INVALID_ZIP_ARCHIVE");
+  });
 });
 
 describe("archive round-trip property", () => {

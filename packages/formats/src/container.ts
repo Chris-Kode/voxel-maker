@@ -33,6 +33,7 @@ import {
   type VxlManifest,
   type VxlManifestEntry,
 } from "./manifest.js";
+import { assertNotAboveDefault } from "./limits.js";
 import { decodeVoxelVolume, encodeVoxelVolume } from "./volume-binary.js";
 import {
   DEFAULT_ZIP_ARCHIVE_LIMITS,
@@ -189,27 +190,6 @@ export function decodeVolumeEntryName(name: string): string {
 
 const compareCodeUnit = (a: string, b: string): number =>
   a < b ? -1 : a > b ? 1 : 0;
-
-/** Rejects a caller-supplied limit profile that raises a hard default. */
-function assertNotAboveDefault<T extends object>(
-  provided: T,
-  defaults: T,
-  name: string,
-): T {
-  for (const key of Object.keys(defaults) as (keyof T)[]) {
-    const limit = provided[key];
-    const hard = defaults[key];
-    if (typeof limit === "number" && typeof hard === "number" && limit > hard) {
-      throw new WorkspaceError({
-        family: "limit",
-        code: "LIMIT_ABOVE_DEFAULT",
-        message: `Callers may only lower the ${name} hard limits`,
-        context: { limit: String(key), requested: limit, hard },
-      });
-    }
-  }
-  return provided;
-}
 
 /**
  * Writes a deterministic `.vxl` container. Entry order is fixed:
