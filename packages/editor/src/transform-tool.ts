@@ -248,7 +248,20 @@ function computePreview(
       throw outOfBoundsError(volumeId, destination, "destination");
     }
     const volume = volumeOf(byVolume, volumeId);
-    collectOccupied(volume.srcKeys, view, region, maxGestureVoxels);
+    const srcKeys = new Set<string>();
+    collectOccupied(srcKeys, view, region, maxGestureVoxels);
+    for (const key of srcKeys) volume.srcKeys.add(key);
+    // Map only this entry's own occupied keys relative to this entry's
+    // region before unioning the mapped results (ticket #107): mapping
+    // the per-volume union relative to every region would transform the
+    // other regions' voxels too and invent positions, inflating the net
+    // occupied change and falsely rejecting valid mirrors/rotations
+    // near the occupied-voxel limit. Destination keys stay a per-volume
+    // union because destinations are already absolute AABBs.
+    for (const key of srcKeys) {
+      const mapped = mapKey(key, region, params);
+      if (mapped !== undefined) volume.mappedKeys.add(mapped);
+    }
     collectOccupied(volume.destKeys, view, destination, maxGestureVoxels);
     entries.push({ volumeId, source: region, destination });
   }
@@ -257,14 +270,6 @@ function computePreview(
   // commit can never diverge from the preview. The preview carries the
   // ordered entries so the commit replays exactly what was previewed.
   const ordered = validatedEntries(entries, params.operation);
-  for (const { volumeId, region } of regions) {
-    const volume = byVolume.get(volumeId);
-    if (volume === undefined) continue;
-    for (const key of volume.srcKeys) {
-      const mapped = mapKey(key, region, params);
-      if (mapped !== undefined) volume.mappedKeys.add(mapped);
-    }
-  }
   let movedVoxels = 0;
   let overwrittenVoxels = 0;
   let removedVoxels = 0;
