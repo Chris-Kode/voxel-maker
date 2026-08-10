@@ -913,6 +913,10 @@ export async function runReleaseSmoke(): Promise<string> {
         error: Object.assign(new Error("release smoke fake provider failure"), {
           code: "PROVIDER_UNCONFIGURED",
         }),
+        // Issue #78: failed results carry the cumulative consumed evidence.
+        rounds: 1,
+        toolCalls: 0,
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       messages: [
         {

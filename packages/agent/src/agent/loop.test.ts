@@ -640,6 +640,48 @@ describe("agent loop: cancellation", () => {
     expect(session.preview.closed).toBe(true);
     expect(h.provider.callCount).toBe(0);
   });
+
+  it("preserves cumulative rounds, tool calls, and usage on cancellation (issue #78)", async () => {
+    const h = harness();
+    // Two completed rounds with real usage, then the cancel lands at the
+    // next boundary: the failed result must still report what was consumed.
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "inspecting",
+        toolCalls: [summaryCall("call_1")],
+        usage: { inputTokens: 1000, outputTokens: 100 },
+      },
+      {
+        text: "inspecting again",
+        toolCalls: [summaryCall("call_2")],
+        usage: { inputTokens: 1000, outputTokens: 100 },
+      },
+      {
+        text: "never reached",
+        usage: { inputTokens: 1000, outputTokens: 100 },
+      },
+    ];
+    let executedToolCalls = 0;
+    const session = h.makeSession(script, {
+      onEvent: (event) => {
+        if (event.kind === "tool") {
+          executedToolCalls += 1;
+          if (executedToolCalls > 1) session.cancel();
+        }
+      },
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("canceled");
+    expect(result.state).toBe("cancel");
+    // Issue #78: failed/canceled runs must preserve consumed evidence.
+    expect(result.rounds).toBe(2);
+    expect(result.toolCalls).toBe(2);
+    expect(result.usage).toEqual({
+      inputTokens: 2000,
+      outputTokens: 200,
+    });
+    expect(session.preview.closed).toBe(true);
+  });
 });
 
 describe("agent loop: budget exhaustion", () => {

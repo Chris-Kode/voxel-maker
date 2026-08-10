@@ -57,6 +57,14 @@ function failedResult(): AgentRunResult {
     error: Object.assign(new Error("session budget exceeded"), {
       code: "LIMIT_EXCEEDED",
     }),
+    // Issue #78: failed results carry the cumulative consumed evidence.
+    rounds: 2,
+    toolCalls: 3,
+    usage: {
+      inputTokens: 200_000,
+      outputTokens: 40,
+      estimatedCostUsd: 0.2,
+    },
   };
 }
 
@@ -144,6 +152,15 @@ describe("buildSessionDiagnostics", () => {
     expect(report.outcome.ok).toBe(false);
     expect(report.outcome.reason).toBe("limit");
     expect(report.outcome.errorCode).toBe("LIMIT_EXCEEDED");
+    // Issue #78: failed runs keep their consumed rounds, tokens, and cost.
+    expect(report.usage).toEqual({
+      rounds: 2,
+      toolCalls: 3,
+      inputTokens: 200_000,
+      outputTokens: 40,
+      estimatedCostUsd: 0.2,
+    });
+    expect(report.staged).toBeUndefined();
     const text = JSON.stringify(report);
     expect(text).not.toContain("session budget exceeded");
     expect(text).not.toContain("at ");

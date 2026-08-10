@@ -255,6 +255,17 @@ export type AgentRunResult =
       readonly state: AgentState;
       readonly reason: AgentRunReason;
       readonly error: Error;
+      /**
+       * Cumulative rounds reserved before the failure (issue #78):
+       * failed/canceled runs must not erase consumed evidence. Counts
+       * the same reserved units as the success variant, including the
+       * round whose response failed the run.
+       */
+      readonly rounds: number;
+      /** Cumulative tool calls reserved before the failure (issue #78). */
+      readonly toolCalls: number;
+      /** Cumulative provider-reported usage before the failure (issue #78). */
+      readonly usage: ProviderUsage;
     };
 
 /** One agent session: a single bounded run plus explicit commit/discard. */
@@ -565,13 +576,7 @@ class AgentSessionImpl implements AgentSession {
             const refinement = await this.#runRefinementPhase();
             if (refinement.kind === "failed") return refinement.result;
             if (!this.#isLiveCurrent()) {
-              this.#failClosed();
-              return {
-                ok: false,
-                state: this.machine.state,
-                reason: "conflict",
-                error: revisionConflictError(),
-              };
+              return this.#failedResult("conflict", revisionConflictError());
             }
           }
           this.machine.transition(next);
@@ -579,22 +584,14 @@ class AgentSessionImpl implements AgentSession {
           if (next === "approve") {
             const diff = this.preview.diff();
             if (!diff.ok) {
-              this.#failClosed();
-              return {
-                ok: false,
-                state: this.machine.state,
-                reason: "provider",
-                error: diff.error,
-              };
+              return this.#failedResult("provider", diff.error);
             }
             return {
               ok: true,
               state: "approve",
               stagedCommands: this.preview.stagedCount,
               diff: diff.value,
-              rounds: this.#ledger.round,
-              toolCalls: this.#ledger.toolCalls,
-              usage: this.#usageSummary(),
+              ...this.#consumedEvidence(),
               refinement: this.#lastRefinement,
             };
           }
@@ -1353,13 +1350,37 @@ class AgentSessionImpl implements AgentSession {
     };
   }
 
+  /**
+   * The cumulative consumed evidence of the run so far (issue #78): the
+   * same counters every result variant carries, so failed/canceled runs
+   * report exactly what the run consumed.
+   */
+  #consumedEvidence(): {
+    readonly rounds: number;
+    readonly toolCalls: number;
+    readonly usage: ProviderUsage;
+  } {
+    return {
+      rounds: this.#ledger.round,
+      toolCalls: this.#ledger.toolCalls,
+      usage: this.#usageSummary(),
+    };
+  }
+
   #emit(event: AgentEvent): void {
     this.#onEvent?.(event);
   }
 
   #failedResult(reason: AgentRunReason, error: Error): AgentRunResult {
     this.#failClosed();
-    return { ok: false, state: this.machine.state, reason, error };
+    return {
+      ok: false,
+      state: this.machine.state,
+      reason,
+      error,
+      // Issue #78: preserve the consumed evidence of the failed run.
+      ...this.#consumedEvidence(),
+    };
   }
 
   #canceledResult(): AgentRunResult {
@@ -1375,6 +1396,8 @@ class AgentSessionImpl implements AgentSession {
         message: "The agent run was canceled",
         retryable: false,
       }),
+      // Issue #78: preserve the consumed evidence of the canceled run.
+      ...this.#consumedEvidence(),
     };
   }
 

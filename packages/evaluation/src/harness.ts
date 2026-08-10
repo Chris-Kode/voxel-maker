@@ -364,7 +364,9 @@ export async function evaluateScenario(
   // preview and releases its counters).
   const stagedCommands = result.ok ? result.stagedCommands : 0;
   const voxelEstimate = result.ok ? preview.voxelEstimate : 0;
-  const usage = result.ok ? result.usage : { inputTokens: 0, outputTokens: 0 };
+  // Issue #78: failed/canceled runs must preserve the consumed evidence
+  // (completed rounds, executed tool calls, provider-reported usage).
+  const usage = result.usage;
   // Overlay-clip playback evidence (plan S13.5): the staged clip is read
   // from the preview session and played (evaluated) BEFORE Apply; the
   // live store is never touched by playback. Apply closes the preview,
@@ -426,8 +428,8 @@ export async function evaluateScenario(
     runReason: result.ok ? undefined : result.reason,
     applyOk,
     toolLog,
-    rounds: result.ok ? result.rounds : 0,
-    toolCalls: result.ok ? result.toolCalls : toolLog.length,
+    rounds: result.rounds,
+    toolCalls: result.toolCalls,
     commands: result.ok ? result.stagedCommands : 0,
     voxelEstimate,
     effectiveChangedVoxels,
@@ -461,8 +463,8 @@ export async function evaluateScenario(
       state: result.state,
       reason: result.ok ? undefined : result.reason,
       errorCode: result.ok ? undefined : errorCodeOf(result.error),
-      rounds: result.ok ? result.rounds : 0,
-      toolCalls: result.ok ? result.toolCalls : toolLog.length,
+      rounds: result.rounds,
+      toolCalls: result.toolCalls,
       stagedCommands,
       voxelEstimate,
       usage,
