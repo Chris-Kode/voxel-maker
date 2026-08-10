@@ -85,8 +85,14 @@ export function buildChannelProperty(
   };
 }
 
-/** Compares two channel values with rotation sign tolerance (q ≡ −q). */
+/**
+ * Compares two channel values. Sign-equivalence (q ≡ −q) is valid only
+ * for quaternion rotation: translation and scale require component
+ * equality, so a negated translation like [1,2,3] → [−1,−2,−3] is a real
+ * change and must auto-key (issue #106).
+ */
 function channelValuesEqual(
+  channel: TrackChannel,
   left: readonly number[],
   right: readonly number[],
 ): boolean {
@@ -99,7 +105,7 @@ function channelValuesEqual(
     if (a !== b) equal = false;
     if (a !== -b) negated = false;
   }
-  return equal || negated;
+  return equal || (channel === "rotation" && negated);
 }
 
 /** Extracts the channel value of a transform for a track channel. */
@@ -154,6 +160,7 @@ export function buildAutoKeyCommands(
         if (
           before !== undefined &&
           channelValuesEqual(
+            channel,
             channelValue(before, channel),
             channelValue(payload.transform, channel),
           )

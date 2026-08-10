@@ -292,6 +292,55 @@ describe("buildAutoKeyCommands", () => {
     expect(key.property.value).toEqual([3, 0, 0]);
   });
 
+  it("keys sign-inverted translations (issue #106)", () => {
+    const document = createDocument({
+      documentId: "document:autokey:0004" as never,
+      metadata: { title: "auto-key negated translation" },
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [ARM],
+          transform: IDENTITY,
+          components: [],
+        },
+        {
+          nodeId: ARM,
+          name: "Arm",
+          parentId: ROOT,
+          children: [],
+          transform: { ...IDENTITY, translation: [1, 2, 3] },
+          components: [],
+        },
+      ],
+    });
+    // The edit negates every translation component. Elementwise negation
+    // is the same rotation only for quaternions (q ≡ −q); for
+    // translation it is a real change and must emit a keyframe.
+    const commands = buildAutoKeyCommands(
+      [
+        setNodeTransformCommand(commandId("command:autokey:move:0013"), {
+          nodeId: ARM,
+          transform: { ...IDENTITY, translation: [-1, -2, -3] },
+        }),
+      ],
+      {
+        clip: clip(),
+        time: 1,
+        document,
+        nextKeyframeId: (track) => keyframeId(`keyframe:autokey:new:${track}`),
+      },
+    );
+    expect(commands).toHaveLength(1);
+    const key = keyPayload(commands[0]);
+    if (key === undefined) throw new Error("unexpected command list");
+    expect(key.trackId).toBe(POS_TRACK);
+    expect(key.property.channel).toBe("translation");
+    expect(key.property.value).toEqual([-1, -2, -3]);
+  });
+
   it("treats quaternion sign flips as unchanged channels", () => {
     const document = createDocument({
       documentId: "document:autokey:0003" as never,
