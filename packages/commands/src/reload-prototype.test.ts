@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { commandId, nodeId, transactionId } from "@voxel-maker/shared";
+import {
+  animationId,
+  commandId,
+  nodeId,
+  transactionId,
+  volumeId,
+} from "@voxel-maker/shared";
 import {
   canonicalDocumentJson,
   createDocument,
@@ -9,7 +15,15 @@ import {
 import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
+import {
+  createAnimationCommand,
+  registerAnimationCommands,
+} from "./animation-commands.js";
 import { createNodeCommand, registerNodeCommands } from "./node-commands.js";
+import {
+  createVolumeCommand,
+  registerVolumeCommands,
+} from "./volume-commands.js";
 import type { TransactionOptions } from "./types.js";
 
 const identity = {
@@ -39,37 +53,44 @@ function reloadedDocument(): VoxelDocument {
   return parseDocument(canonicalDocumentJson(document));
 }
 
+function createReloadedBus(document: VoxelDocument): {
+  bus: CommandBus;
+  store: ReturnType<typeof createDocumentStoreHandle>["store"];
+} {
+  const { store, writeCapability } = createDocumentStoreHandle({ document });
+  const registry = new CommandRegistry();
+  registerNodeCommands(registry);
+  registerVolumeCommands(registry);
+  registerAnimationCommands(registry);
+  return { bus: new CommandBus(store, registry, writeCapability), store };
+}
+
+const transactionOptions = (
+  id: string,
+  revision: number,
+): TransactionOptions => ({
+  transactionId: transactionId(`transaction:reload:${id}`),
+  expectedRevision: revision,
+  source: "ui",
+});
+
 const PROTOTYPE_NAMES = ["toString", "constructor", "__proto__"] as const;
 
-describe("node.create after a serialize/parse reload (issue #103)", () => {
-  it("accepts absent opaque IDs that collide with prototype member names", () => {
-    const document = reloadedDocument();
-    const { store, writeCapability } = createDocumentStoreHandle({
-      document,
-    });
-    const registry = new CommandRegistry();
-    registerNodeCommands(registry);
-    const bus = new CommandBus(store, registry, writeCapability);
+describe("command creates after a serialize/parse reload (issue #103)", () => {
+  it("accepts absent node IDs that collide with prototype member names", () => {
+    const { bus, store } = createReloadedBus(reloadedDocument());
     const createCommand = (id: string) =>
       createNodeCommand(commandId(`command:reload:${id}`), {
         nodeId: nodeId(id),
         parentId: ROOT,
         transform: identity,
       });
-    const transactionOptions = (
-      id: string,
-      index: number,
-    ): TransactionOptions => ({
-      transactionId: transactionId(`transaction:reload:${id}`),
-      expectedRevision: index,
-      source: "ui",
-    });
     // One transaction per ID: each reloaded record must treat the absent
     // prototype-named ID as absent instead of inheriting Object.prototype.
     PROTOTYPE_NAMES.forEach((id, index) => {
-      expect(Object.prototype.hasOwnProperty.call(document.nodes, id)).toBe(
-        false,
-      );
+      expect(
+        Object.prototype.hasOwnProperty.call(store.getDocument().nodes, id),
+      ).toBe(false);
       const result = bus.execute(
         createCommand(id),
         transactionOptions(id, index),
@@ -91,14 +112,8 @@ describe("node.create after a serialize/parse reload (issue #103)", () => {
     });
   });
 
-  it("accepts prototype-named IDs in one multi-command transaction", () => {
-    const document = reloadedDocument();
-    const { store, writeCapability } = createDocumentStoreHandle({
-      document,
-    });
-    const registry = new CommandRegistry();
-    registerNodeCommands(registry);
-    const bus = new CommandBus(store, registry, writeCapability);
+  it("accepts prototype-named node IDs in one multi-command transaction", () => {
+    const { bus, store } = createReloadedBus(reloadedDocument());
     const result = bus.executeTransaction(
       PROTOTYPE_NAMES.map((id) =>
         createNodeCommand(commandId(`command:reload:batch:${id}`), {
@@ -107,16 +122,35 @@ describe("node.create after a serialize/parse reload (issue #103)", () => {
           transform: identity,
         }),
       ),
-      {
-        transactionId: transactionId("transaction:reload:batch"),
-        expectedRevision: 0,
-        source: "ui",
-      },
+      transactionOptions("batch", 0),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     for (const id of PROTOTYPE_NAMES) {
       expect(store.getDocument().nodes[nodeId(id)]).toBeDefined();
     }
+  });
+
+  it("accepts absent volume and animation IDs that collide with prototype member names", () => {
+    const { bus, store } = createReloadedBus(reloadedDocument());
+    const result = bus.executeTransaction(
+      [
+        createVolumeCommand(commandId("command:reload:volume"), {
+          volumeId: volumeId("constructor"),
+        }),
+        createAnimationCommand(commandId("command:reload:animation"), {
+          animationId: animationId("toString"),
+          duration: 1,
+          loop: "once",
+        }),
+      ],
+      transactionOptions("volume-animation", 0),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(store.getDocument().volumes[volumeId("constructor")]).toBeDefined();
+    expect(
+      store.getDocument().animations[animationId("toString")],
+    ).toBeDefined();
   });
 });
