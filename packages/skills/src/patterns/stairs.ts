@@ -61,19 +61,19 @@ export const STAIRS_GENERATOR: GeneratorDefinition<StairsParams> = {
       const min: Vec3i =
         params.axis === "x"
           ? [
-              params.start[0],
-              params.start[1] + index * params.stepHeight,
-              params.start[2] + index * params.depth,
-            ]
-          : [
               params.start[0] + index * params.depth,
               params.start[1] + index * params.stepHeight,
               params.start[2],
+            ]
+          : [
+              params.start[0],
+              params.start[1] + index * params.stepHeight,
+              params.start[2] + index * params.depth,
             ];
       const size: Vec3Size =
         params.axis === "x"
-          ? [params.width, params.stepHeight, params.depth]
-          : [params.depth, params.stepHeight, params.width];
+          ? [params.depth, params.stepHeight, params.width]
+          : [params.width, params.stepHeight, params.depth];
       const step = boxFromMinSize(min, size);
       proposed.push(commands.fillBox(step));
       bounds = bounds === undefined ? step : unionAabb(bounds, step);
