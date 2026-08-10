@@ -8,126 +8,24 @@ import {
   emptyTrendHistory,
   sameNamedHardware,
   runBenchmarks,
-  BENCHMARK_SCENE_KINDS,
-  type BenchmarkSceneKind,
   type BenchmarkTrendHistory,
   type HardwareInput,
   type RunBenchmarksOptions,
-  type TierName,
 } from "@voxel-maker/benchmarks";
-import { assertDistinctOutputPaths } from "./output-paths.js";
+import { parseArgs } from "./args.js";
 
 /**
  * Benchmark CLI (ticket #45): `voxel-maker-bench` runs the headless
  * ADR-0008 benchmark matrix, prints a gate table, writes the JSON
  * report, optionally compares and appends retained trend evidence, and
  * exits non-zero when any gate fails or a retained trend regresses —
- * the CI smoke and scheduled benchmark entry point.
+ * the CI smoke and scheduled benchmark entry point. Numeric options are
+ * strictly validated before the runner is invoked (ticket #57): a
+ * malformed, zero, or negative count exits non-zero instead of
+ * certifying zero-sample gates.
  */
 
-interface CliOptions {
-  tier: TierName | "auto";
-  sizes: readonly number[];
-  kinds: readonly string[];
-  samples: number;
-  saveLoadRuns: number;
-  previewSamples: number;
-  previewSize: number;
-  animationFrames: number;
-  full: boolean;
-  json: string | undefined;
-  trends: string | undefined;
-  noProgress: boolean;
-}
-
-function parseArgs(argv: readonly string[]): CliOptions {
-  const options: CliOptions = {
-    tier: "auto",
-    sizes: [],
-    kinds: [],
-    samples: 100,
-    saveLoadRuns: 5,
-    previewSamples: 10,
-    previewSize: 256,
-    animationFrames: 60,
-    full: false,
-    json: undefined,
-    trends: undefined,
-    noProgress: false,
-  };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i] as string;
-    const value = (): string => {
-      const next = argv[i + 1];
-      if (next === undefined) throw new Error(`${arg} requires a value`);
-      i += 1;
-      return next;
-    };
-    switch (arg) {
-      case "--tier":
-        options.tier = value() as TierName | "auto";
-        if (!["reference", "low", "ci-smoke", "auto"].includes(options.tier)) {
-          throw new Error(`unknown tier: ${options.tier as string}`);
-        }
-        break;
-      case "--sizes":
-        options.sizes = value()
-          .split(",")
-          .map((part) => Number.parseInt(part, 10))
-          .filter((size) => Number.isFinite(size) && size > 0);
-        break;
-      case "--kinds":
-        options.kinds = value()
-          .split(",")
-          .map((part) => part.trim());
-        for (const kind of options.kinds) {
-          if (!(BENCHMARK_SCENE_KINDS as readonly string[]).includes(kind)) {
-            throw new Error(`unknown scene kind: ${kind}`);
-          }
-        }
-        break;
-      case "--samples":
-        options.samples = Number.parseInt(value(), 10);
-        break;
-      case "--save-load-runs":
-        options.saveLoadRuns = Number.parseInt(value(), 10);
-        break;
-      case "--preview-samples":
-        options.previewSamples = Number.parseInt(value(), 10);
-        break;
-      case "--preview-size":
-        options.previewSize = Number.parseInt(value(), 10);
-        break;
-      case "--animation-frames":
-        options.animationFrames = Number.parseInt(value(), 10);
-        break;
-      case "--full":
-        options.full = true;
-        break;
-      case "--json":
-        options.json = value();
-        break;
-      case "--trends":
-        options.trends = value();
-        break;
-      case "--no-progress":
-        options.noProgress = true;
-        break;
-      case "--help":
-      case "-h":
-        printUsage();
-        process.exit(0);
-        break;
-      default:
-        throw new Error(`unknown argument: ${arg}`);
-    }
-  }
-  if (options.sizes.length === 0) options.sizes = [100_000, 500_000, 1_000_000];
-  if (options.kinds.length === 0) options.kinds = [...BENCHMARK_SCENE_KINDS];
-  if (options.samples <= 0) throw new Error("--samples must be positive");
-  assertDistinctOutputPaths(options.json, options.trends);
-  return options;
-}
+const HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
 
 function printUsage(): void {
   console.log(`voxel-maker-bench — headless ADR-0008 benchmark harness
@@ -137,13 +35,13 @@ Usage:
 
 Options:
   --tier <reference|low|ci-smoke|auto>  Gate tier (default auto).
-  --sizes <100000,500000,1000000>       Occupied-voxel sizes.
+  --sizes <100000,500000,1000000>       Occupied-voxel sizes (positive integers).
   --kinds <compact,sparse,checkerboard> Scene surface classes.
-  --samples <n>                         Latency samples per metric.
-  --save-load-runs <n>                  Save/load repetitions.
-  --preview-samples <n>                 Preview render samples.
-  --preview-size <px>                   Preview render size.
-  --animation-frames <n>                Frames per track count.
+  --samples <n>                         Latency samples per metric (positive integer).
+  --save-load-runs <n>                  Save/load repetitions (positive integer).
+  --preview-samples <n>                 Preview render samples (positive integer).
+  --preview-size <px>                   Preview render size (positive integer).
+  --animation-frames <n>                Frames per track count (positive integer).
   --full                                Full matrix (incl. export at 1M).
   --json <path>                         Write the JSON report.
   --trends <path>                       Compare + append retained trends.
@@ -177,7 +75,12 @@ async function loadTrends(path: string): Promise<BenchmarkTrendHistory> {
 }
 
 async function main(): Promise<number> {
-  const options = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.some((arg) => HELP_FLAGS.has(arg))) {
+    printUsage();
+    return 0;
+  }
+  const options = parseArgs(argv);
   const cpu = cpus();
   const hardwareInput: HardwareInput = {
     cpuModel: cpu[0]?.model ?? "unknown",
@@ -187,7 +90,7 @@ async function main(): Promise<number> {
   const runOptions: RunBenchmarksOptions = {
     tier: options.tier,
     sizes: options.sizes,
-    kinds: options.kinds as BenchmarkSceneKind[],
+    kinds: options.kinds,
     samples: options.samples,
     saveLoadRuns: options.saveLoadRuns,
     previewSamples: options.previewSamples,
@@ -214,8 +117,14 @@ async function main(): Promise<number> {
   console.log("");
   for (const gate of outcome.gates) {
     const status = gate.skipped ? "skip" : gate.pass ? "pass" : "FAIL";
+    // A zero-sample summary is zeros, not a measurement: the gate fails
+    // and the report says why instead of certifying empty evidence.
+    const zeroSample =
+      gate.samples === 0
+        ? " (zero samples; empty summary is not a measurement)"
+        : "";
     console.log(
-      `[${status}] ${gate.label}: ${formatNumber(gate.measured, gate.unit === "s" ? "s" : gate.unit)} <= ${String(gate.limit)}${gate.unit}`,
+      `[${status}] ${gate.label}: ${formatNumber(gate.measured, gate.unit === "s" ? "s" : gate.unit)} <= ${String(gate.limit)}${gate.unit}${zeroSample}`,
     );
   }
   console.log("");
