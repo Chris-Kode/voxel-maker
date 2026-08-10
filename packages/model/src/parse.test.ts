@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   WorkspaceError,
+  animationId,
   documentId,
   materialId,
   nodeId,
+  trackId,
   volumeId,
 } from "@voxel-maker/shared";
 import type { SceneNode } from "./types.js";
@@ -170,5 +172,83 @@ describe("parseDocument", () => {
       "MISSING_REFERENCE",
     );
     expect(error.path).toEqual(["nodes", "node:parse:leaf", "parentId"]);
+  });
+
+  it("rebuilds ID-keyed records as null-prototype maps (issue #103)", () => {
+    const reloaded = parseDocument(canonicalDocumentJson(sampleDocument()));
+    for (const record of [
+      reloaded.nodes,
+      reloaded.materials,
+      reloaded.volumes,
+      reloaded.animations,
+    ]) {
+      expect(Object.getPrototypeOf(record)).toBeNull();
+    }
+    // Absent caller-supplied IDs that collide with Object.prototype member
+    // names must resolve as absent instead of leaking inherited members.
+    const nodes = reloaded.nodes as Record<string, unknown>;
+    expect(nodes["toString"]).toBeUndefined();
+    expect(nodes["constructor"]).toBeUndefined();
+    expect(nodes["__proto__"]).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(nodes, "toString")).toBe(false);
+  });
+
+  it("round-trips records whose own IDs collide with prototype member names (issue #103)", () => {
+    const document = createDocument({
+      documentId: documentId("document:parse:prototype"),
+      rootNodeId: nodeId("toString"),
+      nodes: [
+        {
+          nodeId: nodeId("toString"),
+          parentId: null,
+          children: [nodeId("constructor")],
+          transform: identity,
+          components: [],
+        },
+        {
+          nodeId: nodeId("constructor"),
+          parentId: nodeId("toString"),
+          children: [],
+          transform: identity,
+          components: [],
+        },
+      ],
+      volumes: [
+        { volumeId: volumeId("__proto__") },
+        { volumeId: volumeId("constructor") },
+      ],
+      animations: [
+        {
+          animationId: animationId("toString"),
+          duration: 1,
+          loop: "once",
+          tracks: [
+            {
+              trackId: trackId("track:parse:prototype"),
+              targetNodeId: nodeId("toString"),
+              interpolation: "linear",
+              keyframes: [],
+            },
+          ],
+        },
+      ],
+    });
+    const serialized = canonicalDocumentJson(document);
+    const reloaded = parseDocument(serialized);
+    expect(canonicalDocumentHash(reloaded)).toBe(
+      canonicalDocumentHash(document),
+    );
+    expect(reloaded.nodes[nodeId("toString")]?.children).toEqual([
+      nodeId("constructor"),
+    ]);
+    expect(
+      Object.prototype.hasOwnProperty.call(reloaded.nodes, "constructor"),
+    ).toBe(true);
+    expect(reloaded.volumes[volumeId("__proto__")]?.volumeId).toBe(
+      volumeId("__proto__"),
+    );
+    expect(
+      reloaded.animations[animationId("toString")]?.tracks[0]?.targetNodeId,
+    ).toBe(nodeId("toString"));
   });
 });
