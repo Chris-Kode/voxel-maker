@@ -581,4 +581,58 @@ describe("DocumentSession lifecycle coordinator", () => {
       expect(disposedUpdate.error.code).toBe("GESTURE_SEALED");
     }
   });
+  it("keeps the exposed revision live and reports the final revision on close (issue #55)", () => {
+    const session = createSession();
+    const events = collectEvents(session);
+    const state = session.open({ document: createFixtureDocument(1) });
+
+    // At install the exposed revision matches the store.
+    expect(state.revision).toBe(0);
+    expect(session.current?.revision).toBe(session.current?.store.revision);
+
+    // A successful edit advances store.revision; the session surface must
+    // stay live so sequential commands can use it as the next expected base.
+    const commit = state.bus.execute(
+      setVoxelCommand(commandId("command:session:set:0001"), {
+        volumeId: VOLUME,
+        coordinate: [0, 0, 0],
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:session:set:0001"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(commit.ok).toBe(true);
+    expect(session.current?.store.revision).toBe(1);
+    expect(session.current?.revision).toBe(1);
+
+    // Undo and redo are transactions too; the exposed value tracks them.
+    const undo = state.bus.undo({
+      transactionId: transactionId("transaction:session:undo:0001"),
+      expectedRevision: 1,
+      source: "ui",
+    });
+    expect(undo.ok).toBe(true);
+    expect(session.current?.store.revision).toBe(2);
+    expect(session.current?.revision).toBe(2);
+
+    const redo = state.bus.redo({
+      transactionId: transactionId("transaction:session:redo:0001"),
+      expectedRevision: 2,
+      source: "ui",
+    });
+    expect(redo.ok).toBe(true);
+    expect(session.current?.store.revision).toBe(3);
+    expect(session.current?.revision).toBe(3);
+
+    // Close reports the store's final revision, not the install value.
+    session.close();
+    const closed = events.find((event) => event.kind === "document-closed");
+    expect(closed).toBeDefined();
+    if (closed?.kind === "document-closed") {
+      expect(closed.revision).toBe(3);
+    }
+  });
 });

@@ -54,6 +54,11 @@ export interface SessionInstallInput {
  */
 export interface DocumentSessionState {
   readonly documentId: DocumentId;
+  /**
+   * Live store revision (issue #55): always equals `store.revision`,
+   * including after commit, undo, and redo transactions, so sequential
+   * commands can use it as the next expected base.
+   */
   readonly revision: number;
   readonly store: DocumentStoreRead;
   readonly bus: CommandBus;
@@ -257,7 +262,11 @@ class DocumentSessionImpl implements DocumentSession {
     const source = input.source ?? "system";
     const state: DocumentSessionState = {
       documentId: store.getDocument().documentId,
-      revision: store.revision,
+      // Live view over the installed store: a copied number would freeze the
+      // install revision forever while commits advance the store (issue #55).
+      get revision(): number {
+        return store.revision;
+      },
       store,
       bus,
       registry,
