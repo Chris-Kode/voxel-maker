@@ -414,8 +414,9 @@ export function invertMatrix(matrix: Mat4): Mat4 {
  * Decomposes an affine matrix into a canonical `Transform` with the given
  * pivot (ADR-0001). The linear part must be a rotation times a strictly
  * positive diagonal scale; derived components are quantized to 1e-9 and
- * magnitudes below 5e-10 canonicalized to zero. Throws when the
- * decomposition does not recompose within 1e-9 per element.
+ * magnitudes below 5e-10 canonicalized to zero. Throws when the final
+ * canonical transform does not recompose the input matrix within 1e-9 per
+ * element.
  */
 export function decomposeMatrix(matrix: Mat4, pivot: Vec3): Transform {
   const a00 = matrix[0];
@@ -470,32 +471,6 @@ export function decomposeMatrix(matrix: Mat4, pivot: Vec3): Transform {
         "Transform matrix cannot be decomposed into a rotation times positive scale",
     });
   }
-  // Recomposition check: R * S must reproduce the linear part within 1e-9.
-  const recomposed = [
-    r00 * scaleX,
-    r01 * scaleY,
-    r02 * scaleZ,
-    r10 * scaleX,
-    r11 * scaleY,
-    r12 * scaleZ,
-    r20 * scaleX,
-    r21 * scaleY,
-    r22 * scaleZ,
-  ];
-  const linear = [a00, a01, a02, a10, a11, a12, a20, a21, a22];
-  for (let index = 0; index < 9; index += 1) {
-    if (
-      Math.abs((recomposed[index] as number) - (linear[index] as number)) >
-      MATRIX_EPSILON
-    ) {
-      throw new WorkspaceError({
-        family: "validation",
-        code: "INVALID_TRANSFORM_DECOMPOSITION",
-        message:
-          "Transform matrix decomposition does not recompose within the ADR-0001 epsilon",
-      });
-    }
-  }
   const [px, py, pz] = pivot;
   const translationX = tauX - px + (a00 * px + a01 * py + a02 * pz);
   const translationY = tauY - py + (a10 * px + a11 * py + a12 * pz);
@@ -511,7 +486,7 @@ export function decomposeMatrix(matrix: Mat4, pivot: Vec3): Transform {
     r21,
     r22,
   ]);
-  return {
+  const transform: Transform = {
     translation: [
       quantizeDerived(translationX),
       quantizeDerived(translationY),
@@ -525,6 +500,28 @@ export function decomposeMatrix(matrix: Mat4, pivot: Vec3): Transform {
       quantizeDerived(scaleZ),
     ],
   };
+  // Recomposition check: the final canonical/quantized transform must
+  // reproduce the input matrix within 1e-9 per element (ADR-0001). The
+  // orthonormal check above is not sufficient: a matrix whose normalized
+  // columns are within epsilon of orthonormal can still decompose to a
+  // transform that recomposes far outside the bound (issue #81), so the
+  // returned transform is recomposed through `transformToMatrix` and every
+  // element is compared against the input.
+  const recomposed = transformToMatrix(transform);
+  for (let index = 0; index < 16; index += 1) {
+    if (
+      Math.abs((recomposed[index] as number) - (matrix[index] as number)) >
+      MATRIX_EPSILON
+    ) {
+      throw new WorkspaceError({
+        family: "validation",
+        code: "INVALID_TRANSFORM_DECOMPOSITION",
+        message:
+          "Transform matrix decomposition does not recompose within the ADR-0001 epsilon",
+      });
+    }
+  }
+  return transform;
 }
 
 /** Converts a 3x3 rotation matrix to a canonical quaternion (ADR-0001). */

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { WorkspaceError } from "@voxel-maker/shared";
 import {
   commandId,
   materialId,
@@ -33,6 +34,7 @@ import { registerBatchCommands } from "./batch-commands.js";
 import {
   applyMatrix,
   multiplyMatrices,
+  quaternionFromAxisAngle,
   transformToMatrix,
 } from "@voxel-maker/math";
 
@@ -366,6 +368,81 @@ describe("node commands", () => {
     expect(cycle.ok).toBe(false);
     if (cycle.ok) return;
     expect(cycle.error.code).toBe("CYCLIC_HIERARCHY");
+  });
+
+  it("rejects a sheared preserve-world reparent atomically (issue #81)", () => {
+    // A tiny child rotation under a huge non-uniform parent scale produces a
+    // world matrix that is not representable as positive-scale TRS; the
+    // preserve-world constructor must reject it before any command exists, so
+    // no revision or history change can occur.
+    const document = createDocument({
+      documentId: "document:behavior:0081" as never,
+      rootNodeId: ROOT,
+      nodes: [
+        {
+          nodeId: ROOT,
+          name: "Root",
+          parentId: null,
+          children: [CHILD],
+          transform: identity,
+          components: [],
+        },
+        {
+          nodeId: CHILD,
+          name: "Child",
+          parentId: ROOT,
+          children: [GRANDCHILD],
+          transform: {
+            translation: [0, 0, 0],
+            pivot: [0, 0, 0],
+            rotation: [0, 0, 0, 1],
+            scale: [1e12, 1e9, 1],
+          },
+          components: [],
+        },
+        {
+          nodeId: GRANDCHILD,
+          name: "Grandchild",
+          parentId: CHILD,
+          children: [],
+          transform: {
+            translation: [0, 0, 0],
+            pivot: [0, 0, 0],
+            rotation: quaternionFromAxisAngle([0, 0, 1], 9e-13),
+            scale: [1, 1000, 1],
+          },
+          components: [],
+        },
+      ],
+      materials: [],
+      volumes: [],
+    });
+    const { store, writeCapability } = createDocumentStore({ document });
+    const registry = new CommandRegistry();
+    registerNodeCommands(registry);
+    const bus = new CommandBus(store, registry, writeCapability);
+    const revisionBefore = store.getDocument().revision;
+    const historyBefore = bus.historySnapshot();
+    let thrown: unknown;
+    try {
+      reparentNodeCommand(
+        commandId("command:behavior:reparent:0081"),
+        { nodeId: GRANDCHILD, newParentId: ROOT, placement: "preserve-world" },
+        document,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(WorkspaceError);
+    if (!(thrown instanceof WorkspaceError)) return;
+    expect(thrown.code).toBe("INVALID_TRANSFORM_DECOMPOSITION");
+    // The constructor rejected before any command existed, so the document,
+    // revision, and history are untouched.
+    expect(store.getDocument().revision).toBe(revisionBefore);
+    expect(bus.historySnapshot()).toEqual(historyBefore);
+    expect(store.getDocument().nodes[GRANDCHILD as never]?.parentId).toBe(
+      CHILD,
+    );
   });
 
   it("undo of reparent restores the exact children order", () => {

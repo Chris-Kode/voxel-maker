@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { WorkspaceError } from "@voxel-maker/shared";
 import {
   QUATERNION_NORM_EPSILON,
   applyMatrix,
@@ -30,6 +31,17 @@ import {
 } from "./index.js";
 
 const HALF = Math.SQRT1_2; // 0.7071067811865476
+
+/** Returns the `WorkspaceError` code thrown by `fn`, or undefined when it returns. */
+const errorCode = (fn: () => unknown): string | undefined => {
+  try {
+    fn();
+    return undefined;
+  } catch (error) {
+    if (error instanceof WorkspaceError) return error.code;
+    throw error;
+  }
+};
 
 describe("canonical numbers", () => {
   it("normalizes negative zero and rejects non-finite values", () => {
@@ -234,6 +246,115 @@ describe("affine transform matrices", () => {
     expect(() => decomposeMatrix(shear, [0, 0, 0])).toThrow(
       /decompos|represent/u,
     );
+  });
+
+  it("rejects a sheared preserve-world matrix that recomposes outside 1e-9 (issue #81)", () => {
+    // A tiny child rotation under a huge non-uniform parent scale produces a
+    // world matrix whose normalized columns pass the orthonormal epsilon but
+    // that is not representable as positive-scale TRS: the returned transform
+    // would move the world placement by ~450 units.
+    const parent: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1e12, 1e9, 1],
+    };
+    const local: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: quaternionFromAxisAngle([0, 0, 1], 9e-13),
+      scale: [1, 1000, 1],
+    };
+    const world = multiplyMatrices(
+      transformToMatrix(parent),
+      transformToMatrix(local),
+    );
+    const identity: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    expect(
+      errorCode(() => resolveLocalTransform(world, identity, [0, 0, 0])),
+    ).toBe("INVALID_TRANSFORM_DECOMPOSITION");
+  });
+
+  it("rejects a smaller sheared matrix that drifts 450x the 1e-9 bound (issue #81)", () => {
+    const parent: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1000, 1, 1],
+    };
+    const local: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: quaternionFromAxisAngle([0, 0, 1], 9e-13),
+      scale: [1, 1, 1],
+    };
+    const world = multiplyMatrices(
+      transformToMatrix(parent),
+      transformToMatrix(local),
+    );
+    const identity: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    expect(
+      errorCode(() => resolveLocalTransform(world, identity, [0, 0, 0])),
+    ).toBe("INVALID_TRANSFORM_DECOMPOSITION");
+  });
+
+  it("accepts a representable local matrix under a large parent scale (issue #81)", () => {
+    // The same composition resolved under its actual parent yields a local
+    // matrix that IS representable as positive-scale TRS within 1e-9, so the
+    // decomposition must be accepted and recompose within the bound.
+    const parent: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, 0, 1],
+      scale: [1e12, 1e9, 1],
+    };
+    const local: Transform = {
+      translation: [0, 0, 0],
+      pivot: [0, 0, 0],
+      rotation: quaternionFromAxisAngle([0, 0, 1], 9e-13),
+      scale: [1, 1000, 1],
+    };
+    const parentWorld = transformToMatrix(parent);
+    const world = multiplyMatrices(parentWorld, transformToMatrix(local));
+    const resolved = resolveLocalTransform(world, parentWorld, [0, 0, 0]);
+    const localMatrix = multiplyMatrices(invertMatrix(parentWorld), world);
+    const recomposed = transformToMatrix(resolved);
+    for (let index = 0; index < 16; index += 1) {
+      expect(
+        Math.abs(
+          (recomposed[index] as number) - (localMatrix[index] as number),
+        ),
+      ).toBeLessThan(1e-9);
+    }
+  });
+
+  it("round-trips representable TRS with a non-zero pivot within 1e-9 (issue #81)", () => {
+    // The acceptance criterion promises that representable TRS still
+    // round-trips within 1e-9; a non-zero pivot must not break that.
+    const parent: Transform = {
+      translation: [5, -2, 1],
+      pivot: [0, 0, 0],
+      rotation: [0, 0, HALF, HALF], // 90 degrees around Z
+      scale: [2, 1, 1],
+    };
+    const local: Transform = {
+      translation: [1, 0, 0],
+      pivot: [1, 0, -1],
+      rotation: [0, HALF, 0, HALF], // 90 degrees around Y
+      scale: [2, 0.5, 3],
+    };
+    const parentWorld = transformToMatrix(parent);
+    const world = multiplyMatrices(parentWorld, transformToMatrix(local));
+    const resolved = resolveLocalTransform(world, parentWorld, [1, 0, -1]);
+    const recomposed = multiplyMatrices(
+      parentWorld,
+      transformToMatrix(resolved),
+    );
+    for (let index = 0; index < 16; index += 1) {
+      expect(
+        Math.abs((recomposed[index] as number) - (world[index] as number)),
+      ).toBeLessThan(1e-9);
+    }
   });
 
   it("resolves a local transform that preserves the world placement", () => {
