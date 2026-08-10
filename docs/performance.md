@@ -76,6 +76,34 @@ Tiers are resolved from the CPU model when the hardware is named
 
 A missed gate fails the CLI (exit code 1) and blocks the CI step.
 
+### Qualification protocol (issue #72)
+
+Named-tier qualification (`reference` / `low`, whether forced with
+`--tier` or resolved from named hardware via `--tier auto`) is
+all-or-nothing: every mandatory gate of the tier must carry
+protocol-compliant evidence, or the run fails. The runner rejects an
+incomplete invocation BEFORE measuring with a structured
+`INCOMPLETE_BENCHMARK_MATRIX` error (exit code 1), and gate evaluation
+independently fails any mandatory gate whose measurement is absent or
+whose sample count is below the ADR-0008 protocol:
+
+- `reference` must measure sizes `100000,500000,1000000`; `low` must
+  measure `100000` (the 1M fixture is a reference-tier viewability
+  gate, not a low-tier promise);
+- both named tiers must measure all three surface classes
+  (`compact,sparse,checkerboard`);
+- frame/latency gates need at least 100 p95 samples (`--samples >= 100`);
+- save/load gates need five runs (`--save-load-runs >= 5`);
+- the 10k-track animation frame gate needs at least 100 evaluation
+  frames (`--animation-frames >= 100`).
+
+The `ci-smoke` tier is the explicitly non-qualifying mode: it never
+constrains the fixture/sample matrix, so exploratory runs and CI smoke
+runs can use any selection without claiming a named-tier qualification.
+`pnpm bench:smoke` and `pnpm bench:local` therefore pin `--tier
+ci-smoke`; use `--tier reference` or `--tier low` only for real
+qualification runs.
+
 ## Retained trends
 
 `--trends <path>` compares the run against the newest retained row on the
@@ -112,12 +140,14 @@ with an argument error before any fixture allocation or output write
 (ticket #57); a mistyped count can never certify zero-sample gates. As a
 defensive second layer, gate evaluation fails any required metric whose
 summary carries zero samples instead of treating empty summaries as
-measurements.
+measurements, and fails any named-tier gate whose measurement is
+missing or under-sampled (issue #72).
 
-On a named tier machine, qualify with:
+On a named tier machine, qualify with (the defaults already satisfy the
+protocol minimums):
 
 ```sh
-node apps/bench-cli/dist/cli.js --tier reference --full   --samples 100 --save-load-runs 5 --json benchmarks/out/reference.json
+node apps/bench-cli/dist/cli.js --tier reference --full --json benchmarks/out/reference.json
 ```
 
 ## CI

@@ -12,6 +12,7 @@ import {
   type HardwareInput,
   type RunBenchmarksOptions,
 } from "@voxel-maker/benchmarks";
+import { WorkspaceError } from "@voxel-maker/shared";
 import { parseArgs } from "./args.js";
 
 /**
@@ -46,7 +47,14 @@ Options:
   --json <path>                         Write the JSON report.
   --trends <path>                       Compare + append retained trends.
   --no-progress                         Suppress progress output.
-  --help                                Show this help.`);
+  --help                                Show this help.
+
+Named-tier qualification (reference/low) requires the full ADR-0008
+protocol matrix: reference measures 100000,500000,1000000 and low
+measures 100000, all kinds, >= 100 samples, five save/load runs, and
+>= 100 animation frames. An incomplete matrix exits non-zero with an
+INCOMPLETE_BENCHMARK_MATRIX error; use --tier ci-smoke for explicitly
+non-qualifying exploratory or smoke runs.`);
 }
 
 function formatNumber(value: number | undefined, unit: string): string {
@@ -117,14 +125,11 @@ async function main(): Promise<number> {
   console.log("");
   for (const gate of outcome.gates) {
     const status = gate.skipped ? "skip" : gate.pass ? "pass" : "FAIL";
-    // A gate can fail on completeness (issue #63) or on zero samples
-    // (ticket #57): the report says why instead of certifying empty or
-    // broken evidence.
-    const annotation =
-      gate.failureReason ??
-      (gate.samples === 0
-        ? "zero samples; empty summary is not a measurement"
-        : undefined);
+    // A gate can fail on completeness (issue #63), on zero samples
+    // (ticket #57), on a missing mandatory measurement, or on
+    // insufficient samples (issue #72): the report says why instead of
+    // certifying empty or broken evidence.
+    const annotation = gate.failureReason;
     const reason = annotation === undefined ? "" : ` (${annotation})`;
     console.log(
       `[${status}] ${gate.label}: ${formatNumber(gate.measured, gate.unit === "s" ? "s" : gate.unit)} <= ${String(gate.limit)}${gate.unit}${reason}`,
@@ -187,6 +192,13 @@ main()
     process.exitCode = code;
   })
   .catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    // Structured errors (e.g. the issue #72 incomplete-matrix rejection)
+    // surface their stable code so scripts can distinguish a
+    // qualification-matrix error from an internal failure.
+    if (error instanceof WorkspaceError) {
+      console.error(`[${error.code}] ${error.message}`);
+    } else {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
     process.exitCode = 1;
   });

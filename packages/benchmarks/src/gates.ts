@@ -18,6 +18,16 @@ import type {
 /** Threshold units for readable gate reports. */
 export type GateUnit = "ms" | "s" | "MiB" | "bytes" | "count" | "boolean";
 
+/**
+ * ADR-0008 protocol minimums for named-tier qualification (issue #72):
+ * frame and latency gates report p95 from at least 100 samples,
+ * save/load uses five runs, and the 10k-track animation frame gate is a
+ * frame gate with the same 100-sample protocol.
+ */
+export const QUALIFICATION_MIN_SAMPLES = 100;
+export const QUALIFICATION_MIN_SAVE_LOAD_RUNS = 5;
+export const QUALIFICATION_MIN_ANIMATION_FRAMES = 100;
+
 /** One asserted gate: a measured value must not exceed `limit`. */
 export interface GateDefinition {
   readonly id: string;
@@ -41,6 +51,21 @@ export interface GateDefinition {
    * value alone.
    */
   readonly failsOn?: (report: BenchmarkReport) => string | undefined;
+  /**
+   * True when the gate is mandatory for named-tier qualification
+   * (issue #72): an absent measurement FAILS the gate instead of being
+   * skipped, so an incomplete fixture/sample matrix can never certify
+   * a reference/low qualification. The ci-smoke tier is explicitly
+   * non-qualifying and never marks gates required.
+   */
+  readonly required?: boolean;
+  /**
+   * Minimum sample count for protocol-compliant evidence (ADR-0008:
+   * >= 100 p95 samples for frame/latency gates, five save/load runs).
+   * A present measurement with fewer samples fails the gate even when
+   * its value is within budget (issue #72).
+   */
+  readonly minSamples?: number;
 }
 
 /** The outcome of one gate on one report. */
@@ -321,6 +346,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
           sceneP95(report, kind, 100_000, "command"),
         samples: (report: BenchmarkReport) =>
           sceneSummary(report, kind, 100_000, "command")?.samples,
+        required: true,
+        minSamples: QUALIFICATION_MIN_SAMPLES,
       }) as GateDefinition,
   ),
   // Localized face-cull remesh p95 under 30 ms in a worker.
@@ -335,6 +362,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
           sceneP95(report, kind, 100_000, "remesh"),
         samples: (report: BenchmarkReport) =>
           sceneSummary(report, kind, 100_000, "remesh")?.samples,
+        required: true,
+        minSamples: QUALIFICATION_MIN_SAMPLES,
       }) as GateDefinition,
   ),
   // Main-thread per-frame pipeline cost stays inside the 16.7 ms frame
@@ -350,6 +379,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
           sceneP95(report, kind, 100_000, "flush"),
         samples: (report: BenchmarkReport) =>
           sceneSummary(report, kind, 100_000, "flush")?.samples,
+        required: true,
+        minSamples: QUALIFICATION_MIN_SAMPLES,
       }) as GateDefinition,
   ),
   // Input-to-preview composite p95: the headless viewport pipeline
@@ -370,6 +401,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
         },
         samples: (report: BenchmarkReport) =>
           inputToPreviewSamples(report, kind, 100_000),
+        required: true,
+        minSamples: QUALIFICATION_MIN_SAMPLES,
       }) as GateDefinition,
   ),
   // Canonical 100k save and load within 2 seconds each.
@@ -384,6 +417,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     },
     samples: (report: BenchmarkReport) =>
       meanSaveLoadSamples(report, 100_000, "save"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   }) as GateDefinition,
   Object.freeze({
     id: "load.p95.100k",
@@ -396,6 +431,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     },
     samples: (report: BenchmarkReport) =>
       meanSaveLoadSamples(report, 100_000, "load"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   }) as GateDefinition,
   // Editing produces no repeated main-thread task longer than 50 ms on
   // the 100k interactive target (ADR-0008).
@@ -412,6 +449,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
         },
         samples: (report: BenchmarkReport) =>
           sceneSummary(report, kind, 100_000, "flush")?.samples,
+        required: true,
+        minSamples: QUALIFICATION_MIN_SAMPLES,
       }) as GateDefinition,
   ),
   // 500k fixture stays inside a 30 FPS frame budget.
@@ -424,6 +463,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       meanSceneP95(report, 500_000, "flush"),
     samples: (report: BenchmarkReport) =>
       meanSceneSamples(report, 500_000, "flush"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
   Object.freeze({
     id: "flush.p99.500k",
@@ -434,6 +475,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       meanScenePercentile(report, 500_000, "flush", "p99"),
     samples: (report: BenchmarkReport) =>
       meanSceneSamples(report, 500_000, "flush"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
   // 1M fixture: opens within 10 seconds, navigable at 20 FPS, memory < 2 GiB.
   Object.freeze({
@@ -447,6 +490,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     },
     samples: (report: BenchmarkReport) =>
       meanSaveLoadSamples(report, 1_000_000, "save"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   }) as GateDefinition,
   Object.freeze({
     id: "load.p95.1m",
@@ -459,6 +504,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     },
     samples: (report: BenchmarkReport) =>
       meanSaveLoadSamples(report, 1_000_000, "load"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   }) as GateDefinition,
   Object.freeze({
     id: "flush.p95.1m",
@@ -469,6 +516,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       meanSceneP95(report, 1_000_000, "flush"),
     samples: (report: BenchmarkReport) =>
       meanSceneSamples(report, 1_000_000, "flush"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
   Object.freeze({
     id: "memory.peak.1m",
@@ -476,6 +525,7 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     unit: "MiB",
     limit: 2048,
     measure: peakRssMiB,
+    required: true,
   }) as GateDefinition,
   // 10,000 active tracks within the 16.7 ms p95 frame budget.
   Object.freeze({
@@ -485,6 +535,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 16.7,
     measure: (report: BenchmarkReport) => animationP95(report, 10_000),
     samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
   Object.freeze({
     id: "animation.frame.p99.10k",
@@ -496,6 +548,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
       return row === undefined ? undefined : row.frameMs.p99;
     },
     samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
   Object.freeze({
     id: "animation.noMutation.10k",
@@ -504,6 +558,8 @@ const REFERENCE_GATES: readonly GateDefinition[] = Object.freeze([
     limit: 0,
     measure: revisionStability,
     samples: (report: BenchmarkReport) => animationSamples(report, 10_000),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
 ]);
 
@@ -518,6 +574,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
       meanSceneP95(report, 100_000, "flush"),
     samples: (report: BenchmarkReport) =>
       meanSceneSamples(report, 100_000, "flush"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
   Object.freeze({
     id: "inputToPreview.p95.100k.low",
@@ -540,6 +598,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
     },
     samples: (report: BenchmarkReport) =>
       meanInputToPreviewSamples(report, 100_000),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAMPLES,
   }) as GateDefinition,
   Object.freeze({
     id: "save.p95.100k.low",
@@ -552,6 +612,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
     },
     samples: (report: BenchmarkReport) =>
       meanSaveLoadSamples(report, 100_000, "save"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   }) as GateDefinition,
   Object.freeze({
     id: "load.p95.100k.low",
@@ -564,6 +626,8 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
     },
     samples: (report: BenchmarkReport) =>
       meanSaveLoadSamples(report, 100_000, "load"),
+    required: true,
+    minSamples: QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   }) as GateDefinition,
   Object.freeze({
     id: "memory.peak.low",
@@ -571,6 +635,7 @@ const LOW_GATES: readonly GateDefinition[] = Object.freeze([
     unit: "MiB",
     limit: 1536,
     measure: peakRssMiB,
+    required: true,
   }) as GateDefinition,
 ]);
 
@@ -764,18 +829,42 @@ export function evaluateGates(
   const definitions = GATES_BY_TIER[tier];
   return definitions.map((gate) => {
     const measured = gate.measure(report);
-    const skipped = measured === undefined;
+    const missing = measured === undefined;
+    // A mandatory named-tier gate (issue #72) can never be skipped: an
+    // absent measurement FAILS the gate, so an incomplete fixture/sample
+    // matrix cannot certify a reference/low qualification. Only the
+    // explicitly non-qualifying ci-smoke tier skips absent measurements.
+    const skipped = missing && gate.required !== true;
     const samples = gate.samples?.(report);
     // A present-but-empty summary is zeros, not a measurement: it must
     // never certify a gate (ticket #57). A zero-sample metric FAILS so
     // an accidental zero-count run can never produce green release
     // evidence.
-    const zeroSample = !skipped && samples === 0;
+    const zeroSample = !missing && samples === 0;
+    // Protocol-compliant evidence needs enough samples (ADR-0008:
+    // >= 100 p95 samples for frame/latency gates, five save/load runs);
+    // a within-budget value measured on too few samples is not a
+    // qualification measurement (issue #72).
+    const insufficientSamples =
+      !missing &&
+      samples !== undefined &&
+      gate.minSamples !== undefined &&
+      samples < gate.minSamples;
     // A gate can also fail on completeness (issue #63): a required
     // operation that did not complete (e.g. a blocked 100k export) must
     // never certify the gate, even when its measured value is small or
     // the measurement is absent.
-    const failureReason = gate.failsOn?.(report);
+    const failureReason =
+      gate.failsOn?.(report) ??
+      (gate.required === true && missing
+        ? "missing mandatory measurement"
+        : undefined) ??
+      (zeroSample
+        ? "zero samples; empty summary is not a measurement"
+        : undefined) ??
+      (insufficientSamples
+        ? `insufficient samples (${String(samples)} < ${String(gate.minSamples)})`
+        : undefined);
     return {
       id: gate.id,
       label: gate.label,
@@ -786,7 +875,7 @@ export function evaluateGates(
       samples,
       pass:
         failureReason === undefined &&
-        (skipped || (!zeroSample && measured <= gate.limit)),
+        (skipped || (measured !== undefined && measured <= gate.limit)),
       skipped,
       failureReason,
     };

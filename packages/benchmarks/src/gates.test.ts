@@ -168,9 +168,9 @@ function sceneReport(overrides: {
     animation: [
       {
         trackCount: 10_000,
-        frames: 60,
+        frames: 100,
         frameMs: {
-          samples: 60,
+          samples: 100,
           mean: 5,
           min: 4,
           max: 8,
@@ -188,6 +188,46 @@ function sceneReport(overrides: {
       },
     ],
     durationMs: 1000,
+  };
+}
+
+/**
+ * Full reference-tier report: every kind at every ADR-0008 size, so the
+ * mandatory reference gates all have a measurement to evaluate. The
+ * single scene template is cloned into every (kind, size) slot; tests
+ * that need per-slot values build their own reports from `sceneReport`.
+ */
+function fullReferenceReport(overrides: {
+  readonly commandP95?: number;
+  readonly remeshP95?: number;
+  readonly flushP95?: number;
+  readonly inputToPreview95Ms?: number;
+  readonly saveP95Ms?: number;
+  readonly loadP95Ms?: number;
+  readonly rssMiB?: number;
+}): BenchmarkReport {
+  const base = sceneReport(overrides);
+  const scene = base.scenes.compact["100000"];
+  if (scene === undefined) throw new Error("test scene missing");
+  return {
+    ...base,
+    scenes: {
+      compact: {
+        "100000": scene,
+        "500000": scene,
+        "1000000": scene,
+      },
+      sparse: {
+        "100000": scene,
+        "500000": scene,
+        "1000000": scene,
+      },
+      checkerboard: {
+        "100000": scene,
+        "500000": scene,
+        "1000000": scene,
+      },
+    },
   };
 }
 
@@ -234,7 +274,7 @@ describe("detectHardware", () => {
 
 describe("evaluateGates", () => {
   it("reference gates pass within the ADR-0008 budgets", () => {
-    const report = sceneReport({
+    const report = fullReferenceReport({
       commandP95: 7,
       remeshP95: 29,
       flushP95: 16,
@@ -250,7 +290,7 @@ describe("evaluateGates", () => {
   });
 
   it("reference gates fail when a budget is exceeded", () => {
-    const report = sceneReport({
+    const report = fullReferenceReport({
       commandP95: 20,
       remeshP95: 100,
       flushP95: 50,
@@ -272,11 +312,111 @@ describe("evaluateGates", () => {
     expect(ids.has("memory.peak.1m")).toBe(true);
   });
 
-  it("skips gates whose measurement is absent", () => {
+  it("skips absent measurements on the non-qualifying ci-smoke tier", () => {
+    // The ci-smoke tier is explicitly non-qualifying (issue #72): a
+    // report with no measured scenes skips every scene-backed gate,
+    // and skips do not fail the run.
+    const report = sceneReport({});
+    const empty = {
+      ...report,
+      scenes: { compact: {}, sparse: {}, checkerboard: {} },
+      animation: [],
+    };
+    const results = evaluateGates(empty, "ci-smoke");
+    const absent = results.filter((result) => result.measured === undefined);
+    expect(absent.length).toBeGreaterThan(0);
+    expect(absent.every((result) => result.skipped)).toBe(true);
+    expect(absent.every((result) => result.pass)).toBe(true);
+    expect(summarizeGates("ci-smoke", results).allPass).toBe(true);
+  });
+
+  it("fails mandatory reference gates whose measurement is absent (issue #72)", () => {
+    // A reference report that only measured the compact 100k scene is
+    // an incomplete qualification matrix: every absent mandatory gate
+    // must FAIL instead of being skipped, so a partial run can never
+    // certify the tier.
     const report = sceneReport({});
     const results = evaluateGates(report, "reference");
-    expect(results.some((result) => result.skipped)).toBe(true);
-    expect(results.every((result) => result.pass)).toBe(true);
+    const missing = results.filter((result) => result.measured === undefined);
+    expect(missing.length).toBeGreaterThan(0);
+    for (const gate of missing) {
+      expect(gate.pass, gate.id).toBe(false);
+      expect(gate.skipped, gate.id).toBe(false);
+      expect(gate.failureReason, gate.id).toBe("missing mandatory measurement");
+    }
+    expect(summarizeGates("reference", results).allPass).toBe(false);
+  });
+
+  it("fails mandatory gates whose sample count is below the ADR-0008 protocol (issue #72)", () => {
+    // Protocol-compliant evidence needs >= 100 p95 samples per latency
+    // gate and five save/load runs; fewer samples must fail the gate
+    // even when the measured value is within budget.
+    const report = fullReferenceReport({});
+    const scene = report.scenes.compact["100000"];
+    if (scene === undefined) throw new Error("test scene missing");
+    const underSampled = {
+      ...report,
+      scenes: {
+        ...report.scenes,
+        compact: {
+          ...report.scenes.compact,
+          "100000": {
+            ...scene,
+            command: { ...scene.command, samples: 5 },
+            remesh: { ...scene.remesh, samples: 5 },
+            flush: { ...scene.flush, samples: 5 },
+            save: {
+              ...scene.save,
+              summary: { ...scene.save.summary, samples: 3 },
+            },
+            load: {
+              ...scene.load,
+              summary: { ...scene.load.summary, samples: 3 },
+            },
+          },
+        },
+      },
+    };
+    const results = evaluateGates(underSampled, "reference");
+    const commit = results.find(
+      (result) => result.id === "commit.p95.100k.compact",
+    );
+    expect(commit?.pass).toBe(false);
+    expect(commit?.skipped).toBe(false);
+    expect(commit?.failureReason).toBe("insufficient samples (5 < 100)");
+    const save = results.find((result) => result.id === "save.p95.100k");
+    expect(save?.pass).toBe(false);
+    expect(save?.skipped).toBe(false);
+    expect(save?.failureReason).toBe("insufficient samples (3 < 5)");
+    expect(summarizeGates("reference", results).allPass).toBe(false);
+  });
+
+  it("fails mandatory animation gates with fewer than 100 frames (issue #72)", () => {
+    const report = fullReferenceReport({});
+    const row = report.animation[0];
+    if (row === undefined) throw new Error("test animation row missing");
+    const short = {
+      ...report,
+      animation: [
+        {
+          ...row,
+          frames: 60,
+          frameMs: { ...row.frameMs, samples: 60 },
+        },
+      ],
+    };
+    const results = evaluateGates(short, "reference");
+    for (const id of [
+      "animation.frame.p95.10k",
+      "animation.frame.p99.10k",
+      "animation.noMutation.10k",
+    ]) {
+      const gate = results.find((result) => result.id === id);
+      expect(gate, id).toBeDefined();
+      expect(gate?.pass, id).toBe(false);
+      expect(gate?.skipped, id).toBe(false);
+      expect(gate?.failureReason, id).toBe("insufficient samples (60 < 100)");
+    }
   });
 
   it("ci-smoke gates flag gross regressions and meshing failures", () => {

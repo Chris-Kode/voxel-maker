@@ -21,6 +21,9 @@ export {
   type BenchmarkSceneKind,
 } from "./fixtures.js";
 export {
+  QUALIFICATION_MIN_ANIMATION_FRAMES,
+  QUALIFICATION_MIN_SAMPLES,
+  QUALIFICATION_MIN_SAVE_LOAD_RUNS,
   detectHardware,
   evaluateGates,
   resolveTier,
@@ -58,9 +61,14 @@ export {
 } from "./trends.js";
 export { percentile, summarize, type SampleSummary } from "./stats.js";
 export {
+  INCOMPLETE_BENCHMARK_MATRIX,
+  TIER_MATRIX_REQUIREMENTS,
+  qualificationProblems,
   runBenchmarks,
   type BenchmarkRunOutcome,
+  type QualificationMatrix,
   type RunBenchmarksOptions,
+  type TierMatrixRequirement,
 } from "./run.js";
 export type {
   AnimationMeasurement,
