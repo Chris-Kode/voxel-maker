@@ -28,6 +28,7 @@ import {
   type Mat4,
   type Quat,
   type Transform,
+  type Vec3,
 } from "./index.js";
 
 const HALF = Math.SQRT1_2; // 0.7071067811865476
@@ -158,12 +159,38 @@ describe("affine transform matrices", () => {
     ]);
   });
 
-  it("places translation in the fourth column", () => {
+  it("places translation in the fourth column (column-major storage)", () => {
     const matrix = transformToMatrix({
       ...identity,
       translation: [1, -2, 3],
     });
+    // plan.md: "Matrices: column-major only inside math/runtime APIs".
+    // The translation column occupies indices 12-14; the last row is
+    // [0, 0, 0, 1] at indices 3, 7, 11, 15.
+    expect(matrix[12]).toBe(1);
+    expect(matrix[13]).toBe(-2);
+    expect(matrix[14]).toBe(3);
+    expect(matrix[3]).toBe(0);
+    expect(matrix[7]).toBe(0);
+    expect(matrix[11]).toBe(0);
+    expect(matrix[15]).toBe(1);
     expect(applyMatrix(matrix, [0, 0, 0])).toEqual([1, -2, 3]);
+  });
+
+  it("is consumable directly by a standard column-major consumer", () => {
+    // Regression test for issue #82: a column-major consumer such as
+    // Three.js/WebGL (`Matrix4.fromArray` + `applyMatrix4`) must map the
+    // origin to the transform translation without any transpose.
+    const matrix = transformToMatrix({
+      ...identity,
+      translation: [1, -2, 3],
+    });
+    const columnMajor = (m: Mat4, point: Vec3): Vec3 => [
+      m[0] * point[0] + m[4] * point[1] + m[8] * point[2] + m[12],
+      m[1] * point[0] + m[5] * point[1] + m[9] * point[2] + m[13],
+      m[2] * point[0] + m[6] * point[1] + m[10] * point[2] + m[14],
+    ];
+    expect(columnMajor(matrix, [0, 0, 0])).toEqual([1, -2, 3]);
   });
 
   it("evaluates T(t) x T(p) x R x S x T(-p) around the pivot", () => {

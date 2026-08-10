@@ -549,19 +549,18 @@ class ChunkProjection {
     // The canonical local matrix already folds in the pivot (ADR-0001)
     // and the constrained local rotation (plan S9.5/S9.6, ticket #27);
     // Three.js recomposition would drift, so matrices are explicit. The
-    // math package stores row-major arrays; THREE.Matrix4 is column-major,
-    // so `fromArray` yields the transpose and must be flipped back.
+    // math package stores column-major arrays (plan.md), matching
+    // THREE.Matrix4's column-major storage, so `fromArray` consumes the
+    // matrix directly (issue #82).
     group.matrixAutoUpdate = false;
-    group.matrix
-      .fromArray(
-        transformToMatrix(
-          evaluateConstrainedLocalTransform(
-            node.transform,
-            rotationConstraintsOf(node),
-          ),
+    group.matrix.fromArray(
+      transformToMatrix(
+        evaluateConstrainedLocalTransform(
+          node.transform,
+          rotationConstraintsOf(node),
         ),
-      )
-      .transpose();
+      ),
+    );
   }
 
   #attachHierarchy(): void {
@@ -685,7 +684,8 @@ class ChunkProjection {
       const matrix = world.get(ownerId);
       if (matrix === undefined) continue;
       const threeMatrix = new THREE.Matrix4();
-      threeMatrix.fromArray(matrix).transpose();
+      // Column-major storage matches THREE.Matrix4 directly (issue #82).
+      threeMatrix.fromArray(matrix);
       this.#volumeWorldMatrices.set(volumeId, threeMatrix);
     }
   }

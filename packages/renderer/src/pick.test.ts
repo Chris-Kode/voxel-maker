@@ -487,12 +487,13 @@ describe("pickScene", () => {
       volumes: [{ volumeId: VOLUME_B, min: [0, 0, 0], max: [1, 1, 1] }],
     });
     const matrices = nodeWorldMatrices(store);
-    expect(matrices.get(BOX_A)?.[3]).toBe(1);
-    expect(matrices.get(BOX_A)?.[7]).toBe(2);
-    expect(matrices.get(BOX_A)?.[11]).toBe(3);
-    expect(matrices.get(BOX_B)?.[3]).toBe(5);
-    expect(matrices.get(BOX_B)?.[7]).toBe(2);
-    expect(matrices.get(BOX_B)?.[11]).toBe(3);
+    // Column-major storage (issue #82): translation at indices 12-14.
+    expect(matrices.get(BOX_A)?.[12]).toBe(1);
+    expect(matrices.get(BOX_A)?.[13]).toBe(2);
+    expect(matrices.get(BOX_A)?.[14]).toBe(3);
+    expect(matrices.get(BOX_B)?.[12]).toBe(5);
+    expect(matrices.get(BOX_B)?.[13]).toBe(2);
+    expect(matrices.get(BOX_B)?.[14]).toBe(3);
   });
 
   it("projects constrained world matrices for picking and bounds", () => {
@@ -548,9 +549,11 @@ describe("pickScene", () => {
     // The 60 deg authored rotation is clamped to 30 deg before the world
     // pass: the child's world basis shows cos(30)/sin(30), not
     // cos(60)/sin(60) (rotation about X leaves the x translation alone).
+    // Column-major storage (issue #82): Rx(30) has +sin at elements[6]
+    // and -sin at elements[9].
     expect(matrices.get(BOX_B)?.[5]).toBeCloseTo(Math.cos(Math.PI / 6), 9);
-    expect(matrices.get(BOX_B)?.[6]).toBeCloseTo(-Math.sin(Math.PI / 6), 9);
-    expect(matrices.get(BOX_B)?.[9]).toBeCloseTo(Math.sin(Math.PI / 6), 9);
+    expect(matrices.get(BOX_B)?.[6]).toBeCloseTo(Math.sin(Math.PI / 6), 9);
+    expect(matrices.get(BOX_B)?.[9]).toBeCloseTo(-Math.sin(Math.PI / 6), 9);
     expect(matrices.get(BOX_B)?.[10]).toBeCloseTo(Math.cos(Math.PI / 6), 9);
     // The document itself is untouched: the authored rotation is intact.
     expect(matrices.get(BOX_B)).toBeDefined();

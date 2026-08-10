@@ -121,11 +121,11 @@ const scale = (vector: Vec3, factor: number): Vec3 => [
 
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
-/** Applies the linear (3x3) part of a matrix to a vector. */
+/** Applies the linear (3x3) part of a matrix to a vector (column-major). */
 const applyLinear = (matrix: Mat4, vector: Vec3): Vec3 => [
-  matrix[0] * vector[0] + matrix[1] * vector[1] + matrix[2] * vector[2],
-  matrix[4] * vector[0] + matrix[5] * vector[1] + matrix[6] * vector[2],
-  matrix[8] * vector[0] + matrix[9] * vector[1] + matrix[10] * vector[2],
+  matrix[0] * vector[0] + matrix[4] * vector[1] + matrix[8] * vector[2],
+  matrix[1] * vector[0] + matrix[5] * vector[1] + matrix[9] * vector[2],
+  matrix[2] * vector[0] + matrix[6] * vector[1] + matrix[10] * vector[2],
 ];
 
 /**

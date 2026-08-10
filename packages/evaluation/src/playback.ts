@@ -61,7 +61,7 @@ export function playbackEvidence(
   };
 }
 
-/** Exact 4x4 row-major equality (canonical floats are stable). */
+/** Exact 4x4 column-major equality (canonical floats are stable). */
 function matricesEqual(a: readonly number[], b: readonly number[]): boolean {
   if (a.length !== b.length) return false;
   for (let index = 0; index < a.length; index += 1) {
