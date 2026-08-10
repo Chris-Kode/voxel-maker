@@ -50,7 +50,9 @@ export interface SessionInstallInput {
  * One installed session: the authoritative read surface plus the fresh
  * command bus that owns the private write capability. The bus starts with
  * empty undo/redo history (ADR-0003); projections never receive the store's
- * write surface.
+ * write surface. Every installed record is `Object.freeze`d before it is
+ * returned or exposed as `current`, so lifecycle identity cannot be
+ * rewritten by consumers (issue #56).
  */
 export interface DocumentSessionState {
   readonly documentId: DocumentId;
@@ -70,7 +72,9 @@ export interface DocumentSessionState {
  * Frozen lifecycle events. `document-opened` and `document-replaced` carry
  * the new authoritative state so projections (renderer, editor, file
  * service) can dispose and rebind; `document-closed` carries the state that
- * just ended. Listeners must treat events as read-only and never throw.
+ * just ended. Every published event is `Object.freeze`d before listeners
+ * run (issue #56), so a buggy subscriber cannot rewrite the event for later
+ * subscribers; listeners must treat events as read-only and never throw.
  */
 export type DocumentLifecycleEvent =
   | {
@@ -260,7 +264,7 @@ class DocumentSessionImpl implements DocumentSession {
       },
     });
     const source = input.source ?? "system";
-    const state: DocumentSessionState = {
+    const state: DocumentSessionState = Object.freeze({
       documentId: store.getDocument().documentId,
       // Live view over the installed store: a copied number would freeze the
       // install revision forever while commits advance the store (issue #55).
@@ -271,14 +275,14 @@ class DocumentSessionImpl implements DocumentSession {
       bus,
       registry,
       source,
-    };
+    });
     return state;
   }
 
   #emit(event: DocumentLifecycleEvent): void {
-    // Best-effort notifications: a throwing listener must never break a
-    // lifecycle transition (listener failures are isolated by the set).
-    this.#listeners.emit(event);
+    // Every lifecycle event is frozen before publishing so one subscriber
+    // can never rewrite what later subscribers observe (issue #56).
+    this.#listeners.emit(Object.freeze(event));
   }
 }
 

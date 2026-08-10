@@ -635,4 +635,59 @@ describe("DocumentSession lifecycle coordinator", () => {
       expect(closed.revision).toBe(3);
     }
   });
+
+  it("publishes frozen lifecycle events that no subscriber can rewrite (issue #56)", () => {
+    const session = createSession();
+    const seen: string[] = [];
+    const frozenByListener: boolean[] = [];
+    const mutationRejected: boolean[] = [];
+    session.subscribe((event) => {
+      seen.push(`first:${event.kind}`);
+      frozenByListener.push(Object.isFrozen(event));
+      try {
+        // A buggy subscriber must not be able to rewrite the event for
+        // later subscribers: on a frozen event this assignment throws.
+        Object.assign(event, {
+          kind: "document-closed",
+          documentId: "document:tampered",
+        });
+        mutationRejected.push(false);
+      } catch {
+        mutationRejected.push(true);
+      }
+    });
+    session.subscribe((event) => {
+      seen.push(`second:${event.kind}:${event.documentId}`);
+      frozenByListener.push(Object.isFrozen(event));
+    });
+
+    session.open({ document: createFixtureDocument(1) });
+    session.replace({ document: createFixtureDocument(2) });
+    session.close();
+
+    expect(seen).toEqual([
+      "first:document-opened",
+      "second:document-opened:document:session:0001",
+      "first:document-replaced",
+      "second:document-replaced:document:session:0002",
+      "first:document-closed",
+      "second:document-closed:document:session:0002",
+    ]);
+    expect(frozenByListener).toEqual([true, true, true, true, true, true]);
+    expect(mutationRejected).toEqual([true, true, true]);
+  });
+
+  it("exposes a frozen public session-state record (issue #56)", () => {
+    const session = createSession();
+    const state = session.open({ document: createFixtureDocument(1) });
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(session.current)).toBe(true);
+    let mutationRejected = false;
+    try {
+      Object.assign(state, { documentId: "document:tampered" });
+    } catch {
+      mutationRejected = true;
+    }
+    expect(mutationRejected).toBe(true);
+  });
 });
