@@ -511,6 +511,10 @@ class ChunkProjection {
     if (this.root instanceof THREE.Group) {
       this.root.removeFromParent();
     }
+    // Every projection owns its material resources (issue #60): preview
+    // materials are released exactly when the overlay is discarded, and a
+    // live projection's cache is released through `clear()`/`dispose()`.
+    this.#materials.dispose();
     this.#onDispose();
   }
 
@@ -815,7 +819,11 @@ class SceneAdapterImpl implements SceneAdapter {
     const projection = new ChunkProjection({
       namespace,
       root,
-      materials: this.#materials,
+      // Preview overlays own namespace-specific material resources (issue
+      // #60): the cache is keyed only by material id, so a shared adapter
+      // would let a staged material recolor the live meshes that reference
+      // the same id, and the recolor would survive the overlay's disposal.
+      materials: createMaterialAdapter(),
       scheduler: this.#scheduler,
       onDispose: () => {
         this.#projections.delete(namespace);
