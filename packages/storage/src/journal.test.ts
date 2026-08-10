@@ -527,6 +527,38 @@ describe("RecoveryJournal", () => {
     ]);
   });
 
+  it("reassociate to the current path retains the journal and keeps appends recoverable (issue #52)", async () => {
+    const port = new ScriptedJournalPort();
+    const harness = createJournal(port);
+    await harness.commitAndAppend();
+    await port.writeProjectAtomic("project.vxl", new Uint8Array([1, 2, 3]));
+    const journalBefore = (await port.readJournal("project.vxl")) as Uint8Array;
+    const projectBefore = await port.readProject("project.vxl");
+    const orderBefore = [...port.order];
+
+    await harness.journal.reassociate("project.vxl");
+
+    // The recovery area is untouched: byte-identical journal and snapshot,
+    // same confirmed revision, still non-degraded.
+    expect(await port.readJournal("project.vxl")).toEqual(journalBefore);
+    expect(await port.readProject("project.vxl")).toEqual(projectBefore);
+    expect(harness.journal.lastJournaledRevision()).toBe(1);
+    expect(harness.journal.isDegraded()).toBe(false);
+    // The same-path reassociation performed no snapshot, journal replace,
+    // or journal removal I/O at all.
+    expect(port.order).toEqual(orderBefore);
+
+    // Later appends land in the same journal with the same identity.
+    await harness.commitAndAppend();
+    const after = decodeJournalFrames(
+      (await port.readJournal("project.vxl")) as Uint8Array,
+    );
+    expect(after.header?.recoverySessionId).toBe(SESSION);
+    expect(after.frames.map((entry) => entry.frame.revisionAfter)).toEqual([
+      1, 2,
+    ]);
+  });
+
   it("refuses to append to a journal owned by a different session", async () => {
     const port = new ScriptedJournalPort();
     const foreign = createJournal(port, {
