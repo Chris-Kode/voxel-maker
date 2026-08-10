@@ -299,13 +299,13 @@ export function App(): React.JSX.Element {
     shortcutsButtonRef.current?.focus();
   };
 
-  const openRecent = async (path: string): Promise<void> => {
+  const openRecent = async (entry: RecentProjectEntry): Promise<void> => {
     setRecentOpen(false);
-    await run(() => composition.fileService.openRecentProject(path));
+    await run(() => composition.fileService.openRecentProject(entry));
   };
 
-  const forgetRecent = async (path: string): Promise<void> => {
-    await composition.fileService.forgetRecentProject(path);
+  const forgetRecent = async (token: string): Promise<void> => {
+    await composition.fileService.forgetRecentProject(token);
     setRecent(await composition.fileService.recentProjects());
   };
 
@@ -453,11 +453,11 @@ export function App(): React.JSX.Element {
                 </li>
               ) : (
                 recent.map((entry) => (
-                  <li key={entry.path} role="none">
+                  <li key={entry.token} role="none">
                     <button
                       type="button"
                       role="menuitem"
-                      onClick={() => void openRecent(entry.path)}
+                      onClick={() => void openRecent(entry)}
                     >
                       <span className="recent-title">
                         {entry.title.length > 0 ? entry.title : entry.path}
@@ -469,7 +469,7 @@ export function App(): React.JSX.Element {
                       role="menuitem"
                       className="recent-remove"
                       aria-label={`Forget ${entry.path}`}
-                      onClick={() => void forgetRecent(entry.path)}
+                      onClick={() => void forgetRecent(entry.token)}
                     >
                       ×
                     </button>

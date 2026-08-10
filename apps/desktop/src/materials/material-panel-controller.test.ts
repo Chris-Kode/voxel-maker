@@ -27,6 +27,7 @@ import {
   createDesktopComposition,
   type DesktopComposition,
   type FilePicker,
+  type PickedPath,
 } from "../composition.js";
 import { autoConfirmPrompts, requireResult } from "../test-prompts.js";
 import type { MaterialPanelController } from "./material-panel-controller.js";
@@ -166,12 +167,12 @@ function buildFixtureProject(): Uint8Array {
 }
 
 function createFakePicker(
-  pickOpenPath: () => Promise<string | undefined>,
+  pickOpenPath: () => Promise<PickedPath | undefined>,
 ): FilePicker {
   return {
     pickOpenPath,
     pickSavePath(suggestedName) {
-      return Promise.resolve(suggestedName);
+      return Promise.resolve({ token: suggestedName, path: suggestedName });
     },
   };
 }

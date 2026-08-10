@@ -10,7 +10,7 @@ import {
   validatePreviewSpec,
   type PreviewViewId,
 } from "@voxel-maker/renderer";
-import type { FilePicker } from "../composition.js";
+import type { FilePicker, PickedPath } from "../composition.js";
 import type { PromptService } from "../prompts.js";
 import { PROMPT_MESSAGES } from "../prompts.js";
 
@@ -114,6 +114,25 @@ export function previewImagePaths(basePath: string): readonly string[] {
   );
 }
 
+/**
+ * Picks the four preview destinations (issue #94). The native picker
+ * returns one scoped image handle per standard view (minted in Rust from
+ * the single base the user chose); a picker without the multi-path
+ * method falls back to one save pick and derives the four names, which
+ * is valid only where the token IS the plain path (browser/test shells).
+ */
+async function pickPreviewDestinations(
+  picker: FilePicker,
+  suggested: string,
+): Promise<readonly PickedPath[] | undefined> {
+  if (picker.pickSaveImagePaths !== undefined) {
+    return await picker.pickSaveImagePaths(suggested);
+  }
+  const base = await picker.pickSavePath(suggested);
+  if (base === undefined) return undefined;
+  return previewImagePaths(base.path).map((path) => ({ token: path, path }));
+}
+
 /** Removes a trailing `.png`/`.PNG` so `foo.png` yields `foo-<view>.png`. */
 function stripPngExtension(basePath: string): string {
   return /\.png$/iu.test(basePath) ? basePath.slice(0, -4) : basePath;
@@ -214,21 +233,36 @@ export function createPreviewExportService(
       const suggested = suggestedPreviewName(
         typeof title === "string" ? title : undefined,
       );
-      // PNG-filtered save dialog when the picker supports it.
-      const base = await (picker.pickSaveImagePath ?? picker.pickSavePath)(
-        suggested,
-      );
-      if (base === undefined) return undefined;
-      const basePath = stripPngExtension(base);
-      const paths = previewImagePaths(base);
+      // PNG-filtered save dialog when the picker supports it. The native
+      // shell mints one scoped image handle per standard view (issue
+      // #94); pickers without the multi-path method fall back to one
+      // save pick and derive the four names (browser/test shells).
+      const picked = await pickPreviewDestinations(picker, suggested);
+      if (picked === undefined) return undefined;
+      const destinations = picked;
+      if (destinations.length !== STANDARD_PREVIEW_VIEWS.length) {
+        return {
+          ok: false,
+          cancelled: false,
+          paths: [],
+          error: toWorkspaceError(
+            new Error("The image picker returned an invalid destination count"),
+            { family: "io", code: "PREVIEW_IO_FAILED" },
+          ),
+        };
+      }
+      const basePath = stripPngExtension(destinations[0]?.path ?? suggested);
+      const paths = destinations.map((destination) => destination.path);
       // Overwrite confirmation before any render or write: the user
       // decides once, and declining aborts the whole run. The preflight
       // is part of the run's error contract: a failing port surfaces a
       // structured error instead of an unhandled rejection.
       const existing: string[] = [];
       try {
-        for (const path of paths) {
-          if (await imageStorage.exists(path)) existing.push(path);
+        for (const destination of destinations) {
+          if (await imageStorage.exists(destination.token)) {
+            existing.push(destination.path);
+          }
         }
         if (
           existing.length > 0 &&
@@ -264,6 +298,18 @@ export function createPreviewExportService(
       const written: string[] = [];
       for (let index = 0; index < STANDARD_PREVIEW_VIEWS.length; index += 1) {
         const view = STANDARD_PREVIEW_VIEWS[index] as PreviewViewId;
+        const destination = destinations[index];
+        if (destination === undefined) {
+          return {
+            ok: false,
+            cancelled: false,
+            paths: written,
+            error: toWorkspaceError(
+              new Error("The image picker returned no destination for a view"),
+              { family: "io", code: "PREVIEW_IO_FAILED" },
+            ),
+          };
+        }
         // A newer run supersedes this one (the shell disables concurrent
         // exports, but the guard keeps the invariant local).
         if (serial !== runSerial) {
@@ -299,14 +345,14 @@ export function createPreviewExportService(
             error: undefined,
           });
           const png = encodePng(rendered.rgba, rendered.width, rendered.height);
-          const path = paths[index] as string;
+          const path = destination.path;
           setStatus({
             state: "exporting",
             views: withView(view, "writing"),
             basePath,
             error: undefined,
           });
-          await imageStorage.writeImageAtomic(path, png);
+          await imageStorage.writeImageAtomic(destination.token, png);
           written.push(path);
           setStatus({
             state: "exporting",

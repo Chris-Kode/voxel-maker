@@ -105,7 +105,8 @@ function fixtureDocument(): VoxelDocument {
 
 const createFakePicker = (): FilePicker => ({
   pickOpenPath: () => Promise.resolve(undefined),
-  pickSavePath: (suggestedName: string) => Promise.resolve(suggestedName),
+  pickSavePath: (suggestedName: string) =>
+    Promise.resolve({ token: suggestedName, path: suggestedName }),
 });
 
 function fillBoxCall(id = "call_fill"): ToolCall {
@@ -413,8 +414,10 @@ describe("ai controller: save and reload retain rig/clip guarantees (AC)", () =>
     const composition = createDesktopComposition({
       storage,
       picker: {
-        pickOpenPath: () => Promise.resolve("ai-rig.vxl"),
-        pickSavePath: (suggested) => Promise.resolve(suggested),
+        pickOpenPath: () =>
+          Promise.resolve({ token: "ai-rig.vxl", path: "ai-rig.vxl" }),
+        pickSavePath: (suggested) =>
+          Promise.resolve({ token: suggested, path: suggested }),
       },
       prompts: createScriptedPrompts(true),
       recent: createMemoryRecentProjects(),

@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "catalog:",
-    "@tauri-apps/plugin-dialog": "catalog:",
     "@voxel-maker/agent": "workspace:*",
     "@voxel-maker/animation": "workspace:*",
     "@voxel-maker/commands": "workspace:*",

@@ -1,15 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import {
-  open as openDialog,
-  save as saveDialog,
-} from "@tauri-apps/plugin-dialog";
 import type {
   AtomicWriteResult,
   ImageStoragePort,
   ProjectStoragePort,
   RecoveryJournalPort,
 } from "@voxel-maker/storage";
-import type { FilePicker } from "../composition.js";
+import type { FilePicker, PickedPath } from "../composition.js";
 import {
   KEYCHAIN_SERVICE,
   Secret,
@@ -26,157 +22,162 @@ import {
 const MAX_RECENT = 10;
 
 /**
- * Tauri storage adapter (plan S6.18 seam, tickets #15/#22): reads, atomic
- * writes, existence checks, removal, backup reads, and the adjacent
- * recovery journal through the shell's own allowlisted commands
- * (`src-tauri`). The Rust side validates paths and performs the same
- * temp-write/backup/rename order as the Node adapter; cancellation and
- * fault injection arrive with the project lifecycle ticket (#22), so
- * `signal`/`faults` are ignored here.
+ * Tauri storage adapter (plan S6.18 seam, tickets #15/#22, issue #94):
+ * reads, atomic writes, existence checks, removal, backup reads, and the
+ * adjacent recovery journal through the shell's own allowlisted commands
+ * (`src-tauri`).
+ *
+ * The `path` argument is an OPAGUE HANDLE TOKEN, never a filesystem path:
+ * the native open/save dialogs run in Rust and mint one scoped handle per
+ * chosen file; every command below passes the token straight to the shell
+ * and the Rust side resolves it to the canonical dialog-scoped path. The
+ * webview therefore cannot address any file the user never picked. The
+ * Rust side performs the same temp-write/backup/rename order as the Node
+ * adapter; `signal`/`faults` are ignored here (documented limitation).
  */
 export class TauriProjectStorage
   implements ProjectStoragePort, RecoveryJournalPort
 {
-  async readProject(path: string): Promise<Uint8Array> {
-    const bytes = await invoke<ArrayBuffer>("read_project_bytes", { path });
+  async readProject(handle: string): Promise<Uint8Array> {
+    const bytes = await invoke<ArrayBuffer>("read_project_bytes", { handle });
     return new Uint8Array(bytes);
   }
 
   async writeProjectAtomic(
-    path: string,
+    handle: string,
     bytes: Uint8Array,
   ): Promise<AtomicWriteResult> {
     return await invoke<AtomicWriteResult>("write_project_bytes_atomic", {
-      path,
+      handle,
       bytes,
     });
   }
 
-  async exists(path: string): Promise<boolean> {
-    return await invoke<boolean>("project_exists", { path });
+  async exists(handle: string): Promise<boolean> {
+    return await invoke<boolean>("project_exists", { handle });
   }
 
-  async remove(path: string): Promise<void> {
-    await invoke("remove_project", { path });
+  async remove(handle: string): Promise<void> {
+    await invoke("remove_project", { handle });
   }
 
-  async readBackup(path: string): Promise<Uint8Array | undefined> {
+  async readBackup(handle: string): Promise<Uint8Array | undefined> {
     const bytes = await invoke<ArrayBuffer | null>("read_backup_bytes", {
-      path,
+      handle,
     });
     return bytes === null ? undefined : new Uint8Array(bytes);
   }
 
-  async readJournal(path: string): Promise<Uint8Array | undefined> {
+  async readJournal(handle: string): Promise<Uint8Array | undefined> {
     const bytes = await invoke<ArrayBuffer | null>("read_journal_bytes", {
-      path,
+      handle,
     });
     return bytes === null ? undefined : new Uint8Array(bytes);
   }
 
-  async appendJournal(path: string, bytes: Uint8Array): Promise<void> {
-    await invoke("append_journal_bytes", { path, bytes });
+  async appendJournal(handle: string, bytes: Uint8Array): Promise<void> {
+    await invoke("append_journal_bytes", { handle, bytes });
   }
 
-  async replaceJournal(path: string, bytes: Uint8Array): Promise<void> {
-    await invoke("replace_journal_bytes", { path, bytes });
+  async replaceJournal(handle: string, bytes: Uint8Array): Promise<void> {
+    await invoke("replace_journal_bytes", { handle, bytes });
   }
 
-  async removeJournal(path: string): Promise<void> {
-    await invoke("remove_journal", { path });
+  async removeJournal(handle: string): Promise<void> {
+    await invoke("remove_journal", { handle });
   }
 }
 
 /**
  * Tauri recent-project store: a bounded JSON file in the app config
- * directory through the shell's own commands (scoped native storage). The
- * Rust side validates the JSON shape and enforces the same bound.
+ * directory through the shell's own commands (issue #94). The store is
+ * Rust-owned: `record` sends ONLY the opaque handle token (plus display
+ * metadata) and the Rust side resolves the token to the canonical path,
+ * so a compromised webview can never persist a path of its choosing;
+ * `read_recent_projects` returns the display path back for the shell
+ * chrome. The Rust side validates the JSON shape and enforces the bound.
  */
 export class TauriRecentProjects implements RecentProjectsPort {
   async list(): Promise<readonly RecentProjectEntry[]> {
-    const raw = await invoke<string | null>("read_recent_projects");
-    return raw === null ? [] : parseRecentJson(raw);
+    const entries = await invoke<readonly RecentProjectEntry[] | null>(
+      "read_recent_projects",
+    );
+    return entries === null ? [] : parseRecentJson(entries);
   }
 
   async record(entry: RecentProjectEntry): Promise<void> {
-    const entries = await this.list();
-    const rest = entries.filter((existing) => existing.path !== entry.path);
-    const next = [entry, ...rest].slice(0, MAX_RECENT);
-    await invoke("write_recent_projects", {
-      json: JSON.stringify(next),
+    await invoke("record_recent_project", {
+      handle: entry.token,
+      title: entry.title,
+      openedAt: entry.openedAt,
     });
   }
 
-  async remove(path: string): Promise<void> {
-    const entries = await this.list();
-    const next = entries.filter((existing) => existing.path !== path);
-    await invoke("write_recent_projects", {
-      json: JSON.stringify(next),
-    });
+  async remove(token: string): Promise<void> {
+    await invoke("remove_recent_project", { token });
   }
 }
 
-/** Parses the stored JSON; malformed content yields an empty list. */
-function parseRecentJson(raw: string): readonly RecentProjectEntry[] {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map(parseRecentRecord)
-      .filter((entry): entry is RecentProjectEntry => entry !== undefined);
-  } catch {
-    return [];
-  }
+/** Validates the native list; malformed entries are dropped, never trusted. */
+function parseRecentJson(
+  entries: readonly RecentProjectEntry[],
+): readonly RecentProjectEntry[] {
+  return entries
+    .map(parseRecentRecord)
+    .filter((entry): entry is RecentProjectEntry => entry !== undefined)
+    .slice(0, MAX_RECENT);
 }
 
 /**
- * Tauri preview-image storage (plan S8.5/S15.2, ticket #25): scoped
- * atomic image writes (temp + flush + rename, no backup) and existence
- * checks through the shell's own allowlisted commands (`src-tauri`).
+ * Tauri preview-image storage (plan S8.5/S15.2, ticket #25, issue #94):
+ * scoped atomic image writes (temp + flush + rename, no backup) and
+ * existence checks through the shell's own allowlisted commands. The
+ * `path` argument is an opaque image-scope handle token; the Rust side
+ * resolves it to the canonical dialog-scoped PNG path.
  */
 export class TauriImageStorage implements ImageStoragePort {
   async writeImageAtomic(
-    path: string,
+    handle: string,
     bytes: Uint8Array,
   ): Promise<AtomicWriteResult> {
     return await invoke<AtomicWriteResult>("write_image_bytes_atomic", {
-      path,
+      handle,
       bytes,
     });
   }
 
-  async exists(path: string): Promise<boolean> {
-    return await invoke<boolean>("image_exists", { path });
+  async exists(handle: string): Promise<boolean> {
+    return await invoke<boolean>("image_exists", { handle });
   }
 }
 
-/** Native open/save dialogs via the allowlisted dialog plugin. */
+/**
+ * Native open/save dialogs (issue #94). The DIALOGS RUN IN RUST: each
+ * pick mints opaque scoped handles and returns `{ token, path }` where
+ * `path` is display-only — no native command ever accepts a raw path, so
+ * the webview can only ever address files the user chose in a dialog.
+ */
 export class TauriFilePicker implements FilePicker {
-  async pickOpenPath(): Promise<string | undefined> {
-    const selected = await openDialog({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "Voxel Maker project", extensions: ["vxl"] }],
-    });
-    return typeof selected === "string" ? selected : undefined;
+  async pickOpenPath(): Promise<PickedPath | undefined> {
+    return (await invoke<PickedPath | null>("pick_open_project")) ?? undefined;
   }
 
-  async pickSavePath(suggestedName: string): Promise<string | undefined> {
-    const selected = await saveDialog({
-      defaultPath: suggestedName,
-      filters: [{ name: "Voxel Maker project", extensions: ["vxl"] }],
-    });
-    return typeof selected === "string" ? selected : undefined;
+  async pickSavePath(suggestedName: string): Promise<PickedPath | undefined> {
+    return (
+      (await invoke<PickedPath | null>("pick_save_project", {
+        suggestedName,
+      })) ?? undefined
+    );
   }
 
-  async pickSaveImagePath(suggestedName: string): Promise<string | undefined> {
-    // Preview exports use a PNG filter; the caller derives the four
-    // standard-view names from the chosen base path (ticket #25).
-    const selected = await saveDialog({
-      defaultPath: suggestedName,
-      filters: [{ name: "PNG image", extensions: ["png"] }],
-    });
-    return typeof selected === "string" ? selected : undefined;
+  async pickSaveImagePaths(
+    suggestedName: string,
+  ): Promise<readonly PickedPath[] | undefined> {
+    return (
+      (await invoke<readonly PickedPath[] | null>("pick_preview_image_paths", {
+        suggestedName,
+      })) ?? undefined
+    );
   }
 }
 

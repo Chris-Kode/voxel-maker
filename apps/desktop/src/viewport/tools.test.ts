@@ -164,7 +164,7 @@ function buildFixtureProject(filled = true): Uint8Array {
 const createFakePicker = (): FilePicker => ({
   pickOpenPath: () => Promise.resolve(undefined),
   pickSavePath(suggestedName) {
-    return Promise.resolve(suggestedName);
+    return Promise.resolve({ token: suggestedName, path: suggestedName });
   },
 });
 

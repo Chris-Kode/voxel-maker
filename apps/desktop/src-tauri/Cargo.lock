@@ -4514,6 +4514,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "uuid",
 ]
 
 [[package]]
