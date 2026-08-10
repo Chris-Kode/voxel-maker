@@ -958,7 +958,11 @@ describe("scene adapter", () => {
 describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
   /** A second store standing in for a preview session overlay: the same
    * document and volume ids, with staged chunk geometry of its own. */
-  function previewHarness(): {
+  function previewHarness(
+    options: {
+      readonly materialColor?: string;
+    } = {},
+  ): {
     readonly store: DocumentStore;
     readonly writeCapability: VoxelWriteCapability;
     readonly namespace: `preview:${string}`;
@@ -992,7 +996,7 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
         {
           materialId: materialId(1),
           name: "box",
-          color: "#ff8800",
+          color: options.materialColor ?? "#ff8800",
           opacity: 1,
           roughness: 0.5,
           metallic: 0,
@@ -1162,6 +1166,51 @@ describe("scene adapter preview projections (plan S12.15, ticket #34)", () => {
     expect(
       childMesh(harness.adapter).geometry.getAttribute("position").count,
     ).toBe(384);
+    harness.adapter.dispose();
+  });
+
+  it("keeps staged material changes out of the live projection and disposes preview materials on discard (issue #60)", () => {
+    const harness = createHarness();
+    flushAll(harness.adapter);
+    const liveMesh = childMesh(harness.adapter);
+    const liveMaterial = liveMesh.material;
+    if (!(liveMaterial instanceof THREE.MeshStandardMaterial)) {
+      throw new Error("expected standard material");
+    }
+    expect(liveMaterial.color.getHexString()).toBe("ff8800");
+
+    // The preview stages a blue version of the SAME material id; the live
+    // store still owns the red record.
+    const preview = previewHarness({ materialColor: "#0000ff" });
+    const overlay = harness.adapter.projectPreview(
+      preview.store,
+      preview.namespace,
+    );
+    flushAll(harness.adapter);
+    const previewRoot = harness.scene.getObjectByName(preview.namespace);
+    if (previewRoot === undefined) throw new Error("missing preview root");
+    const overlayMeshes = chunkMeshes(harness.scene).filter(
+      (mesh) => previewRoot.getObjectById(mesh.id) !== undefined,
+    );
+    expect(overlayMeshes).toHaveLength(1);
+    const previewMaterial = overlayMeshes[0]?.material;
+    if (!(previewMaterial instanceof THREE.MeshStandardMaterial)) {
+      throw new Error("expected standard material");
+    }
+    // The staged material is a distinct instance owned by the preview; the
+    // live mesh keeps its own untouched instance and color.
+    expect(previewMaterial).not.toBe(liveMaterial);
+    expect(previewMaterial.color.getHexString()).toBe("0000ff");
+    expect(liveMaterial.color.getHexString()).toBe("ff8800");
+
+    // Discard: the preview overlay and its materials are disposed; the live
+    // mesh retains its original material instance and properties.
+    const previewMaterialDispose = vi.spyOn(previewMaterial, "dispose");
+    overlay.dispose();
+    expect(previewMaterialDispose).toHaveBeenCalled();
+    expect(harness.adapter.previewProjectionCount).toBe(0);
+    expect(childMesh(harness.adapter).material).toBe(liveMaterial);
+    expect(liveMaterial.color.getHexString()).toBe("ff8800");
     harness.adapter.dispose();
   });
 

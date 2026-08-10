@@ -113,7 +113,11 @@ alone owns semantic and renderer installation authority.
 ## Geometry and material lifecycle (S6.7)
 
 - One `THREE.Mesh` per chunk; material groups map to a shared material
-  instance per material id (the material adapter owns the cache).
+  instance per material id (the material adapter owns the cache). The
+  cache is namespace-scoped: the live projection and each preview
+  overlay own separate material instances, so a staged material never
+  recolors live meshes and preview resources are disposed with the
+  overlay.
 - Every replacement disposes the superseded `BufferGeometry` exactly
   once; volume removal, node deletion, lifecycle replacement
   (`document-opened`/`document-replaced`/`document-closed`), and
