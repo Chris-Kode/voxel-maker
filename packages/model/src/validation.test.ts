@@ -802,6 +802,8 @@ describe("validateDocument", () => {
         maxMetadataBytes: 1_048_576,
         maxMetadataStringBytes: 65_536,
         maxVoxelCoordinate: 1_048_575,
+        maxChunks: 262_144,
+        maxOccupiedVoxels: 1_000_000,
         maxRevision: Number.MAX_SAFE_INTEGER,
       };
       const limited = validateDocument(buildDocument(), limits);

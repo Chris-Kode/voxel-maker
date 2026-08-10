@@ -10,7 +10,11 @@ import {
   WorkspaceError,
   type JsonValue,
 } from "@voxel-maker/shared";
-import { createDocument, type VoxelDocument } from "@voxel-maker/model";
+import {
+  DEFAULT_DOCUMENT_LIMITS,
+  createDocument,
+  type VoxelDocument,
+} from "@voxel-maker/model";
 import {
   createDocumentStore,
   type DocumentCommitted,
@@ -66,6 +70,47 @@ function createDemoDocument(): VoxelDocument {
 }
 
 const VOLUME = volumeId("volume:store:0001");
+
+/** Document with two volumes for document-wide aggregate tests (issue #92). */
+function createTwoVolumeDocument(): VoxelDocument {
+  return createDocument({
+    documentId: documentId("document:store:two:0001"),
+    metadata: { title: "store two-volume", tags: [] },
+    rootNodeId: nodeId("node:store:two:root"),
+    nodes: [
+      {
+        nodeId: nodeId("node:store:two:root"),
+        name: "Root",
+        parentId: null,
+        children: [],
+        transform: identity,
+        components: [],
+      },
+    ],
+    materials: [
+      {
+        materialId: materialId(1),
+        name: "demo",
+        color: "#ff8800",
+        opacity: 1,
+        roughness: 0.5,
+        metallic: 0,
+        emissive: 0,
+      },
+    ],
+    volumes: [
+      {
+        volumeId: volumeId("volume:store:two:a"),
+        bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      },
+      {
+        volumeId: volumeId("volume:store:two:b"),
+        bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      },
+    ],
+    animations: [],
+  });
+}
 
 function makeEvent(
   revisionBefore: number,
@@ -563,5 +608,111 @@ describe("createDocumentStore volume seeding", () => {
         }),
       "INVALID_CHUNK_LENGTH",
     );
+  });
+});
+
+describe("document-wide voxel totals (ADR-0009, issue #92)", () => {
+  const VOLUME_A = volumeId("volume:store:two:a");
+  const VOLUME_B = volumeId("volume:store:two:b");
+
+  function catchCommit(fn: () => void): unknown {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+    throw new Error("expected commit to throw");
+  }
+
+  function commitBox(
+    store: ReturnType<typeof createDocumentStore>["store"],
+    writeCapability: ReturnType<typeof createDocumentStore>["writeCapability"],
+    volume: ReturnType<typeof volumeId>,
+    size: readonly [number, number, number],
+    event: DocumentCommitted,
+  ): void {
+    const staged = store.stageVolume(volume);
+    if (staged === undefined) throw new Error("missing volume");
+    staged.fillBox(
+      { min: [0, 0, 0], max: [size[0], size[1], size[2]] },
+      1,
+      writeCapability,
+    );
+    const nextDocument = {
+      ...store.getDocument(),
+      revision: store.revision + 1,
+    };
+    store.commit(
+      {
+        document: nextDocument,
+        volumes: new Map([[volume, staged]]),
+        removedVolumes: [],
+      },
+      event,
+      writeCapability,
+    );
+  }
+
+  it("rejects a commit whose aggregate occupied voxels exceed the document limit", () => {
+    const { store, writeCapability } = createDocumentStore({
+      document: createTwoVolumeDocument(),
+      limits: { ...DEFAULT_DOCUMENT_LIMITS, maxOccupiedVoxels: 100 },
+    });
+    commitBox(store, writeCapability, VOLUME_A, [60, 1, 1], makeEvent(0, 1));
+    expect(store.revision).toBe(1);
+    const error = catchCommit(() => {
+      commitBox(store, writeCapability, VOLUME_B, [60, 1, 1], makeEvent(1, 2));
+    });
+    expect(error).toBeInstanceOf(WorkspaceError);
+    if (!(error instanceof WorkspaceError)) return;
+    expect(error.family).toBe("limit");
+    expect(error.code).toBe("TOO_MANY_OCCUPIED_VOXELS");
+    expect(error.message).toBe("Document exceeds its occupied-voxel limit");
+    expect(error.context).toEqual({
+      requested: 120,
+      limit: 100,
+      resource: "occupiedVoxels",
+    });
+    // Atomic rejection: revision and committed voxel state are unchanged.
+    expect(store.revision).toBe(1);
+    expect(store.getVolume(VOLUME_B)?.occupiedCount()).toBe(0);
+    expect(store.getVolume(VOLUME_A)?.occupiedCount()).toBe(60);
+  });
+
+  it("rejects a commit whose aggregate non-empty chunks exceed the document limit", () => {
+    const { store, writeCapability } = createDocumentStore({
+      document: createTwoVolumeDocument(),
+      limits: { ...DEFAULT_DOCUMENT_LIMITS, maxChunks: 3 },
+    });
+    // Each box spans two chunks (x = 0..17 covers chunk 0 and chunk 1).
+    commitBox(store, writeCapability, VOLUME_A, [18, 1, 1], makeEvent(0, 1));
+    expect(store.getVolume(VOLUME_A)?.chunkCount()).toBe(2);
+    const error = catchCommit(() => {
+      commitBox(store, writeCapability, VOLUME_B, [18, 1, 1], makeEvent(1, 2));
+    });
+    expect(error).toBeInstanceOf(WorkspaceError);
+    if (!(error instanceof WorkspaceError)) return;
+    expect(error.family).toBe("limit");
+    expect(error.code).toBe("TOO_MANY_CHUNKS");
+    expect(error.message).toBe("Document exceeds its non-empty chunk limit");
+    expect(error.context).toEqual({
+      requested: 4,
+      limit: 3,
+      resource: "chunks",
+    });
+    expect(store.revision).toBe(1);
+    expect(store.getVolume(VOLUME_B)?.chunkCount()).toBe(0);
+  });
+
+  it("allows document-wide totals at exactly the limit", () => {
+    const { store, writeCapability } = createDocumentStore({
+      document: createTwoVolumeDocument(),
+      limits: { ...DEFAULT_DOCUMENT_LIMITS, maxOccupiedVoxels: 100 },
+    });
+    commitBox(store, writeCapability, VOLUME_A, [50, 1, 1], makeEvent(0, 1));
+    commitBox(store, writeCapability, VOLUME_B, [50, 1, 1], makeEvent(1, 2));
+    expect(store.revision).toBe(2);
+    expect(store.getVolume(VOLUME_A)?.occupiedCount()).toBe(50);
+    expect(store.getVolume(VOLUME_B)?.occupiedCount()).toBe(50);
   });
 });

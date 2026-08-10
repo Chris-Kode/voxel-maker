@@ -428,6 +428,12 @@ export class CommandBus {
     const context = this.#makeContext(staged);
     const executions: CommandExecution[] = [];
     const inverses: (InverseCommand | readonly InverseCommand[])[] = [];
+    // Issue #92: ADR-0009's 1,000,000-voxel transaction budget is a
+    // cumulative meter over every command and volume of the transaction.
+    // Like the byte budgets, it applies to new commits only: undo, redo,
+    // and gesture-cancel replay stored inverses that were already bounded
+    // at commit time.
+    let transactionVoxels = 0;
     for (let index = 0; index < commands.length; index += 1) {
       const command = commands[index];
       if (command === undefined) continue;
@@ -480,6 +486,17 @@ export class CommandBus {
       }
       executions.push(execution);
       inverses.push(execution.inverse);
+      if (mode.kind === "commit") {
+        transactionVoxels += changedVoxelCount(execution);
+        if (transactionVoxels > this.#limits.maxVoxelsPerTransaction) {
+          return err(
+            withCommandIndex(
+              this.#transactionVoxelLimitError(transactionVoxels),
+              index,
+            ),
+          );
+        }
+      }
     }
 
     const revisionBefore = this.#store.revision;
@@ -653,6 +670,20 @@ export class CommandBus {
       ids.add(command.id);
     }
     return undefined;
+  }
+
+  /** Stable limit error for the cumulative per-transaction voxel meter. */
+  #transactionVoxelLimitError(requested: number): WorkspaceError {
+    return new WorkspaceError({
+      family: "limit",
+      code: "TOO_MANY_VOXELS",
+      message: "Transaction exceeds the per-transaction voxel limit",
+      context: {
+        requested,
+        limit: this.#limits.maxVoxelsPerTransaction,
+        resource: "voxelsPerTransaction",
+      },
+    });
   }
 
   #makeContext(staged: StagedOverlay): CommandExecutionContext {
@@ -1119,6 +1150,23 @@ function buildEvent(
     changedVolumes: mergeChangeSets(executions.flatMap(changeSetsOf)),
     ...(options.label !== undefined ? { label: options.label } : {}),
   };
+}
+
+/**
+ * Net voxels changed by one execution (issue #92): the sum of every patch in
+ * every change set the execution produced. This mirrors the volume-level
+ * semantic bound (the net plan after dedup and no-op filtering is "the voxels
+ * actually changed by the operation", ADR-0009) accumulated across commands
+ * and volumes of one transaction.
+ */
+function changedVoxelCount(execution: CommandExecution): number {
+  let total = 0;
+  for (const changeSet of changeSetsOf(execution)) {
+    for (const chunk of changeSet.chunks) {
+      total += chunk.patches.length;
+    }
+  }
+  return total;
 }
 
 /** All voxel change sets produced by one command execution. */

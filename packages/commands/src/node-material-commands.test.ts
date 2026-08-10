@@ -730,6 +730,8 @@ describe("node commands", () => {
         maxMetadataBytes: 1048576,
         maxMetadataStringBytes: 65536,
         maxVoxelCoordinate: 1048575,
+        maxChunks: 262144,
+        maxOccupiedVoxels: 1000000,
         maxRevision: Number.MAX_SAFE_INTEGER,
       },
     });
@@ -929,6 +931,8 @@ describe("material commands", () => {
         maxMetadataBytes: 1048576,
         maxMetadataStringBytes: 65536,
         maxVoxelCoordinate: 1048575,
+        maxChunks: 262144,
+        maxOccupiedVoxels: 1000000,
         maxRevision: Number.MAX_SAFE_INTEGER,
       },
     });
