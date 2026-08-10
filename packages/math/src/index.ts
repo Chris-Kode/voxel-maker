@@ -212,6 +212,14 @@ function canonicalPositive(value: number, path: Path): number {
   return canonical;
 }
 
+function nonInvertibleTransform(): never {
+  throw new WorkspaceError({
+    family: "validation",
+    code: "NON_INVERTIBLE_TRANSFORM",
+    message: "Transform matrix is not invertible",
+  });
+}
+
 /** Returns a canonical transform with normalized rotation and canonicalized numbers. */
 export function canonicalTransform(
   input: TransformInput,
@@ -403,7 +411,17 @@ export function multiplyMatrices(a: Mat4, b: Mat4): Mat4 {
   return result as unknown as Mat4;
 }
 
-/** Inverts a 4x4 affine matrix (linear part inverse plus translation). */
+/**
+ * Inverts a 4x4 affine matrix (linear part inverse plus translation).
+ *
+ * The linear block is column-equilibrated before the cofactor determinant:
+ * each column is divided by its largest absolute entry so the normalized
+ * block has entries in [-1, 1]. The determinant and cofactor products then
+ * cannot underflow (tiny scales) or overflow (huge scales) before the
+ * singularity test, and the inverse is rescaled afterwards (issue #84).
+ * A zero column, a zero determinant, or a non-finite result is rejected
+ * with the stable `NON_INVERTIBLE_TRANSFORM` error.
+ */
 export function invertMatrix(matrix: Mat4): Mat4 {
   const a00 = matrix[0];
   const a01 = matrix[4];
@@ -417,47 +435,80 @@ export function invertMatrix(matrix: Mat4): Mat4 {
   const tauX = matrix[12];
   const tauY = matrix[13];
   const tauZ = matrix[14];
+  const columnScale0 = Math.max(Math.abs(a00), Math.abs(a10), Math.abs(a20));
+  const columnScale1 = Math.max(Math.abs(a01), Math.abs(a11), Math.abs(a21));
+  const columnScale2 = Math.max(Math.abs(a02), Math.abs(a12), Math.abs(a22));
+  if (!(columnScale0 > 0) || !(columnScale1 > 0) || !(columnScale2 > 0)) {
+    // A zero column makes the linear block singular regardless of the rest.
+    nonInvertibleTransform();
+  }
+  const b00 = a00 / columnScale0;
+  const b01 = a01 / columnScale1;
+  const b02 = a02 / columnScale2;
+  const b10 = a10 / columnScale0;
+  const b11 = a11 / columnScale1;
+  const b12 = a12 / columnScale2;
+  const b20 = a20 / columnScale0;
+  const b21 = a21 / columnScale1;
+  const b22 = a22 / columnScale2;
   const determinant =
-    a00 * (a11 * a22 - a12 * a21) -
-    a01 * (a10 * a22 - a12 * a20) +
-    a02 * (a10 * a21 - a11 * a20);
+    b00 * (b11 * b22 - b12 * b21) -
+    b01 * (b10 * b22 - b12 * b20) +
+    b02 * (b10 * b21 - b11 * b20);
   if (!(Math.abs(determinant) > 0)) {
-    throw new WorkspaceError({
-      family: "validation",
-      code: "NON_INVERTIBLE_TRANSFORM",
-      message: "Transform matrix is not invertible",
-    });
+    nonInvertibleTransform();
   }
   const invDet = 1 / determinant;
-  const b00 = (a11 * a22 - a12 * a21) * invDet;
-  const b01 = (a02 * a21 - a01 * a22) * invDet;
-  const b02 = (a01 * a12 - a02 * a11) * invDet;
-  const b10 = (a12 * a20 - a10 * a22) * invDet;
-  const b11 = (a00 * a22 - a02 * a20) * invDet;
-  const b12 = (a02 * a10 - a00 * a12) * invDet;
-  const b20 = (a10 * a21 - a11 * a20) * invDet;
-  const b21 = (a01 * a20 - a00 * a21) * invDet;
-  const b22 = (a00 * a11 - a01 * a10) * invDet;
+  const m00 = (b11 * b22 - b12 * b21) * invDet;
+  const m01 = (b02 * b21 - b01 * b22) * invDet;
+  const m02 = (b01 * b12 - b02 * b11) * invDet;
+  const m10 = (b12 * b20 - b10 * b22) * invDet;
+  const m11 = (b00 * b22 - b02 * b20) * invDet;
+  const m12 = (b02 * b10 - b00 * b12) * invDet;
+  const m20 = (b10 * b21 - b11 * b20) * invDet;
+  const m21 = (b01 * b20 - b00 * b21) * invDet;
+  const m22 = (b00 * b11 - b01 * b10) * invDet;
+  // The linear block is `B * diag(columnScale0, columnScale1, columnScale2)`,
+  // so its inverse is `diag(1/columnScale0, ...) * B^-1`: row `i` of the
+  // normalized inverse is divided by `columnScale_i`.
+  const inv00 = m00 / columnScale0;
+  const inv01 = m01 / columnScale0;
+  const inv02 = m02 / columnScale0;
+  const inv10 = m10 / columnScale1;
+  const inv11 = m11 / columnScale1;
+  const inv12 = m12 / columnScale1;
+  const inv20 = m20 / columnScale2;
+  const inv21 = m21 / columnScale2;
+  const inv22 = m22 / columnScale2;
   // Column-major storage: columns of the inverse linear part, then the
   // inverse translation `-B * tau` at indices 12-14.
-  return [
-    b00,
-    b10,
-    b20,
+  const result: Mat4 = [
+    inv00,
+    inv10,
+    inv20,
     0,
-    b01,
-    b11,
-    b21,
+    inv01,
+    inv11,
+    inv21,
     0,
-    b02,
-    b12,
-    b22,
+    inv02,
+    inv12,
+    inv22,
     0,
-    -(b00 * tauX + b01 * tauY + b02 * tauZ),
-    -(b10 * tauX + b11 * tauY + b12 * tauZ),
-    -(b20 * tauX + b21 * tauY + b22 * tauZ),
+    -(inv00 * tauX + inv01 * tauY + inv02 * tauZ),
+    -(inv10 * tauX + inv11 * tauY + inv12 * tauZ),
+    -(inv20 * tauX + inv21 * tauY + inv22 * tauZ),
     1,
   ];
+  // A finite input whose inverse is not representable (for example a scale
+  // so small that the reciprocal overflows) must fail with the stable error
+  // instead of returning NaN/Infinity entries.
+  for (let index = 0; index < 15; index += 1) {
+    if (!Number.isFinite(result[index] as number)) {
+      nonInvertibleTransform();
+    }
+  }
+  return result;
 }
 
 /**
