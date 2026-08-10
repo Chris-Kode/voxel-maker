@@ -547,6 +547,65 @@ pub async fn pick_preview_image_paths(
     Ok(Some(results))
 }
 
+/// Hard bound on native/external input files (ADR-0009, issue #96),
+/// mirroring the shared `INPUT_FILE_MAX_BYTES` constant the Node storage
+/// adapter and the format parsers enforce.
+const MAX_INPUT_FILE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Stable, machine-distinguishable limit message naming the resource, the
+/// configured maximum, and the requested size (ADR-0009).
+fn input_file_limit_message(path: &Path, requested: u64) -> String {
+    format!(
+        "input file exceeds the 512 MiB hard limit ({requested} bytes): {}",
+        path.display()
+    )
+}
+
+/// Reads a file with a stat preflight and a bounded stream (issue #96):
+/// non-regular paths and files above the 512 MiB input-file hard cap are
+/// rejected BEFORE the body is read, and the read itself is capped so a
+/// file that grows between the metadata check and the read can never be
+/// allocated beyond the limit.
+fn read_bounded_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    read_bounded_file(file, path)
+}
+
+/// `read_bounded_bytes`, with a missing file resolving to `None` (used by
+/// the backup and journal readers, where absence is a normal state).
+fn read_bounded_bytes_or_none(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::File::open(path) {
+        Ok(file) => read_bounded_file(file, path).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Shared bounded read over an already-opened file: metadata preflight on
+/// the handle, capped stream, and a post-read size check so a file that
+/// grows past the cap is never allocated beyond it.
+fn read_bounded_file(file: std::fs::File, path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "input path is not a regular file: {}",
+            path.display()
+        ));
+    }
+    if metadata.len() > MAX_INPUT_FILE_BYTES {
+        return Err(input_file_limit_message(path, metadata.len()));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_INPUT_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_INPUT_FILE_BYTES {
+        return Err(input_file_limit_message(path, bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
 /// Reads a project file's bytes through a project handle.
 #[tauri::command]
 pub fn read_project_bytes(
@@ -555,7 +614,7 @@ pub fn read_project_bytes(
 ) -> Result<tauri::ipc::Response, String> {
     let path = state.resolve_project(&handle)?;
     reject_symlink(&path)?;
-    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+    let bytes = read_bounded_bytes(&path)?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -640,11 +699,7 @@ pub fn read_backup_bytes(
     let path = state.resolve_project(&handle)?;
     let backup = sibling_path_for(&path, ".bak");
     reject_symlink(&backup)?;
-    match std::fs::read(&backup) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
+    read_bounded_bytes_or_none(&backup)
 }
 
 /// Removes a project file through a project handle (missing is not an
@@ -735,11 +790,7 @@ pub fn read_journal_bytes(
     let path = state.resolve_project(&handle)?;
     let journal_path = journal_path_for(&path);
     reject_symlink(&journal_path)?;
-    match std::fs::read(&journal_path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
+    read_bounded_bytes_or_none(&journal_path)
 }
 
 /// Appends bytes to the adjacent journal of a project handle, creating it
@@ -1420,5 +1471,90 @@ mod tests {
         state.load_recent();
         assert!(state.resolve_project("t1").is_ok());
         assert!(state.resolve_project("t2").is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #96: reads preflight against the 512 MiB input-file hard cap.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn reads_reject_inputs_above_the_512_mib_cap_before_reading() {
+        let dir = TempDir::new("oversized");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+
+        // Sparse files: 512 MiB + 1 logical bytes with no backing blocks,
+        // so passing only proves the metadata preflight rejected them
+        // before any body bytes were read or copied.
+        let project = dir.canonical("oversized.vxl");
+        std::fs::File::create(&project)
+            .expect("create project")
+            .set_len(MAX_INPUT_FILE_BYTES + 1)
+            .expect("sparse project");
+        let token = state.mint_project(project).expect("mint project");
+        let error = match read_project_bytes(state.clone(), token) {
+            Ok(_) => panic!("expected the limit rejection"),
+            Err(error) => error,
+        };
+        assert!(error.contains("512 MiB"), "unexpected error: {error}");
+
+        let backup_base = dir.canonical("backup.vxl");
+        std::fs::File::create(&backup_base)
+            .expect("create backup base")
+            .set_len(1)
+            .expect("backup base");
+        std::fs::File::create(dir.file("backup.vxl.bak"))
+            .expect("create backup")
+            .set_len(MAX_INPUT_FILE_BYTES + 1)
+            .expect("sparse backup");
+        let token = state.mint_project(backup_base).expect("mint backup");
+        let error = match read_backup_bytes(state.clone(), token) {
+            Ok(_) => panic!("expected the limit rejection"),
+            Err(error) => error,
+        };
+        assert!(error.contains("512 MiB"), "unexpected error: {error}");
+
+        let journal_base = dir.canonical("journal.vxl");
+        std::fs::File::create(&journal_base)
+            .expect("create journal base")
+            .set_len(1)
+            .expect("journal base");
+        std::fs::File::create(dir.file("journal.vxl.journal"))
+            .expect("create journal")
+            .set_len(MAX_INPUT_FILE_BYTES + 1)
+            .expect("sparse journal");
+        let token = state.mint_project(journal_base).expect("mint journal");
+        let error = match read_journal_bytes(state.clone(), token) {
+            Ok(_) => panic!("expected the limit rejection"),
+            Err(error) => error,
+        };
+        assert!(error.contains("512 MiB"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn reads_reject_non_regular_paths_and_read_regular_files() {
+        let dir = TempDir::new("regular");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+
+        let directory = dir.file("directory.vxl");
+        std::fs::create_dir(&directory).expect("create directory");
+        let token = state
+            .mint_project(directory.canonicalize().expect("canonical directory"))
+            .expect("mint directory");
+        let error = match read_project_bytes(state.clone(), token) {
+            Ok(_) => panic!("expected the limit rejection"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("not a regular file"),
+            "unexpected error: {error}"
+        );
+
+        let project = dir.canonical("regular.vxl");
+        std::fs::write(&project, b"hello").expect("write project");
+        let token = state.mint_project(project).expect("mint project");
+        let bytes = read_bytes(&app, token).expect("read project");
+        assert_eq!(bytes, b"hello");
     }
 }
