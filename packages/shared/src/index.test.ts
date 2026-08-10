@@ -81,6 +81,107 @@ describe("shared contracts", () => {
     expect(ok(4)).toEqual({ ok: true, value: 4 });
     expect(err(error)).toEqual({ ok: false, error });
   });
+
+  it("redacts attacker-controlled and hostile error names in causes (issue #67)", () => {
+    const secret = "Authorization: Bearer sk-secret";
+    const hostile = new Error("safe");
+    hostile.name = secret;
+    const wrapped = new WorkspaceError({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: hostile,
+    });
+    const serialized = JSON.parse(JSON.stringify(wrapped)) as {
+      cause: { type: string };
+    };
+    expect(serialized.cause.type).toBe("Error");
+    expect(JSON.stringify(wrapped)).not.toContain(secret);
+
+    // A throwing `name` getter must never break construction or serialization.
+    const throwing = Object.create(Error.prototype) as Error;
+    Object.defineProperty(throwing, "name", {
+      get() {
+        throw new Error("hostile getter");
+      },
+    });
+    const wrappedThrowing = new WorkspaceError({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: throwing,
+    });
+    expect(JSON.parse(JSON.stringify(wrappedThrowing))).toEqual({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: { type: "Error" },
+    });
+
+    // A Proxy cause whose prototype lookup throws must also never break
+    // construction or serialization.
+    const proxyCause = new Proxy(Object.create(Error.prototype) as Error, {
+      getPrototypeOf() {
+        throw new Error("hostile prototype");
+      },
+    });
+    const wrappedProxy = new WorkspaceError({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: proxyCause,
+    });
+    expect(JSON.parse(JSON.stringify(wrappedProxy))).toEqual({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: { type: "Error" },
+    });
+
+    // Standard error names still surface as their fixed category.
+    const typed = new WorkspaceError({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: new TypeError("native detail"),
+    });
+    expect(JSON.parse(JSON.stringify(typed))).toEqual({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: { type: "TypeError" },
+    });
+
+    // Non-allowlisted custom class names collapse to the generic type.
+    const custom = new Error("native detail");
+    custom.name = "CustomNativeError";
+    const wrappedCustom = new WorkspaceError({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: custom,
+    });
+    expect(JSON.parse(JSON.stringify(wrappedCustom))).toEqual({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: { type: "Error" },
+    });
+
+    // Non-Error causes keep their fixed typeof category.
+    const objectCause = new WorkspaceError({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: { secret: "native detail" },
+    });
+    expect(JSON.parse(JSON.stringify(objectCause))).toEqual({
+      family: "io",
+      code: "IO",
+      message: "safe",
+      cause: { type: "object" },
+    });
+  });
 });
 
 describe("createListenerSet", () => {

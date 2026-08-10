@@ -135,9 +135,37 @@ function cloneJson(value: JsonValue, depth = 0): JsonValue {
   );
 }
 
+/**
+ * Error names that are safe to surface in a redacted cause type (issue #67).
+ * `Error.name` is mutable and attacker-controlled, so anything outside this
+ * fixed allowlist collapses to the generic "Error" and hostile `name` getters
+ * fall back to the same generic type: serialized errors never leak native
+ * details and never throw while redacting.
+ */
+const SAFE_CAUSE_TYPES = new Set([
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+  "AggregateError",
+  "WorkspaceError",
+]);
+
 function redactCause(cause: unknown): RedactedCause | undefined {
   if (cause === undefined) return undefined;
-  if (cause instanceof Error) return Object.freeze({ type: cause.name });
+  try {
+    if (cause instanceof Error) {
+      const name = cause.name;
+      return Object.freeze({
+        type: SAFE_CAUSE_TYPES.has(name) ? name : "Error",
+      });
+    }
+  } catch {
+    return Object.freeze({ type: "Error" });
+  }
   return Object.freeze({ type: typeof cause });
 }
 
