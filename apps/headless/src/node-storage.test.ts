@@ -407,14 +407,9 @@ describe("NodeProjectStorage bounded reads (issue #96)", () => {
       const handle = await open(path, "w");
       await handle.truncate(INPUT_FILE_MAX_BYTES + 1);
       await handle.close();
-      const port = new NodeProjectStorage();
-      const error = await port.readProject(path).then(
-        () => {
-          throw new Error("expected the input limit rejection");
-        },
-        (caught: unknown) => caught,
-      );
-      expect(error).toMatchObject({
+      await expect(
+        new NodeProjectStorage().readProject(path),
+      ).rejects.toMatchObject({
         family: "limit",
         code: INPUT_FILE_LIMIT_EXCEEDED,
         context: {
@@ -438,13 +433,7 @@ describe("NodeProjectStorage bounded reads (issue #96)", () => {
       const handle = await open(`${path}.bak`, "w");
       await handle.truncate(INPUT_FILE_MAX_BYTES + 1);
       await handle.close();
-      const error = await port.readBackup(path).then(
-        () => {
-          throw new Error("expected the input limit rejection");
-        },
-        (caught: unknown) => caught,
-      );
-      expect(error).toMatchObject({
+      await expect(port.readBackup(path)).rejects.toMatchObject({
         family: "limit",
         code: INPUT_FILE_LIMIT_EXCEEDED,
         context: {
@@ -467,13 +456,7 @@ describe("NodeProjectStorage bounded reads (issue #96)", () => {
       const handle = await open(journalPathFor(path), "w");
       await handle.truncate(INPUT_FILE_MAX_BYTES + 1);
       await handle.close();
-      const error = await port.readJournal(path).then(
-        () => {
-          throw new Error("expected the input limit rejection");
-        },
-        (caught: unknown) => caught,
-      );
-      expect(error).toMatchObject({
+      await expect(port.readJournal(path)).rejects.toMatchObject({
         family: "limit",
         code: INPUT_FILE_LIMIT_EXCEEDED,
         context: {
@@ -487,41 +470,23 @@ describe("NodeProjectStorage bounded reads (issue #96)", () => {
     }
   });
 
-  it("rejects non-regular project, backup, and journal paths", async () => {
+  it("rejects non-regular project, backup, and journal paths before opening them", async () => {
     const dir = await makeDirectory();
     try {
       const path = join(dir, "demo.vxl");
       await mkdir(path);
       const port = new NodeProjectStorage();
-      const projectError = await port.readProject(path).then(
-        () => {
-          throw new Error("expected the non-regular rejection");
-        },
-        (caught: unknown) => caught,
-      );
-      expect(projectError).toMatchObject({
+      await expect(port.readProject(path)).rejects.toMatchObject({
         family: "io",
         code: IO_ERROR_CODES.notRegular,
       });
       await mkdir(`${path}.bak`);
-      const backupError = await port.readBackup(path).then(
-        () => {
-          throw new Error("expected the non-regular rejection");
-        },
-        (caught: unknown) => caught,
-      );
-      expect(backupError).toMatchObject({
+      await expect(port.readBackup(path)).rejects.toMatchObject({
         family: "io",
         code: IO_ERROR_CODES.notRegular,
       });
       await mkdir(journalPathFor(path));
-      const journalError = await port.readJournal(path).then(
-        () => {
-          throw new Error("expected the non-regular rejection");
-        },
-        (caught: unknown) => caught,
-      );
-      expect(journalError).toMatchObject({
+      await expect(port.readJournal(path)).rejects.toMatchObject({
         family: "io",
         code: IO_ERROR_CODES.notRegular,
       });
@@ -545,13 +510,7 @@ describe("NodeProjectStorage bounded reads (issue #96)", () => {
       const handle = await open(path, "w");
       await handle.truncate(17);
       await handle.close();
-      const error = await port.readProject(path).then(
-        () => {
-          throw new Error("expected the input limit rejection");
-        },
-        (caught: unknown) => caught,
-      );
-      expect(error).toMatchObject({
+      await expect(port.readProject(path)).rejects.toMatchObject({
         family: "limit",
         code: INPUT_FILE_LIMIT_EXCEEDED,
         context: { path, requested: 17, limit: 16 },
