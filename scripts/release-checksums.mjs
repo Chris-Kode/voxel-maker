@@ -9,16 +9,41 @@
  * current artifact set. With --verify every line is recomputed and
  * compared; the process exits non-zero on any missing, extra, or
  * mismatched artifact.
+ *
+ * Verification only accepts canonical single-component artifact names and
+ * strict 64-hex lowercase hashes (issue #97); traversal, absolute, dot,
+ * duplicate, malformed-hash, directory, symlink-escape, missing, extra, and
+ * mismatched entries all fail, so verification cannot read or endorse files
+ * outside the artifact directory.
  */
 import { createHash } from "node:crypto";
-import { readdir, readFile, writeFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readdir, readFile, writeFile, stat, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const CHECKSUM_FILE = "SHASUMS256.txt";
 
 /** Files that are metadata about the set rather than artifacts. */
 const METADATA_FILES = new Set(["manifest.json"]);
+
+/** Canonical sha256 hex digest of an artifact (lowercase, 64 hex digits). */
+const HASH_PATTERN = /^[0-9a-f]{64}$/u;
+
+/**
+ * Why `name` cannot appear as a checksum entry, or null when it is a valid
+ * canonical artifact name. Artifact names are single path components: no
+ * separators, no dot segments, and not the set's own metadata files. This is
+ * what keeps verification inside the artifact directory (issue #97).
+ */
+function invalidNameReason(name) {
+  if (name === "") return "name is empty";
+  if (name === "." || name === "..") return "name is a dot path segment";
+  if (name.includes("/") || name.includes("\\"))
+    return "name contains a path separator";
+  if (name === CHECKSUM_FILE) return `name is ${CHECKSUM_FILE}`;
+  if (METADATA_FILES.has(name)) return "name is a metadata file";
+  return null;
+}
 
 async function sha256File(path) {
   const hash = createHash("sha256");
@@ -28,7 +53,7 @@ async function sha256File(path) {
 
 export async function writeChecksums(directory) {
   const entries = (await readdir(directory)).filter(
-    (name) => name !== CHECKSUM_FILE && !METADATA_FILES.has(name),
+    (name) => invalidNameReason(name) === null,
   );
   const lines = [];
   for (const name of entries.sort()) {
@@ -45,15 +70,64 @@ export async function verifyChecksums(directory) {
   const checksumPath = join(directory, CHECKSUM_FILE);
   const text = await readFile(checksumPath, "utf8");
   const expected = new Map();
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    const [hash, ...nameParts] = line.trim().split(/\s+/u);
-    expected.set(nameParts.join(" "), hash);
-  }
   const failures = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line === "") continue;
+    const fields = line.split(/\s+/u);
+    if (fields.length !== 2) {
+      const detail = line.length > 80 ? `${line.slice(0, 77)}...` : line;
+      failures.push(
+        `${CHECKSUM_FILE} line ${i + 1}: malformed entry "${detail}"`,
+      );
+      continue;
+    }
+    const [hash, name] = fields;
+    if (!HASH_PATTERN.test(hash)) {
+      failures.push(`${name}: invalid checksum hash "${hash}"`);
+      continue;
+    }
+    const reason = invalidNameReason(name);
+    if (reason !== null) {
+      failures.push(`${name}: invalid artifact name (${reason})`);
+      continue;
+    }
+    if (expected.has(name)) {
+      failures.push(`${name}: duplicate checksum entry`);
+      continue;
+    }
+    expected.set(name, hash);
+  }
+  // The set's real location, so symlinked artifacts can be containment-checked.
+  const directoryReal = await realpath(directory);
   for (const [name, hash] of expected) {
+    const path = join(directory, name);
+    let info;
     try {
-      const actual = await sha256File(join(directory, name));
+      info = await stat(path);
+    } catch {
+      failures.push(`${name}: artifact missing`);
+      continue;
+    }
+    if (!info.isFile()) {
+      failures.push(`${name}: not a file`);
+      continue;
+    }
+    let real;
+    try {
+      real = await realpath(path);
+    } catch {
+      failures.push(`${name}: artifact missing`);
+      continue;
+    }
+    const outside = relative(directoryReal, real);
+    if (outside.startsWith("..") || isAbsolute(outside)) {
+      failures.push(`${name}: escapes the artifact directory`);
+      continue;
+    }
+    try {
+      const actual = await sha256File(path);
       if (actual !== hash)
         failures.push(
           `${name}: checksum mismatch (expected ${hash}, got ${actual})`,
