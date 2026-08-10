@@ -527,7 +527,7 @@ describe("importVox", () => {
     it("rejects every raised limit member before parsing or mutation", () => {
       const { store, bus } = harness();
       const bytes = encodeVox({ models: [cube], palette });
-      const before = store.getDocument();
+      const before = JSON.stringify(store.getDocument());
       for (const member of LIMIT_MEMBERS) {
         const raised: VoxParseLimits = {
           ...DEFAULT_VOX_PARSE_LIMITS,
@@ -544,7 +544,7 @@ describe("importVox", () => {
         );
         expect(store.revision).toBe(0);
       }
-      expect(store.getDocument()).toEqual(before);
+      expect(JSON.stringify(store.getDocument())).toBe(before);
     });
 
     it("rejects non-finite, fractional, and non-positive limit members", () => {

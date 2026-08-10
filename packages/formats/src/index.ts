@@ -64,6 +64,7 @@ export {
   VOX_VERSION,
   encodeVox,
   parseVox,
+  validateVoxParseLimits,
 } from "./vox.js";
 export {
   hexColor,
