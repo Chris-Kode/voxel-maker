@@ -10,7 +10,7 @@ const VALID_CAPABILITIES = {
   identifier: "default",
   description: "Minimum native allowlist.",
   windows: ["main"],
-  permissions: ["core:default", "dialog:allow-open", "dialog:allow-save"],
+  permissions: ["core:default"],
 };
 
 const VALID_CONFIG = {
@@ -37,9 +37,8 @@ serde_json = "1"
 const VALID_RUST = `use tauri::Manager;
 
 #[tauri::command]
-fn project_exists(path: String) -> Result<bool, String> {
-    validate_path(&path)?;
-    Ok(Path::new(&path).exists())
+fn project_exists(handle: String) -> Result<bool, String> {
+    Ok(Path::new(&handle).exists())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -47,6 +46,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            pick_open_project,
+            pick_save_project,
+            pick_preview_image_paths,
             read_project_bytes,
             write_project_bytes_atomic,
             project_exists,
@@ -59,7 +61,8 @@ pub fn run() {
             replace_journal_bytes,
             remove_journal,
             read_recent_projects,
-            write_recent_projects,
+            record_recent_project,
+            remove_recent_project,
             credential_save,
             credential_get,
             credential_delete
@@ -128,6 +131,17 @@ test("a second capability file is audited too (Tauri merges all files)", async (
   );
   const problems = await inspectNativeCapabilities(root);
   assert.ok(problems.some((problem) => problem.includes("shell:allow-open")));
+});
+
+test("a dialog permission fails the gate (dialogs run in Rust since issue #94)", async () => {
+  const root = await tree({
+    capabilities: {
+      ...VALID_CAPABILITIES,
+      permissions: ["core:default", "dialog:allow-open"],
+    },
+  });
+  const problems = await inspectNativeCapabilities(root);
+  assert.ok(problems.some((problem) => problem.includes("dialog:allow-open")));
 });
 
 test("a filesystem permission fails the gate", async () => {

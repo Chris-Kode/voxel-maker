@@ -6,7 +6,11 @@ import {
   type ImageStoragePort,
 } from "@voxel-maker/storage";
 import { MemoryProjectStorage } from "@voxel-maker/storage";
-import { createDesktopComposition, type FilePicker } from "../composition.js";
+import {
+  createDesktopComposition,
+  type FilePicker,
+  type PickedPath,
+} from "../composition.js";
 import { createScriptedPrompts } from "../test-prompts.js";
 import { createMemoryRecentProjects } from "../recent-projects.js";
 import { previewImagePaths, suggestedPreviewName } from "./preview-export.js";
@@ -35,17 +39,29 @@ function makePicker(
   savePath?: string | ((suggested: string) => string | undefined),
 ): FilePicker & { readonly imagePickCalls: number } {
   let imagePickCalls = 0;
+  // A cancel (undefined) propagates; a pick maps to { token, path } where
+  // the token IS the plain path (test shells have no native handle layer).
+  const pickSave = (suggested: string): PickedPath | undefined => {
+    const picked =
+      typeof savePath === "function"
+        ? savePath(suggested)
+        : (savePath ?? suggested);
+    return picked === undefined ? undefined : { token: picked, path: picked };
+  };
   const base = {
     pickOpenPath: () => Promise.resolve(undefined),
-    pickSavePath: (suggested: string) =>
-      Promise.resolve(
-        typeof savePath === "function"
-          ? savePath(suggested)
-          : (savePath ?? suggested),
-      ),
-    pickSaveImagePath: (suggested: string) => {
+    pickSavePath: (suggested: string) => Promise.resolve(pickSave(suggested)),
+    pickSaveImagePaths: (suggested: string) => {
       imagePickCalls += 1;
-      return base.pickSavePath(suggested);
+      const picked = pickSave(suggested);
+      return Promise.resolve(
+        picked === undefined
+          ? undefined
+          : previewImagePaths(picked.path).map((path) => ({
+              token: path,
+              path,
+            })),
+      );
     },
   };
   return {

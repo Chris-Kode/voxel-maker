@@ -6,7 +6,7 @@ import {
   type RecoveryJournalPort,
 } from "@voxel-maker/storage";
 import { journalPathFor } from "@voxel-maker/storage";
-import type { FilePicker } from "../composition.js";
+import type { FilePicker, PickedPath } from "../composition.js";
 
 /**
  * Browser-only storage adapter for plain `vite dev` without the Tauri
@@ -124,20 +124,39 @@ export class BrowserFilePicker implements FilePicker {
     this.#storage = storage;
   }
 
-  async pickOpenPath(): Promise<string | undefined> {
+  async pickOpenPath(): Promise<PickedPath | undefined> {
     const file = await pickFile();
     if (file === undefined) return undefined;
     this.#storage.ingest(file.name, new Uint8Array(await file.arrayBuffer()));
-    return file.name;
+    // Plain-browser shell: the token IS the plain path (there is no
+    // native handle layer).
+    return { token: file.name, path: file.name };
   }
 
-  pickSavePath(suggestedName: string): Promise<string | undefined> {
-    return Promise.resolve(suggestedName);
+  pickSavePath(suggestedName: string): Promise<PickedPath | undefined> {
+    return Promise.resolve({ token: suggestedName, path: suggestedName });
   }
 
-  pickSaveImagePath(suggestedName: string): Promise<string | undefined> {
-    return Promise.resolve(suggestedName);
+  pickSaveImagePaths(
+    suggestedName: string,
+  ): Promise<readonly PickedPath[] | undefined> {
+    // Plain-browser shell: derive the four standard-view names from the
+    // chosen base path (the native shell mints per-view handles instead).
+    return Promise.resolve(
+      previewImageNames(suggestedName).map((name) => ({
+        token: name,
+        path: name,
+      })),
+    );
   }
+}
+
+/** Derives the four standard-view file names from a chosen base path. */
+function previewImageNames(basePath: string): readonly string[] {
+  const stem = /\.png$/iu.test(basePath) ? basePath.slice(0, -4) : basePath;
+  return ["perspective", "front", "side", "top"].map(
+    (view) => `${stem}-${view}.png`,
+  );
 }
 
 function pickFile(): Promise<File | undefined> {

@@ -84,15 +84,33 @@ import {
  * browser dev build use different adapters without touching this root.
  */
 
+/**
+ * One dialog pick result (issue #94): `token` is the opaque native handle
+ * used by every storage command; `path` is DISPLAY-ONLY (the shell chrome
+ * shows it, but no native command ever accepts a raw path). In the plain
+ * browser and test shells both fields carry the plain path.
+ */
+export interface PickedPath {
+  /** Opaque storage key: a Rust-owned scoped handle token in the Tauri shell. */
+  readonly token: string;
+  /** Display path (dialog-issued; never accepted by native commands). */
+  readonly path: string;
+}
+
 /** Pickers return undefined when the user cancels. */
 export interface FilePicker {
-  pickOpenPath(): Promise<string | undefined>;
-  pickSavePath(suggestedName: string): Promise<string | undefined>;
+  pickOpenPath(): Promise<PickedPath | undefined>;
+  pickSavePath(suggestedName: string): Promise<PickedPath | undefined>;
   /**
-   * PNG-filtered save picker for preview exports (ticket #25). Optional:
+   * PNG-filtered save picker for preview exports (ticket #25): returns one
+   * scoped handle per standard preview view, all derived from the single
+   * base path the user chose (the native shell mints these in Rust, so the
+   * webview can only ever address exactly those four files). Optional:
    * services fall back to `pickSavePath` when a picker predates it.
    */
-  pickSaveImagePath?(suggestedName: string): Promise<string | undefined>;
+  pickSaveImagePaths?(
+    suggestedName: string,
+  ): Promise<readonly PickedPath[] | undefined>;
 }
 
 export interface RendererService {

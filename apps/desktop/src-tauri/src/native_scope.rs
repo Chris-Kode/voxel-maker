@@ -1,0 +1,1366 @@
+//! Scoped native handles for the desktop shell (issue #94, plan §11.2).
+//!
+//! Every project/image command in the IPC surface takes an OPAGUE HANDLE
+//! TOKEN, never a filesystem path. Tokens are minted only by the
+//! Rust-side open/save dialogs (`pick_open_project`, `pick_save_project`,
+//! `pick_preview_image_paths`) or loaded from the Rust-owned recent-project
+//! store, so a compromised webview cannot address a file the user never
+//! chose. Each handle is bound to a scope kind (project vs image) and to
+//! ONE canonicalized absolute path; a handle of one kind can never be used
+//! through a command of the other kind, and no command accepts a raw path.
+//!
+//! Canonicalization happens at mint time (dialog time): symlinked
+//! directories are resolved, `..` components collapse, and adjacent
+//! artifacts (`.bak`, `.journal`, `.<name>.tmp`) are derived from the
+//! canonical path afterwards. As defense in depth, operations refuse to
+//! follow a symbolic link that appears AT the stored path or at a derived
+//! artifact path at operation time (a same-user local race), so a planted
+//! link can never redirect a read, an append, or a backup copy to a
+//! different file.
+//!
+//! The recent-project store is Rust-owned: entries are written only from
+//! resolved handle tokens (the webview can never persist a path of its
+//! choosing), bounded to `MAX_RECENT_PROJECTS`, and re-loaded into the
+//! token map at startup so a recent entry stays openable after a restart.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
+
+/// Hard bound on the recent-project list (mirrors the webview bound).
+pub const MAX_RECENT_PROJECTS: usize = 10;
+
+/// Per-kind bound on live dialog handles (each token costs one tiny map
+/// entry; dialogs are user-driven, the bound is defense in depth).
+const MAX_HANDLES_PER_KIND: usize = 256;
+
+/// Title bound for recent entries (bounded metadata, ARCHITECTURE.md).
+const MAX_RECENT_TITLE_CHARS: usize = 512;
+
+/// The four standard preview views the shell can derive from one chosen
+/// PNG base path (mirrors `STANDARD_PREVIEW_VIEWS` in
+/// `packages/renderer/src/preview/preview-protocol.ts`).
+const PREVIEW_VIEWS: [&str; 4] = ["perspective", "front", "side", "top"];
+
+/// The scope kind bound to one opaque handle.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum HandleKind {
+    Project,
+    Image,
+}
+
+/// One dialog-issued handle: a scope kind plus the canonicalized absolute
+/// path of exactly the file the user chose.
+struct ScopedHandle {
+    kind: HandleKind,
+    path: PathBuf,
+}
+
+/// A dialog pick result returned to the webview. `token` is the opaque
+/// handle used by every subsequent command; `path` is DISPLAY-ONLY (the
+/// shell chrome shows it, but no command ever accepts a raw path).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedPath {
+    pub token: String,
+    pub path: String,
+}
+
+/// One recent-project entry persisted in the app config directory. The
+/// `path` is written by Rust from the resolved handle; the webview only
+/// ever supplies the token (plus display metadata).
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentEntry {
+    pub token: String,
+    pub path: String,
+    pub title: String,
+    pub opened_at: f64,
+}
+
+/// Result of one atomic project/image write (unchanged webview contract).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AtomicWriteResult {
+    pub temp_path: String,
+    pub backup_created: bool,
+    pub backup_path: Option<String>,
+    pub directory_sync_succeeded: bool,
+}
+
+/// The Rust-owned handle registry and recent-project store. Managed as
+/// Tauri state so every command resolves tokens through the same table.
+pub struct NativeScope {
+    /// Live dialog-issued handles: token -> scoped handle.
+    handles: Mutex<HashMap<String, ScopedHandle>>,
+    /// Persisted recent tokens: token -> canonical project path. Loaded at
+    /// startup and updated on record/remove; never webview-writable.
+    recent: Mutex<HashMap<String, PathBuf>>,
+    /// App-config location of the recent-project JSON (set in `setup`).
+    recent_file: Mutex<Option<PathBuf>>,
+}
+
+impl Default for NativeScope {
+    fn default() -> Self {
+        Self {
+            handles: Mutex::new(HashMap::new()),
+            recent: Mutex::new(HashMap::new()),
+            recent_file: Mutex::new(None),
+        }
+    }
+}
+
+/// The one stable error for unknown/out-of-scope handles: it must not
+/// reveal whether a token exists or which kind it holds.
+const UNRECOGNIZED_HANDLE: &str = "unrecognized handle token";
+
+fn unrecognized_handle() -> String {
+    UNRECOGNIZED_HANDLE.to_string()
+}
+
+/// Rejects a path that is a symbolic link at operation time. A stored
+/// handle path is canonical (symlink-free) at mint time, so a symlink
+/// here means a same-user local swap; refusing it prevents a read, an
+/// append, a backup copy, or a temp write from being redirected to a
+/// different file. A missing path is NOT an error: the caller reports
+/// the real not-found outcome (or creates the artifact).
+fn reject_symlink(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err("refusing to operate through a symbolic link".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
+impl NativeScope {
+    /// Points the recent-project store at its app-config file (setup).
+    pub fn set_recent_file(&self, path: PathBuf) {
+        *self.recent_file.lock().expect("recent file lock poisoned") = Some(path);
+    }
+
+    /// Loads persisted recent tokens into the in-memory map (startup).
+    /// A missing or malformed store degrades to an empty list; the app
+    /// never fails to start because of its own config file.
+    pub fn load_recent(&self) {
+        let Some(entries) = self.read_entries() else {
+            return;
+        };
+        let mut recent = self.recent.lock().expect("recent lock poisoned");
+        for entry in entries {
+            recent.insert(entry.token, PathBuf::from(entry.path));
+        }
+    }
+
+    /// Mints a project-scope handle for a canonicalized absolute path.
+    /// The dialog commands canonicalize before calling; the checks here
+    /// are the invariant guard (relative, non-canonical, or nameless
+    /// paths are rejected even if a future caller forgets).
+    pub fn mint_project(&self, path: PathBuf) -> Result<String, String> {
+        self.mint(HandleKind::Project, path)
+    }
+
+    /// Mints an image-scope handle (same invariants as `mint_project`).
+    pub fn mint_image(&self, path: PathBuf) -> Result<String, String> {
+        self.mint(HandleKind::Image, path)
+    }
+
+    fn mint(&self, kind: HandleKind, path: PathBuf) -> Result<String, String> {
+        if !path.is_absolute() {
+            return Err("handle path must be absolute".to_string());
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| "handle path has no parent directory".to_string())?;
+        if path.file_name().is_none() {
+            return Err("handle path has no file name".to_string());
+        }
+        // The parent must already be canonical (no symlinks, no `..`):
+        // canonicalize is idempotent, so equality proves it.
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|error| format!("cannot resolve the handle directory: {error}"))?;
+        if canonical_parent != parent {
+            return Err("handle path is not canonical".to_string());
+        }
+        let mut handles = self.handles.lock().expect("handles lock poisoned");
+        let count = handles.values().filter(|h| h.kind == kind).count();
+        if count >= MAX_HANDLES_PER_KIND {
+            return Err("too many open native handles".to_string());
+        }
+        let token = uuid::Uuid::new_v4().to_string();
+        handles.insert(token.clone(), ScopedHandle { kind, path });
+        Ok(token)
+    }
+
+    /// Resolves a token to the canonical project path it was minted for.
+    /// Recent tokens (loaded from the Rust-owned store) resolve too, so a
+    /// reopened recent project works after a restart. Raw paths and
+    /// image-scope tokens never resolve.
+    pub fn resolve_project(&self, token: &str) -> Result<PathBuf, String> {
+        {
+            let handles = self.handles.lock().expect("handles lock poisoned");
+            if let Some(handle) = handles.get(token) {
+                if handle.kind == HandleKind::Project {
+                    return Ok(handle.path.clone());
+                }
+                return Err(unrecognized_handle());
+            }
+        }
+        let recent = self.recent.lock().expect("recent lock poisoned");
+        recent.get(token).cloned().ok_or_else(unrecognized_handle)
+    }
+
+    /// Resolves a token to the canonical image path it was minted for.
+    pub fn resolve_image(&self, token: &str) -> Result<PathBuf, String> {
+        let handles = self.handles.lock().expect("handles lock poisoned");
+        match handles.get(token) {
+            Some(handle) if handle.kind == HandleKind::Image => Ok(handle.path.clone()),
+            _ => Err(unrecognized_handle()),
+        }
+    }
+
+    /// The bounded recent list (None when the store file is absent).
+    pub fn recent_entries(&self) -> Option<Vec<RecentEntry>> {
+        self.read_entries()
+    }
+
+    /// Records a recent entry from a RESOLVED project token. The stored
+    /// path comes from the handle, never from the webview; a forged token
+    /// (or a raw path) is rejected before any write.
+    pub fn record_recent(&self, token: &str, title: &str, opened_at: f64) -> Result<(), String> {
+        if !opened_at.is_finite() {
+            return Err("openedAt must be a finite number".to_string());
+        }
+        let path = self.resolve_project(token)?;
+        let bounded_title: String = title.chars().take(MAX_RECENT_TITLE_CHARS).collect();
+        let mut entries = self.read_entries().unwrap_or_default();
+        entries.retain(|entry| entry.token != token);
+        entries.insert(
+            0,
+            RecentEntry {
+                token: token.to_string(),
+                path: path.to_string_lossy().into_owned(),
+                title: bounded_title,
+                opened_at,
+            },
+        );
+        entries.truncate(MAX_RECENT_PROJECTS);
+        self.write_entries(&entries)?;
+        self.recent
+            .lock()
+            .expect("recent lock poisoned")
+            .insert(token.to_string(), path);
+        Ok(())
+    }
+
+    /// Forgets one recent entry by token; a missing entry is not an error.
+    pub fn remove_recent(&self, token: &str) -> Result<(), String> {
+        let mut entries = self.read_entries().unwrap_or_default();
+        let before = entries.len();
+        entries.retain(|entry| entry.token != token);
+        if entries.len() == before {
+            return Ok(());
+        }
+        self.write_entries(&entries)?;
+        self.recent
+            .lock()
+            .expect("recent lock poisoned")
+            .remove(token);
+        Ok(())
+    }
+
+    /// Reads, validates, and bounds the persisted recent list.
+    fn read_entries(&self) -> Option<Vec<RecentEntry>> {
+        let path = self
+            .recent_file
+            .lock()
+            .expect("recent file lock poisoned")
+            .clone()?;
+        let raw = std::fs::read_to_string(&path).ok()?;
+        Some(parse_recent_json(&raw))
+    }
+
+    /// Atomically replaces the persisted recent list (temp + rename).
+    fn write_entries(&self, entries: &[RecentEntry]) -> Result<(), String> {
+        let path = self
+            .recent_file
+            .lock()
+            .expect("recent file lock poisoned")
+            .clone()
+            .ok_or_else(|| "recent-projects store is not configured".to_string())?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| "recent-projects path has no parent".to_string())?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| "recent-projects path has no file name".to_string())?;
+        let temp_path = parent.join(format!(".{file_name}.tmp"));
+        reject_symlink(&temp_path)?;
+        let json = serde_json::to_string(entries)
+            .map_err(|error| format!("recent projects cannot be serialized: {error}"))?;
+        std::fs::write(&temp_path, json).map_err(|error| error.to_string())?;
+        std::fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+}
+
+/// Parses the persisted recent JSON: unknown shapes are dropped, the
+/// result is bounded, and every field is validated (bounded metadata).
+fn parse_recent_json(raw: &str) -> Vec<RecentEntry> {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str(raw) else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let object = item.as_object()?;
+            let token = object.get("token")?.as_str()?;
+            let path = object.get("path")?.as_str()?;
+            let title = object.get("title")?.as_str()?;
+            let opened_at = object.get("openedAt")?.as_f64()?;
+            if token.is_empty() || path.is_empty() || !opened_at.is_finite() {
+                return None;
+            }
+            Some(RecentEntry {
+                token: token.to_string(),
+                path: path.to_string(),
+                title: title.chars().take(MAX_RECENT_TITLE_CHARS).collect(),
+                opened_at,
+            })
+        })
+        .take(MAX_RECENT_PROJECTS)
+        .collect()
+}
+
+/// Canonicalizes a path a SAVE dialog returned (the file may not exist):
+/// resolve the parent directory and keep the chosen file name. When the
+/// chosen name itself is an existing symlink, resolve the link fully so
+/// the handle points at the real destination the user picked.
+fn canonicalize_destination(path: &Path) -> Result<PathBuf, String> {
+    if std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return path
+            .canonicalize()
+            .map_err(|error| format!("cannot resolve the chosen destination: {error}"));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "chosen path has no parent directory".to_string())?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| "chosen path has no file name".to_string())?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the chosen directory: {error}"))?;
+    Ok(canonical_parent.join(file_name))
+}
+
+/// Converts a dialog result into a local path; remote URLs are rejected
+/// (a URL can never be a scoped local file).
+fn local_dialog_path(file_path: tauri_plugin_dialog::FilePath) -> Result<PathBuf, String> {
+    match file_path {
+        tauri_plugin_dialog::FilePath::Path(path) => Ok(path),
+        tauri_plugin_dialog::FilePath::Url(_) => {
+            Err("remote file URLs are not supported".to_string())
+        }
+    }
+}
+
+/// Bounds a webview-supplied suggested file name to its last component
+/// (the dialog only uses it as the initial text; the final path is the
+/// user's choice, but the value is still parsed and bounded).
+fn sanitize_suggested_name(name: &str) -> Option<String> {
+    let last = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = last.chars().filter(|c| !c.is_control()).take(255).collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+/// Removes a trailing `.png`/`.PNG` from a file name (mirrors the
+/// webview's `stripPngExtension`); preview view names derive from it.
+fn strip_png_extension(path: &Path) -> Result<&str, String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| "image path has no file name".to_string())?
+        .to_str()
+        .ok_or_else(|| "image path is not valid UTF-8".to_string())?;
+    let stem = if name.len() >= 4 && name[name.len() - 4..].eq_ignore_ascii_case(".png") {
+        &name[..name.len() - 4]
+    } else {
+        name
+    };
+    if stem.is_empty() {
+        return Err("chosen image name is invalid".to_string());
+    }
+    Ok(stem)
+}
+
+/// Mints one handle from a canonical path with the given scope kind.
+fn mint_canonical(scope: &NativeScope, kind: HandleKind, path: PathBuf) -> Result<String, String> {
+    match kind {
+        HandleKind::Project => scope.mint_project(path),
+        HandleKind::Image => scope.mint_image(path),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Commands (the entire IPC surface; lib.rs registers this exact list).
+// ---------------------------------------------------------------------------
+
+/// Open dialog -> one project-scope handle for the chosen file.
+#[tauri::command]
+#[allow(clippy::unused_async)] // blocking dialog must run off the main thread
+pub async fn pick_open_project(
+    app: AppHandle,
+    state: State<'_, NativeScope>,
+) -> Result<Option<PickedPath>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Open Voxel Maker project")
+        .add_filter("Voxel Maker project", &["vxl"])
+        .blocking_pick_file();
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = local_dialog_path(picked)?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the chosen project path: {error}"))?;
+    let token = mint_canonical(&state, HandleKind::Project, canonical.clone())?;
+    Ok(Some(PickedPath {
+        token,
+        path: canonical.to_string_lossy().into_owned(),
+    }))
+}
+
+/// Save dialog -> one project-scope handle for the chosen destination.
+#[tauri::command]
+#[allow(clippy::unused_async)] // blocking dialog must run off the main thread
+pub async fn pick_save_project(
+    app: AppHandle,
+    state: State<'_, NativeScope>,
+    suggested_name: Option<String>,
+) -> Result<Option<PickedPath>, String> {
+    let mut builder = app
+        .dialog()
+        .file()
+        .set_title("Save Voxel Maker project")
+        .add_filter("Voxel Maker project", &["vxl"]);
+    if let Some(name) = suggested_name.as_deref().and_then(sanitize_suggested_name) {
+        builder = builder.set_file_name(name);
+    }
+    let picked = builder.blocking_save_file();
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = local_dialog_path(picked)?;
+    let canonical = canonicalize_destination(&path)?;
+    let token = mint_canonical(&state, HandleKind::Project, canonical.clone())?;
+    Ok(Some(PickedPath {
+        token,
+        path: canonical.to_string_lossy().into_owned(),
+    }))
+}
+
+/// PNG save dialog -> one image-scope handle per standard preview view,
+/// all derived from the single base path the user chose. The webview can
+/// address exactly those four files, never arbitrary siblings.
+#[tauri::command]
+#[allow(clippy::unused_async)] // blocking dialog must run off the main thread
+pub async fn pick_preview_image_paths(
+    app: AppHandle,
+    state: State<'_, NativeScope>,
+    suggested_name: Option<String>,
+) -> Result<Option<Vec<PickedPath>>, String> {
+    let mut builder = app
+        .dialog()
+        .file()
+        .set_title("Export preview images")
+        .add_filter("PNG image", &["png"]);
+    if let Some(name) = suggested_name.as_deref().and_then(sanitize_suggested_name) {
+        builder = builder.set_file_name(name);
+    }
+    let picked = builder.blocking_save_file();
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = local_dialog_path(picked)?;
+    let stem = strip_png_extension(&path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "image path has no parent directory".to_string())?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the chosen directory: {error}"))?;
+    let mut results = Vec::with_capacity(PREVIEW_VIEWS.len());
+    for view in PREVIEW_VIEWS {
+        let view_path = canonical_parent.join(format!("{stem}-{view}.png"));
+        let canonical = canonicalize_destination(&view_path)?;
+        let token = mint_canonical(&state, HandleKind::Image, canonical.clone())?;
+        results.push(PickedPath {
+            token,
+            path: canonical.to_string_lossy().into_owned(),
+        });
+    }
+    Ok(Some(results))
+}
+
+/// Reads a project file's bytes through a project handle.
+#[tauri::command]
+pub fn read_project_bytes(
+    state: State<'_, NativeScope>,
+    handle: String,
+) -> Result<tauri::ipc::Response, String> {
+    let path = state.resolve_project(&handle)?;
+    reject_symlink(&path)?;
+    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Atomically replaces a project file through a project handle:
+/// same-directory temporary file, preserve the previous destination as a
+/// `.bak` backup, rename over the destination, best-effort sync.
+#[tauri::command]
+pub fn write_project_bytes_atomic(
+    state: State<'_, NativeScope>,
+    handle: String,
+    bytes: Vec<u8>,
+) -> Result<AtomicWriteResult, String> {
+    let destination = state.resolve_project(&handle)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "project path has no parent directory".to_string())?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "project path has no file name".to_string())?;
+    let file_name = file_name.to_string_lossy();
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
+
+    // Preflight every symlink guard BEFORE any write: the destination
+    // (never back up THROUGH a planted link — copy follows its source),
+    // the adjacent backup, and the temp path (fs::write would follow a
+    // planted link). A rejection here leaves the filesystem untouched.
+    let destination_present = destination.exists();
+    let backup = destination_present.then(|| sibling_path_for(&destination, ".bak"));
+    if destination_present {
+        reject_symlink(&destination)?;
+        if let Some(backup) = &backup {
+            reject_symlink(backup)?;
+        }
+    }
+    reject_symlink(&temp_path)?;
+    std::fs::write(&temp_path, &bytes).map_err(|error| error.to_string())?;
+
+    let mut backup_created = false;
+    let backup_path;
+    // Adjacent-suffix convention (`<path>.bak`, matching `backupPathFor`
+    // in @voxel-maker/storage): write and read agree.
+    if let Some(backup) = &backup {
+        std::fs::copy(&destination, backup).map_err(|error| error.to_string())?;
+        backup_created = true;
+        backup_path = Some(backup.to_string_lossy().into_owned());
+    } else {
+        backup_path = None;
+    }
+
+    // rename replaces a destination link itself; it never follows it.
+    std::fs::rename(&temp_path, &destination).map_err(|error| error.to_string())?;
+    // Best-effort durability: a failed sync weakens crash durability but
+    // does not fail the save.
+    let directory_sync_succeeded = std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .is_ok();
+
+    Ok(AtomicWriteResult {
+        temp_path: temp_path.to_string_lossy().into_owned(),
+        backup_created,
+        backup_path,
+        directory_sync_succeeded,
+    })
+}
+
+/// Existence probe for a project handle (dialog-chosen files only).
+#[tauri::command]
+pub fn project_exists(state: State<'_, NativeScope>, handle: String) -> Result<bool, String> {
+    let path = state.resolve_project(&handle)?;
+    Ok(Path::new(&path).exists())
+}
+
+/// Reads the last-known-good backup of a project handle.
+#[tauri::command]
+pub fn read_backup_bytes(
+    state: State<'_, NativeScope>,
+    handle: String,
+) -> Result<Option<Vec<u8>>, String> {
+    let path = state.resolve_project(&handle)?;
+    let backup = sibling_path_for(&path, ".bak");
+    reject_symlink(&backup)?;
+    match std::fs::read(&backup) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Removes a project file through a project handle (missing is not an
+/// error). `remove_file` unlinks the path itself and never follows a
+/// planted link, so no symlink guard is needed.
+#[tauri::command]
+pub fn remove_project(state: State<'_, NativeScope>, handle: String) -> Result<(), String> {
+    let path = state.resolve_project(&handle)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Atomically replaces a preview image file through an IMAGE handle:
+/// same-directory temporary file, flush, rename, best-effort directory
+/// sync — WITHOUT a `.bak` backup (preview images are reproducible).
+#[tauri::command]
+pub fn write_image_bytes_atomic(
+    state: State<'_, NativeScope>,
+    handle: String,
+    bytes: Vec<u8>,
+) -> Result<AtomicWriteResult, String> {
+    let destination = state.resolve_image(&handle)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "image path has no parent directory".to_string())?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "image path has no file name".to_string())?;
+    let file_name = file_name.to_string_lossy();
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
+    reject_symlink(&temp_path)?;
+    std::fs::write(&temp_path, &bytes).map_err(|error| error.to_string())?;
+    let file = std::fs::File::open(&temp_path).and_then(|file| file.sync_all());
+    if let Err(error) = file {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error.to_string());
+    }
+    std::fs::rename(&temp_path, &destination).map_err(|error| error.to_string())?;
+    let directory_sync_succeeded = std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .is_ok();
+    Ok(AtomicWriteResult {
+        temp_path: temp_path.to_string_lossy().into_owned(),
+        backup_created: false,
+        backup_path: None,
+        directory_sync_succeeded,
+    })
+}
+
+/// Existence probe for an image handle (dialog-chosen files only).
+#[tauri::command]
+pub fn image_exists(state: State<'_, NativeScope>, handle: String) -> Result<bool, String> {
+    let path = state.resolve_image(&handle)?;
+    Ok(Path::new(&path).exists())
+}
+
+/// Appends a suffix to a canonical project path (`<path>.bak`,
+/// `<path>.journal`) at the OS-string level. Adjacent artifacts are
+/// derived from the canonical path AFTER minting, so they stay within the
+/// exact directory the user chose.
+fn sibling_path_for(project_path: &Path, suffix: &str) -> PathBuf {
+    let mut path = project_path.as_os_str().to_owned();
+    path.push(suffix);
+    PathBuf::from(path)
+}
+
+/// The adjacent journal path of a canonical project path.
+fn journal_path_for(project_path: &Path) -> PathBuf {
+    sibling_path_for(project_path, ".journal")
+}
+
+/// Reads the adjacent recovery journal (`<path>.journal`) of a project
+/// handle; `None` when absent.
+#[tauri::command]
+pub fn read_journal_bytes(
+    state: State<'_, NativeScope>,
+    handle: String,
+) -> Result<Option<Vec<u8>>, String> {
+    let path = state.resolve_project(&handle)?;
+    let journal_path = journal_path_for(&path);
+    reject_symlink(&journal_path)?;
+    match std::fs::read(&journal_path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Appends bytes to the adjacent journal of a project handle, creating it
+/// when absent, and flushes before returning.
+#[tauri::command]
+pub fn append_journal_bytes(
+    state: State<'_, NativeScope>,
+    handle: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    let path = state.resolve_project(&handle)?;
+    let journal_path = journal_path_for(&path);
+    // Opening with create+append would FOLLOW a planted link; check first.
+    reject_symlink(&journal_path)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&journal_path)
+        .map_err(|error| error.to_string())?;
+    std::io::Write::write_all(&mut file, &bytes).map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Atomically replaces the adjacent journal of a project handle
+/// (compaction and anchor reset): temp + flush + rename, no backup.
+#[tauri::command]
+pub fn replace_journal_bytes(
+    state: State<'_, NativeScope>,
+    handle: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    let path = state.resolve_project(&handle)?;
+    let journal_path = journal_path_for(&path);
+    let destination = Path::new(&journal_path);
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "journal path has no parent directory".to_string())?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "journal path has no file name".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
+    reject_symlink(&temp_path)?;
+    std::fs::write(&temp_path, &bytes).map_err(|error| error.to_string())?;
+    let file = std::fs::File::open(&temp_path).and_then(|f| f.sync_all());
+    if let Err(error) = file {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error.to_string());
+    }
+    std::fs::rename(&temp_path, destination).map_err(|error| error.to_string())?;
+    let _ = std::fs::File::open(parent).and_then(|directory| directory.sync_all());
+    Ok(())
+}
+
+/// Removes the adjacent journal of a project handle; missing is not an
+/// error (unlink never follows a planted link).
+#[tauri::command]
+pub fn remove_journal(state: State<'_, NativeScope>, handle: String) -> Result<(), String> {
+    let path = state.resolve_project(&handle)?;
+    let journal_path = journal_path_for(&path);
+    match std::fs::remove_file(&journal_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Reads the bounded recent-project list (Rust-owned store; the webview
+/// only ever writes through resolved handle tokens).
+#[tauri::command]
+pub fn read_recent_projects(
+    state: State<'_, NativeScope>,
+) -> Result<Option<Vec<RecentEntry>>, String> {
+    Ok(state.recent_entries())
+}
+
+/// Records one recent entry from a project handle token.
+#[tauri::command]
+pub fn record_recent_project(
+    state: State<'_, NativeScope>,
+    handle: String,
+    title: String,
+    opened_at: f64,
+) -> Result<(), String> {
+    state.record_recent(&handle, &title, opened_at)
+}
+
+/// Forgets one recent entry by token; missing is not an error.
+#[tauri::command]
+pub fn remove_recent_project(state: State<'_, NativeScope>, token: String) -> Result<(), String> {
+    state.remove_recent(&token)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression tests for issue #94: the IPC surface must reject every
+    //! raw path (including /etc/passwd, user dotfiles, unselected temp
+    //! paths, and symlink variants) BEFORE any filesystem access, and
+    //! dialog-issued handles must permit only their intended operations.
+    //! Commands are exercised through their real signatures with a Tauri
+    //! mock app and a real `NativeScope` state, so the test seam is the
+    //! actual IPC surface (minus the blocking native dialogs, which are
+    //! exercised through the same `mint_*` + canonicalization helpers the
+    //! dialog commands call).
+
+    use super::*;
+    use tauri::ipc::IpcResponse;
+    use tauri::test::mock_app;
+    use tauri::Manager;
+
+    /// A hermetic temp directory removed on drop.
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("voxel-maker-{label}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn file(&self, name: &str) -> PathBuf {
+            self.path.join(name)
+        }
+
+        /// Canonicalizes like the save dialog does (parent + file name).
+        fn canonical(&self, name: &str) -> PathBuf {
+            self.path
+                .canonicalize()
+                .expect("canonical temp dir")
+                .join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// A mock app with a managed `NativeScope` (recent store in `dir`,
+    /// when given) and the raw response bytes of a read command.
+    fn managed_app(recent_dir: Option<&TempDir>) -> tauri::App<tauri::test::MockRuntime> {
+        let app = mock_app();
+        let scope = NativeScope::default();
+        if let Some(dir) = recent_dir {
+            scope.set_recent_file(dir.file("recent-projects.json"));
+        }
+        app.manage(scope);
+        app
+    }
+
+    fn read_bytes(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        handle: String,
+    ) -> Result<Vec<u8>, String> {
+        let response = read_project_bytes(app.state::<NativeScope>(), handle)?;
+        let body = response.body().map_err(|error| error.to_string())?;
+        match body {
+            tauri::ipc::InvokeResponseBody::Raw(bytes) => Ok(bytes),
+            other => Err(format!("unexpected body kind: {other:?}")),
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Acceptance: direct IPC with arbitrary paths fails BEFORE fs access.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn every_command_rejects_raw_paths_before_filesystem_access() {
+        let dir = TempDir::new("raw");
+        let victim = dir.file("victim.vxl");
+        std::fs::write(&victim, b"secret").expect("seed victim");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+
+        // /etc/passwd, a user dotfile, an unselected temp path, and a
+        // symlink variant: all must fail as raw paths on EVERY command.
+        let raw_paths = [
+            "/etc/passwd".to_string(),
+            dir.file(".user-dotfile").to_string_lossy().into_owned(),
+            victim.to_string_lossy().into_owned(),
+        ];
+        for raw in &raw_paths {
+            let message = format!("raw path {raw} was not rejected");
+            assert!(
+                read_project_bytes(state.clone(), raw.clone()).is_err(),
+                "{message}"
+            );
+            assert!(
+                write_project_bytes_atomic(state.clone(), raw.clone(), vec![1]).is_err(),
+                "{message}"
+            );
+            assert!(
+                project_exists(state.clone(), raw.clone()).is_err(),
+                "{message}"
+            );
+            assert!(
+                read_backup_bytes(state.clone(), raw.clone()).is_err(),
+                "{message}"
+            );
+            assert!(
+                remove_project(state.clone(), raw.clone()).is_err(),
+                "{message}"
+            );
+            assert!(
+                write_image_bytes_atomic(state.clone(), raw.clone(), vec![1]).is_err(),
+                "{message}"
+            );
+            assert!(
+                image_exists(state.clone(), raw.clone()).is_err(),
+                "{message}"
+            );
+            assert!(
+                read_journal_bytes(state.clone(), raw.clone()).is_err(),
+                "{message}"
+            );
+            assert!(
+                append_journal_bytes(state.clone(), raw.clone(), vec![1]).is_err(),
+                "{message}"
+            );
+            assert!(
+                replace_journal_bytes(state.clone(), raw.clone(), vec![1]).is_err(),
+                "{message}"
+            );
+            assert!(
+                remove_journal(state.clone(), raw.clone()).is_err(),
+                "{message}"
+            );
+            assert!(
+                record_recent_project(state.clone(), raw.clone(), "t".into(), 1.0).is_err(),
+                "{message}"
+            );
+        }
+        // The victim file was never touched by any of the rejected calls.
+        assert_eq!(std::fs::read(&victim).expect("victim readable"), b"secret");
+        // And a forged/garbage token never resolves either.
+        assert!(read_project_bytes(state.clone(), "forged-token".into()).is_err());
+        assert!(project_exists(state, "forged-token".into()).is_err());
+    }
+
+    #[test]
+    fn unselected_paths_never_resolve_even_through_recent_records() {
+        let dir = TempDir::new("unselected");
+        let chosen = dir.file("chosen.vxl");
+        std::fs::write(&chosen, b"chosen").expect("seed chosen");
+        let unselected = dir.file("unselected.vxl");
+        std::fs::write(&unselected, b"unselected").expect("seed unselected");
+        let app = managed_app(Some(&dir));
+        let state = app.state::<NativeScope>();
+
+        let token = state
+            .mint_project(dir.canonical("chosen.vxl"))
+            .expect("mint");
+        // The unselected sibling's RAW path (the string the webview would
+        // have) is rejected by every command.
+        let raw = unselected.to_string_lossy().into_owned();
+        assert!(read_project_bytes(state.clone(), raw.clone()).is_err());
+        assert!(project_exists(state.clone(), raw.clone()).is_err());
+        assert!(remove_project(state.clone(), raw.clone()).is_err());
+        // record_recent with the raw path must not persist it either.
+        assert!(record_recent_project(state.clone(), raw.clone(), "x".into(), 1.0).is_err());
+        assert_eq!(
+            state.recent_entries().unwrap_or_default().len(),
+            0,
+            "a raw path must never enter the recent store"
+        );
+        // And the chosen handle works (the intended operation).
+        assert_eq!(read_bytes(&app, token).expect("read chosen"), b"chosen");
+    }
+
+    // -------------------------------------------------------------------
+    // Acceptance: handles permit only their intended operations.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn handle_scopes_are_separate_and_bound_to_one_canonical_path() {
+        let dir = TempDir::new("scopes");
+        let project_file = dir.file("project.vxl");
+        std::fs::write(&project_file, b"project").expect("seed project");
+        let image_file = dir.file("preview.png");
+        std::fs::write(&image_file, b"png").expect("seed image");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+
+        let project = state
+            .mint_project(dir.canonical("project.vxl"))
+            .expect("mint project");
+        let image = state
+            .mint_image(dir.canonical("preview.png"))
+            .expect("mint image");
+
+        // Image token on project commands: rejected (scope mismatch).
+        assert!(read_project_bytes(state.clone(), image.clone()).is_err());
+        assert!(write_project_bytes_atomic(state.clone(), image.clone(), vec![1]).is_err());
+        assert!(project_exists(state.clone(), image.clone()).is_err());
+        assert!(read_backup_bytes(state.clone(), image.clone()).is_err());
+        assert!(remove_project(state.clone(), image.clone()).is_err());
+        assert!(read_journal_bytes(state.clone(), image.clone()).is_err());
+        assert!(append_journal_bytes(state.clone(), image.clone(), vec![1]).is_err());
+        assert!(replace_journal_bytes(state.clone(), image.clone(), vec![1]).is_err());
+        assert!(remove_journal(state.clone(), image.clone()).is_err());
+        // Project token on image commands: rejected (scope mismatch).
+        assert!(write_image_bytes_atomic(state.clone(), project.clone(), vec![1]).is_err());
+        assert!(image_exists(state.clone(), project.clone()).is_err());
+
+        // Intended operations succeed through the matching handle.
+        assert_eq!(
+            read_bytes(&app, project.clone()).expect("read project"),
+            b"project"
+        );
+        assert!(project_exists(state.clone(), project.clone()).expect("project exists"));
+        assert!(image_exists(state.clone(), image.clone()).expect("image exists"));
+
+        // A project handle can never address a DIFFERENT file: mint a
+        // second project and confirm the first token still maps to its own
+        // file only.
+        let other = dir.file("other.vxl");
+        std::fs::write(&other, b"other").expect("seed other");
+        let other_token = state
+            .mint_project(dir.canonical("other.vxl"))
+            .expect("mint other");
+        assert_eq!(
+            read_bytes(&app, project.clone()).expect("first unchanged"),
+            b"project"
+        );
+        assert_eq!(read_bytes(&app, other_token).expect("second"), b"other");
+    }
+
+    #[test]
+    fn project_handle_permits_the_full_project_workflow() {
+        let dir = TempDir::new("project-flow");
+        let project_file = dir.file("flow.vxl");
+        std::fs::write(&project_file, b"v1").expect("seed project");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state.mint_project(dir.canonical("flow.vxl")).expect("mint");
+
+        assert_eq!(read_bytes(&app, token.clone()).expect("read v1"), b"v1");
+        assert!(project_exists(state.clone(), token.clone()).expect("exists"));
+
+        // Atomic write with backup: destination replaced, backup holds v1.
+        let result = write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec())
+            .expect("atomic write");
+        assert!(result.backup_created);
+        assert_eq!(std::fs::read(&project_file).expect("read v2"), b"v2");
+        assert_eq!(
+            std::fs::read(dir.file("flow.vxl.bak")).expect("read backup"),
+            b"v1"
+        );
+        assert_eq!(
+            read_backup_bytes(state.clone(), token.clone())
+                .expect("backup via handle")
+                .expect("backup present"),
+            b"v1"
+        );
+        // No stray temp file is left behind.
+        assert!(!dir.file(".flow.vxl.tmp").exists());
+
+        // Journal: append, read, replace, remove.
+        append_journal_bytes(state.clone(), token.clone(), b"frame1".to_vec()).expect("append");
+        assert_eq!(
+            read_journal_bytes(state.clone(), token.clone())
+                .expect("journal read")
+                .expect("journal present"),
+            b"frame1"
+        );
+        replace_journal_bytes(state.clone(), token.clone(), b"compacted".to_vec())
+            .expect("replace journal");
+        assert_eq!(
+            read_journal_bytes(state.clone(), token.clone())
+                .expect("journal read 2")
+                .expect("journal present"),
+            b"compacted"
+        );
+        remove_journal(state.clone(), token.clone()).expect("remove journal");
+        assert!(read_journal_bytes(state.clone(), token.clone())
+            .expect("journal read 3")
+            .is_none());
+
+        // Remove the project; a second remove is not an error.
+        remove_project(state.clone(), token.clone()).expect("remove project");
+        assert!(!project_file.exists());
+        remove_project(state.clone(), token.clone()).expect("second remove ok");
+    }
+
+    #[test]
+    fn image_handle_permits_only_image_operations() {
+        let dir = TempDir::new("image-flow");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_image(dir.canonical("preview-front.png"))
+            .expect("mint image");
+
+        assert!(!image_exists(state.clone(), token.clone()).expect("absent"));
+        let result = write_image_bytes_atomic(state.clone(), token.clone(), b"png1".to_vec())
+            .expect("image write");
+        assert!(!result.backup_created);
+        assert!(image_exists(state.clone(), token.clone()).expect("present"));
+        assert_eq!(
+            std::fs::read(dir.file("preview-front.png")).expect("read image"),
+            b"png1"
+        );
+        // Image writes never create backup or journal siblings.
+        assert!(!dir.file(".preview-front.png.bak").exists());
+        assert!(!dir.file("preview-front.png.journal").exists());
+    }
+
+    // -------------------------------------------------------------------
+    // Mint-time invariants: canonical absolute paths only.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn mint_rejects_relative_and_non_canonical_paths() {
+        let dir = TempDir::new("mint");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+
+        assert!(state
+            .mint_project(PathBuf::from("relative/path.vxl"))
+            .is_err());
+        assert!(state.mint_project(PathBuf::from("/etc/passwd")).is_err()); // never dialog-issued
+        assert!(state.mint_image(PathBuf::from("/tmp/no-name/")).is_err());
+
+        // A path through a symlinked directory is not canonical: the
+        // dialog commands canonicalize FIRST, and mint must not accept
+        // the un-canonicalized form.
+        #[cfg(unix)]
+        {
+            let link = dir.file("link-dir");
+            std::os::unix::fs::symlink(&dir.path, &link).expect("symlink dir");
+            assert!(state.mint_project(link.join("x.vxl")).is_err());
+        }
+    }
+
+    #[test]
+    fn canonicalize_destination_resolves_symlinks_and_parents() {
+        let dir = TempDir::new("canonical");
+        // A save destination that does not exist yet: parent resolves.
+        let dest = dir.file("new.vxl");
+        let canonical = canonicalize_destination(&dest).expect("canonical new");
+        assert_eq!(canonical, dir.canonical("new.vxl"));
+
+        // A destination whose NAME is an existing symlink resolves to the
+        // link target (the real file the user picked).
+        #[cfg(unix)]
+        {
+            let target = dir.file("target.vxl");
+            std::fs::write(&target, b"target").expect("seed target");
+            let link = dir.file("linked.vxl");
+            std::os::unix::fs::symlink(&target, &link).expect("symlink file");
+            let canonical = canonicalize_destination(&link).expect("canonical link");
+            assert_eq!(canonical, target.canonicalize().expect("target canonical"));
+        }
+    }
+
+    #[test]
+    fn sanitize_suggested_name_bounds_untrusted_input() {
+        assert_eq!(
+            sanitize_suggested_name("my project.vxl"),
+            Some("my project.vxl".into())
+        );
+        assert_eq!(sanitize_suggested_name(""), None);
+        assert_eq!(sanitize_suggested_name("a/b/c.vxl"), Some("c.vxl".into()));
+        assert_eq!(sanitize_suggested_name("a\\b.vxl"), Some("b.vxl".into()));
+        assert_eq!(sanitize_suggested_name(".."), Some("..".into())); // dialog-initial text only
+        assert!(sanitize_suggested_name("\n").is_none());
+    }
+
+    // -------------------------------------------------------------------
+    // Symlink variants fail before filesystem access (defense in depth).
+    // -------------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn planted_symlinks_at_artifacts_are_never_followed() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new("symlinks");
+        let secret = dir.file("secret.txt");
+        std::fs::write(&secret, b"top-secret").expect("seed secret");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let project_file = dir.file("proj.vxl");
+        std::fs::write(&project_file, b"project").expect("seed project");
+        let token = state.mint_project(dir.canonical("proj.vxl")).expect("mint");
+
+        // Symlink at the journal path: append/read/replace must refuse
+        // and the secret must stay byte-identical.
+        symlink(&secret, dir.file("proj.vxl.journal")).expect("plant journal link");
+        assert!(append_journal_bytes(state.clone(), token.clone(), b"x".to_vec()).is_err());
+        assert!(read_journal_bytes(state.clone(), token.clone()).is_err());
+        // Replace renames over the link (rename never follows), so it
+        // succeeds and replaces the planted link with a regular file
+        // while the secret stays byte-identical.
+        replace_journal_bytes(state.clone(), token.clone(), b"replaced".to_vec()).expect("replace");
+        assert_eq!(
+            std::fs::read(&secret).expect("secret intact"),
+            b"top-secret"
+        );
+        assert_eq!(
+            std::fs::read(dir.file("proj.vxl.journal")).expect("journal replaced"),
+            b"replaced"
+        );
+
+        // Symlink at the backup path: the write must refuse BEFORE the
+        // backup copy (fs::copy would otherwise truncate the link target).
+        symlink(&secret, dir.file("proj.vxl.bak")).expect("plant backup link");
+        assert!(write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec()).is_err());
+        assert_eq!(
+            std::fs::read(&secret).expect("secret intact 2"),
+            b"top-secret"
+        );
+        std::fs::remove_file(dir.file("proj.vxl.bak")).expect("remove backup link");
+
+        // Symlink at the temp path: the temp write must refuse (fs::write
+        // would otherwise follow the link).
+        symlink(&secret, dir.file(".proj.vxl.tmp")).expect("plant temp link");
+        assert!(write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec()).is_err());
+        assert_eq!(
+            std::fs::read(&secret).expect("secret intact 3"),
+            b"top-secret"
+        );
+        std::fs::remove_file(dir.file(".proj.vxl.tmp")).expect("remove temp link");
+
+        // Symlink REPLACING the destination file: reads refuse, and the
+        // atomic write refuses instead of backing up through the link.
+        std::fs::remove_file(&project_file).expect("remove project");
+        symlink(&secret, &project_file).expect("plant destination link");
+        assert!(read_bytes(&app, token.clone()).is_err());
+        assert!(write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec()).is_err());
+        assert_eq!(
+            std::fs::read(&secret).expect("secret intact 4"),
+            b"top-secret"
+        );
+
+        // A raw symlink path (webview-supplied) is rejected like any raw
+        // path, before any filesystem access.
+        assert!(
+            read_project_bytes(state.clone(), project_file.to_string_lossy().into_owned()).is_err()
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Recent projects: Rust-owned tokens, bounded, restart-safe.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn recent_entries_are_rust_owned_bounded_and_restart_safe() {
+        let dir = TempDir::new("recent");
+        let project_file = dir.file("recent.vxl");
+        std::fs::write(&project_file, b"recent").expect("seed project");
+        let app = managed_app(Some(&dir));
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("recent.vxl"))
+            .expect("mint");
+
+        // Nothing recorded yet.
+        assert!(read_recent_projects(state.clone())
+            .expect("empty list")
+            .is_none());
+
+        record_recent_project(state.clone(), token.clone(), "Recent title".into(), 1234.5)
+            .expect("record");
+        let entries = read_recent_projects(state.clone())
+            .expect("list")
+            .expect("entries present");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].token, token);
+        assert_eq!(
+            entries[0].path,
+            dir.canonical("recent.vxl").to_string_lossy()
+        );
+        assert_eq!(entries[0].title, "Recent title");
+        assert_eq!(entries[0].opened_at, 1234.5);
+
+        // A fresh scope (simulating an app restart) loads the store and
+        // resolves the persisted token to the same canonical path.
+        let restarted = managed_app(Some(&dir));
+        restarted.state::<NativeScope>().load_recent();
+        assert_eq!(
+            read_bytes(&restarted, token.clone()).expect("reopen recent"),
+            b"recent"
+        );
+
+        // Forge attempts fail: a raw path and a random token never record.
+        assert!(
+            record_recent_project(state.clone(), "/etc/passwd".into(), "x".into(), 1.0).is_err()
+        );
+        assert!(record_recent_project(state.clone(), "forged".into(), "x".into(), 1.0).is_err());
+
+        // Bounded: 12 records keep the newest 10.
+        for index in 0..12 {
+            let name = format!("p{index}.vxl");
+            let file = dir.file(&name);
+            std::fs::write(&file, format!("p{index}")).expect("seed");
+            let t = state.mint_project(dir.canonical(&name)).expect("mint");
+            record_recent_project(state.clone(), t, format!("P{index}"), index as f64)
+                .expect("record");
+        }
+        let entries = read_recent_projects(state.clone())
+            .expect("list")
+            .expect("entries");
+        assert_eq!(entries.len(), 10);
+        assert_eq!(entries[0].title, "P11");
+        assert_eq!(entries[9].title, "P2");
+
+        // Remove by token; a second remove is not an error.
+        let first = entries[0].token.clone();
+        remove_recent_project(state.clone(), first.clone()).expect("remove");
+        assert!(!read_recent_projects(state.clone())
+            .expect("list 2")
+            .expect("entries 2")
+            .iter()
+            .any(|entry| entry.token == first));
+        remove_recent_project(state.clone(), first).expect("second remove ok");
+    }
+
+    #[test]
+    fn recent_metadata_is_bounded_and_validated() {
+        let dir = TempDir::new("recent-meta");
+        let project_file = dir.file("meta.vxl");
+        std::fs::write(&project_file, b"meta").expect("seed project");
+        let app = managed_app(Some(&dir));
+        let state = app.state::<NativeScope>();
+        let token = state.mint_project(dir.canonical("meta.vxl")).expect("mint");
+
+        // Non-finite timestamps are rejected.
+        assert!(record_recent_project(state.clone(), token.clone(), "t".into(), f64::NAN).is_err());
+        // Titles are bounded (the store round-trips a truncated title).
+        let long_title = "x".repeat(2000);
+        record_recent_project(state.clone(), token.clone(), long_title.clone(), 1.0)
+            .expect("record");
+        let entries = read_recent_projects(state.clone())
+            .expect("list")
+            .expect("entries");
+        assert_eq!(entries[0].title.len(), 512);
+        // A hand-edited store with malformed entries drops them and stays
+        // bounded (defense against a locally edited config file).
+        std::fs::write(
+            dir.file("recent-projects.json"),
+            r#"[{"token":"t1","path":"/a/b.vxl","title":"ok","openedAt":1},
+                {"token":"","path":"/x","title":"no-token","openedAt":1},
+                {"token":"t2","path":"/x","title":"bad-time","openedAt":"NaN"},
+                {"token":"t3","path":"/x","title":"ok","openedAt":2}]"#,
+        )
+        .expect("write edited store");
+        let entries = state.recent_entries().expect("parsed entries");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].token, "t1");
+        assert_eq!(entries[1].token, "t3");
+        // The in-memory map reflects only valid entries after load.
+        state.load_recent();
+        assert!(state.resolve_project("t1").is_ok());
+        assert!(state.resolve_project("t2").is_err());
+    }
+}

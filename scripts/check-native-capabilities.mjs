@@ -3,17 +3,20 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
- * Least-privilege native-capability gate (issue #44, plan §11.2, S17.6):
- * the desktop shell's native surface must stay a minimal allowlist. This
- * script fails the build when:
+ * Least-privilege native-capability gate (issue #44, plan §11.2, S17.6,
+ * issue #94): the desktop shell's native surface must stay a minimal
+ * allowlist. This script fails the build when:
  *
  * - the Tauri capability file grants anything outside the v1 allowlist
- *   (no shell, filesystem, http, process, updater, websocket, or CLI
- *   permissions);
+ *   (no shell, filesystem, http, process, updater, websocket, CLI, or
+ *   dialog permissions — since issue #94, dialogs run in Rust and mint
+ *   scoped handles, so the webview needs no dialog permission);
  * - the production CSP is missing, allows 'unsafe-eval', or permits remote
  *   frames/content; any window loads remote content;
  * - the Rust crate depends on a shell/fs/http/updater/process plugin;
- * - the Rust command surface grows beyond the documented command list;
+ * - the Rust command surface grows beyond the documented command list
+ *   (every project/image command takes opaque handle tokens minted by
+ *   the Rust-side dialogs; no command accepts a raw filesystem path);
  * - product source uses eval / new Function / child_process / shell
  *   execution constructs.
  *
@@ -21,11 +24,7 @@ import { pathToFileURL } from "node:url";
  * trees; runs in `pnpm check:security`.
  */
 
-export const ALLOWED_PERMISSIONS = new Set([
-  "core:default",
-  "dialog:allow-open",
-  "dialog:allow-save",
-]);
+export const ALLOWED_PERMISSIONS = new Set(["core:default"]);
 
 /** Permission prefixes that would widen the native attack surface. */
 const FORBIDDEN_PERMISSION_PREFIXES = [
@@ -58,6 +57,9 @@ const FORBIDDEN_CRATE_DEPENDENCIES = [
 
 /** The only commands the Rust invoke handler may expose. */
 const ALLOWED_RUST_COMMANDS = new Set([
+  "pick_open_project",
+  "pick_save_project",
+  "pick_preview_image_paths",
   "read_project_bytes",
   "write_project_bytes_atomic",
   "project_exists",
@@ -70,7 +72,8 @@ const ALLOWED_RUST_COMMANDS = new Set([
   "replace_journal_bytes",
   "remove_journal",
   "read_recent_projects",
-  "write_recent_projects",
+  "record_recent_project",
+  "remove_recent_project",
   "credential_save",
   "credential_get",
   "credential_delete",

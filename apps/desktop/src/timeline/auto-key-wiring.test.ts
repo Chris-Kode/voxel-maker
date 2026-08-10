@@ -113,7 +113,8 @@ function buildFixtureProject(): Uint8Array {
 
 const createFakePicker = (): FilePicker => ({
   pickOpenPath: () => Promise.resolve(undefined),
-  pickSavePath: (suggestedName: string) => Promise.resolve(suggestedName),
+  pickSavePath: (suggestedName: string) =>
+    Promise.resolve({ token: suggestedName, path: suggestedName }),
 });
 
 async function openFixture(composition: DesktopComposition): Promise<void> {

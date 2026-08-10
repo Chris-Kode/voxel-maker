@@ -248,12 +248,28 @@ function makePicker(
   } = {},
 ): FilePicker {
   return {
-    pickOpenPath: () => Promise.resolve(opts.openPath),
+    pickOpenPath: () =>
+      Promise.resolve(
+        opts.openPath === undefined
+          ? undefined
+          : { token: opts.openPath, path: opts.openPath },
+      ),
     pickSavePath: (suggested) =>
       Promise.resolve(
-        typeof opts.savePath === "function"
+        (typeof opts.savePath === "function"
           ? opts.savePath(suggested)
-          : (opts.savePath ?? suggested),
+          : (opts.savePath ?? suggested)) === undefined
+          ? undefined
+          : {
+              token:
+                typeof opts.savePath === "function"
+                  ? (opts.savePath(suggested) ?? suggested)
+                  : (opts.savePath ?? suggested),
+              path:
+                typeof opts.savePath === "function"
+                  ? (opts.savePath(suggested) ?? suggested)
+                  : (opts.savePath ?? suggested),
+            },
       ),
   };
 }
@@ -493,7 +509,12 @@ describe("desktop project lifecycle workflows", () => {
       recent,
     });
     const reopened = requireResult(
-      await third.fileService.openRecentProject("c.vxl"),
+      await third.fileService.openRecentProject({
+        token: "c.vxl",
+        path: "c.vxl",
+        title: "",
+        openedAt: 0,
+      }),
     );
     expect(reopened.ok).toBe(true);
     expect((await recent.list()).map((entry) => entry.path)).toEqual(["c.vxl"]);

@@ -115,10 +115,15 @@ export interface FileService {
   cancelSave(): void;
   /** Most-recent-first bounded list of previously opened projects. */
   recentProjects(): Promise<readonly RecentProjectEntry[]>;
-  /** Opens a recent project through the normal open/recovery flow. */
-  openRecentProject(path: string): Promise<FileServiceResult | undefined>;
-  /** Forgets one recent entry. */
-  forgetRecentProject(path: string): Promise<void>;
+  /**
+   * Opens a recent project through the normal open/recovery flow. The
+   * entry's opaque token is the storage key; its path is display-only.
+   */
+  openRecentProject(
+    entry: RecentProjectEntry,
+  ): Promise<FileServiceResult | undefined>;
+  /** Forgets one recent entry by its opaque token. */
+  forgetRecentProject(token: string): Promise<void>;
   /** Subscribes to status changes; returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
   /** Unbinds the current document wiring and stops the workflow. */
@@ -201,6 +206,13 @@ export function createFileService(options: FileServiceOptions): FileService {
   const autosaveDelayMs = options.autosaveDelayMs ?? 2000;
   const now = options.now ?? (() => Date.now());
   let path: string | undefined;
+  /**
+   * Opaque storage key of the current project (issue #94): in the Tauri
+   * shell this is the Rust-owned handle token the native commands accept;
+   * `path` above is display-only. Browser/test shells use the plain path
+   * for both.
+   */
+  let storageKey: string | undefined;
   let newCounter = 1;
   let sessionSerial = 0;
   let binding: Binding | undefined;
@@ -499,7 +511,9 @@ export function createFileService(options: FileServiceOptions): FileService {
 
     const autosave = createAutosave({
       coordinator,
-      path: () => path,
+      // Autosave writes through the storage port, so it needs the opaque
+      // storage key, not the display path.
+      path: () => storageKey,
       delayMs: autosaveDelayMs,
       onStart: () => {
         autosaving = true;
@@ -589,6 +603,7 @@ export function createFileService(options: FileServiceOptions): FileService {
   /** Installs a fully validated load through the lifecycle coordinator. */
   function install(
     name: string,
+    storageToken: string | undefined,
     loaded: LoadedProject,
     installOptions: {
       readonly source: "import" | "recovery";
@@ -620,8 +635,9 @@ export function createFileService(options: FileServiceOptions): FileService {
               source: installOptions.source,
             });
       path = name;
+      storageKey = storageToken;
       bind(state, {
-        path: name,
+        path: storageToken,
         durable: installOptions.durable,
         ...(installOptions.journalBase === undefined
           ? {}
@@ -631,8 +647,8 @@ export function createFileService(options: FileServiceOptions): FileService {
           ? {}
           : { createJournal: installOptions.createJournal }),
       });
-      if (installOptions.recordRecent) {
-        recordRecent(name);
+      if (installOptions.recordRecent && storageToken !== undefined) {
+        recordRecent(storageToken, name);
       }
       notify();
       return {
@@ -646,11 +662,17 @@ export function createFileService(options: FileServiceOptions): FileService {
     }
   }
 
-  /** Records a recent entry; a failing store degrades the list only. */
-  function recordRecent(projectPath: string): void {
+  /**
+   * Records a recent entry from the storage token (issue #94): the native
+   * store resolves the token to the canonical path in Rust, so the
+   * webview can never persist a path of its choosing. A failing store
+   * degrades the list only.
+   */
+  function recordRecent(storageToken: string, displayPath: string): void {
     void recent
       .record({
-        path: projectPath,
+        token: storageToken,
+        path: displayPath,
         title: status.title ?? "",
         openedAt: now(),
       })
@@ -668,9 +690,13 @@ export function createFileService(options: FileServiceOptions): FileService {
   }
 
   /** Plain open: installs the snapshot at the loaded anchor. */
-  function plainInstall(picked: string, bytes: Uint8Array): FileServiceResult {
+  function plainInstall(
+    storageToken: string,
+    displayPath: string,
+    bytes: Uint8Array,
+  ): FileServiceResult {
     const loaded = readVxlProject(bytes);
-    return install(picked, toLoaded(bytes), {
+    return install(displayPath, storageToken, toLoaded(bytes), {
       source: "import",
       durable: {
         revision: loaded.document.revision,
@@ -688,11 +714,12 @@ export function createFileService(options: FileServiceOptions): FileService {
    * declined frames or corrupt the stream.
    */
   async function resetJournalInstall(
-    picked: string,
+    storageToken: string,
+    displayPath: string,
     bytes: Uint8Array,
   ): Promise<FileServiceResult> {
     const loaded = readVxlProject(bytes);
-    const result = install(picked, toLoaded(bytes), {
+    const result = install(displayPath, storageToken, toLoaded(bytes), {
       source: "import",
       durable: {
         revision: loaded.document.revision,
@@ -704,7 +731,7 @@ export function createFileService(options: FileServiceOptions): FileService {
     });
     if (result.ok) {
       try {
-        await storage.removeJournal(picked);
+        await storage.removeJournal(storageToken);
       } catch (error) {
         journalingPaused = true;
         pushNotice(
@@ -714,7 +741,7 @@ export function createFileService(options: FileServiceOptions): FileService {
         notify();
       }
       if (binding !== undefined && !journalingPaused) {
-        attachJournal(binding, picked, {
+        attachJournal(binding, storageToken, {
           revision: loaded.document.revision,
           semanticHash: loaded.semanticHash,
         });
@@ -724,17 +751,21 @@ export function createFileService(options: FileServiceOptions): FileService {
   }
 
   /** Applies the journal through the recovery orchestrator (ticket #14). */
-  async function applyRecovery(picked: string): Promise<FileServiceResult> {
+  async function applyRecovery(
+    storageToken: string,
+    displayPath: string,
+  ): Promise<FileServiceResult> {
     const registry = new CommandRegistry();
     for (const register of registerCommands) register(registry);
     const recovered = await recoverProjectFromPorts({
       port: storage,
-      projectPath: picked,
+      projectPath: storageToken,
       registry,
     });
     const report = recovered.report;
     const result = install(
-      picked,
+      displayPath,
+      storageToken,
       { document: recovered.document, volumes: recovered.volumes },
       {
         source: "recovery",
@@ -786,9 +817,9 @@ export function createFileService(options: FileServiceOptions): FileService {
 
   /** Lightweight journal scan: is there anything to replay, and is it sane? */
   async function recoveryProspect(
-    picked: string,
+    storageToken: string,
   ): Promise<RecoveryProspect | undefined> {
-    const journalBytes = await storage.readJournal(picked);
+    const journalBytes = await storage.readJournal(storageToken);
     if (journalBytes === undefined || journalBytes.byteLength === 0) {
       return undefined;
     }
@@ -832,7 +863,8 @@ export function createFileService(options: FileServiceOptions): FileService {
    * the normal open flow.
    */
   async function openAt(
-    picked: string,
+    storageToken: string,
+    displayPath: string,
     bytes?: Uint8Array,
   ): Promise<FileServiceResult | undefined> {
     if (
@@ -843,17 +875,21 @@ export function createFileService(options: FileServiceOptions): FileService {
       return undefined;
     }
     try {
-      const projectBytes = bytes ?? (await storage.readProject(picked));
-      const prospect = await recoveryProspect(picked);
+      const projectBytes = bytes ?? (await storage.readProject(storageToken));
+      const prospect = await recoveryProspect(storageToken);
       if (prospect === undefined) {
-        return plainInstall(picked, projectBytes);
+        return plainInstall(storageToken, displayPath, projectBytes);
       }
       if (prospect.replayable && prospect.total === 0) {
         // A journal exists but holds no replayable frames (a confirmed
         // save already compacted it): the snapshot covers everything.
         // Drop the covered journal and bind a fresh writer at the loaded
         // anchor so appends never collide with the old session header.
-        return await resetJournalInstall(picked, projectBytes);
+        return await resetJournalInstall(
+          storageToken,
+          displayPath,
+          projectBytes,
+        );
       }
       if (prospect.replayable) {
         const message =
@@ -864,9 +900,13 @@ export function createFileService(options: FileServiceOptions): FileService {
                 prospect.total,
               );
         if (await prompts.confirm(message)) {
-          return await applyRecovery(picked);
+          return await applyRecovery(storageToken, displayPath);
         }
-        const declined = await resetJournalInstall(picked, projectBytes);
+        const declined = await resetJournalInstall(
+          storageToken,
+          displayPath,
+          projectBytes,
+        );
         // Pushed after the install: lifecycle replacement clears notices,
         // and the decline feedback must survive it.
         if (declined.ok) {
@@ -877,7 +917,11 @@ export function createFileService(options: FileServiceOptions): FileService {
         }
         return declined;
       }
-      const reset = await resetJournalInstall(picked, projectBytes);
+      const reset = await resetJournalInstall(
+        storageToken,
+        displayPath,
+        projectBytes,
+      );
       if (reset.ok) {
         pushNotice(
           "warning",
@@ -886,12 +930,13 @@ export function createFileService(options: FileServiceOptions): FileService {
       }
       return reset;
     } catch (error) {
-      return { ok: false, path: picked, error: toWorkspaceError(error) };
+      return { ok: false, path: displayPath, error: toWorkspaceError(error) };
     }
   }
 
   async function saveTo(
     current: { readonly documentId: DocumentId },
+    targetToken: string,
     targetPath: string,
   ): Promise<FileServiceResult> {
     if (binding === undefined) {
@@ -904,7 +949,7 @@ export function createFileService(options: FileServiceOptions): FileService {
         }),
       };
     }
-    const moved = targetPath !== path;
+    const moved = targetToken !== storageKey;
     try {
       if (moved && binding.journal !== undefined) {
         // Preserve the recovery identity across save-as (plan S5.15
@@ -914,7 +959,7 @@ export function createFileService(options: FileServiceOptions): FileService {
         // path keeps a recoverable combination), and the write that
         // follows installs the true current state over it.
         try {
-          await binding.journal.reassociate(targetPath);
+          await binding.journal.reassociate(targetToken);
         } catch (error) {
           pushNotice(
             "warning",
@@ -922,11 +967,12 @@ export function createFileService(options: FileServiceOptions): FileService {
           );
         }
       }
-      const outcome = await binding.coordinator.save(targetPath);
+      const outcome = await binding.coordinator.save(targetToken);
       if (moved || outcome.status === "saved") {
         path = targetPath;
+        storageKey = targetToken;
         if (binding.journal === undefined) {
-          attachJournal(binding, targetPath, {
+          attachJournal(binding, targetToken, {
             revision: outcome.revision,
             semanticHash: outcome.semanticHash,
           });
@@ -947,7 +993,7 @@ export function createFileService(options: FileServiceOptions): FileService {
             );
           }
         }
-        recordRecent(targetPath);
+        recordRecent(targetToken, targetPath);
         notify();
       }
       return {
@@ -999,6 +1045,7 @@ export function createFileService(options: FileServiceOptions): FileService {
           : session.replace({ document });
       const snapshot = captureRevisionSnapshot(state.store);
       path = undefined;
+      storageKey = undefined;
       bind(state, {
         path: undefined,
         durable: {
@@ -1017,10 +1064,13 @@ export function createFileService(options: FileServiceOptions): FileService {
     async openProject() {
       const picked = await picker.pickOpenPath();
       if (picked === undefined) return undefined;
-      return openAt(picked);
+      return openAt(picked.token, picked.path);
     },
     openLoadedProject(name, bytes) {
-      return openAt(name, bytes);
+      // No native handle exists for caller-supplied bytes (tests,
+      // drag-drop); the name doubles as the storage key until the user
+      // chooses a destination (browser/test shells key by path anyway).
+      return openAt(name, name, bytes);
     },
     async saveProject() {
       const current = session.current;
@@ -1034,8 +1084,11 @@ export function createFileService(options: FileServiceOptions): FileService {
           }),
         };
       }
-      if (path === undefined) return this.saveProjectAs();
-      return saveTo(current, path);
+      // The storage key and display path always exist together.
+      if (storageKey === undefined || path === undefined) {
+        return this.saveProjectAs();
+      }
+      return saveTo(current, storageKey, path);
     },
     async saveProjectAs() {
       const current = session.current;
@@ -1053,13 +1106,13 @@ export function createFileService(options: FileServiceOptions): FileService {
       const picked = await picker.pickSavePath(suggested);
       if (picked === undefined) return undefined;
       if (
-        picked !== path &&
-        (await storage.exists(picked)) &&
+        picked.token !== storageKey &&
+        (await storage.exists(picked.token)) &&
         !(await prompts.confirm(PROMPT_MESSAGES.overwriteProject))
       ) {
         return undefined;
       }
-      return saveTo(current, picked);
+      return saveTo(current, picked.token, picked.path);
     },
     async closeProject() {
       if (session.current === undefined) {
@@ -1087,11 +1140,11 @@ export function createFileService(options: FileServiceOptions): FileService {
     async recentProjects() {
       return recent.list();
     },
-    async openRecentProject(pathToOpen) {
-      return openAt(pathToOpen);
+    async openRecentProject(entry) {
+      return openAt(entry.token, entry.path);
     },
-    async forgetRecentProject(pathToForget) {
-      await recent.remove(pathToForget);
+    async forgetRecentProject(tokenToForget) {
+      await recent.remove(tokenToForget);
     },
     subscribe(listener) {
       return listeners.add(listener);

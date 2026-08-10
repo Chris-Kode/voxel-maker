@@ -27,6 +27,7 @@ import {
   createDesktopComposition,
   type DesktopComposition,
   type FilePicker,
+  type PickedPath,
 } from "./composition.js";
 import { autoConfirmPrompts, requireResult } from "./test-prompts.js";
 
@@ -105,12 +106,12 @@ function buildFixtureProject(): Uint8Array {
 }
 
 function createFakePicker(
-  pickOpenPath: () => Promise<string | undefined>,
+  pickOpenPath: () => Promise<PickedPath | undefined>,
 ): FilePicker {
   return {
     pickOpenPath,
     pickSavePath(suggestedName) {
-      return Promise.resolve(suggestedName);
+      return Promise.resolve({ token: suggestedName, path: suggestedName });
     },
   };
 }
@@ -352,7 +353,9 @@ describe("desktop composition root", () => {
     await storage.writeProjectAtomic("picked.vxl", bytes);
     const composition = createDesktopComposition({
       storage,
-      picker: createFakePicker(() => Promise.resolve("picked.vxl")),
+      picker: createFakePicker(() =>
+        Promise.resolve({ token: "picked.vxl", path: "picked.vxl" }),
+      ),
       prompts: autoConfirmPrompts,
     });
     const result = requireResult(await composition.fileService.openProject());

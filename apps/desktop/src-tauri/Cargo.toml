@@ -23,3 +23,12 @@ tauri-plugin-dialog = "2"
 keyring = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Opaque handle tokens for the scoped native-handle registry (issue #94).
+# UUID v4 is unguessable, so a webview can never enumerate or forge a
+# handle for a path it was not issued.
+uuid = { version = "1", features = ["v4"] }
+
+# The tauri unit-test helpers (mock app/state) are enabled only for the
+# test build; the release binary never compiles them.
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
