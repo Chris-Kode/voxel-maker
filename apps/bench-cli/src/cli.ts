@@ -15,6 +15,7 @@ import {
   type RunBenchmarksOptions,
   type TierName,
 } from "@voxel-maker/benchmarks";
+import { assertDistinctOutputPaths } from "./output-paths.js";
 
 /**
  * Benchmark CLI (ticket #45): `voxel-maker-bench` runs the headless
@@ -124,6 +125,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   if (options.sizes.length === 0) options.sizes = [100_000, 500_000, 1_000_000];
   if (options.kinds.length === 0) options.kinds = [...BENCHMARK_SCENE_KINDS];
   if (options.samples <= 0) throw new Error("--samples must be positive");
+  assertDistinctOutputPaths(options.json, options.trends);
   return options;
 }
 
