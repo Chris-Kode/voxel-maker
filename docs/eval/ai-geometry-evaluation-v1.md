@@ -100,6 +100,11 @@ deterministic suite a real, stable estimated-cost path through the same
 pricing function the live adapters use, so cost tracking is exercised on
 every PR run.
 
+Failed and canceled runs (issue #78) keep the consumed evidence: the
+`RunReport` still records the completed rounds, executed tool calls,
+provider-reported `usage`, and priced `costUsd`, while `appliedCommands`
+stays zero because nothing was applied.
+
 ## Version recording (plan S12.2)
 
 Every result records: evaluation suite version, provider id/version/model

@@ -438,11 +438,16 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
       result.integrity.revisionBefore,
     );
     expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
-    // Failed runs track zero commands/voxels/output and no spend.
+    // Issue #78: the limited run reports the consumed evidence — the
+    // over-budget response was billed, so its 200k input tokens are
+    // priced ($1/M input = $0.2) even though the run failed closed.
+    expect(result.run.rounds).toBe(1);
+    expect(result.run.usage).toEqual({ inputTokens: 200_000, outputTokens: 0 });
+    expect(result.run.costUsd).toBe(0.2);
+    // Nothing was applied: zero commands/voxels/output.
     expect(result.run.appliedCommands).toBe(0);
     expect(result.run.modifiedVoxels).toBe(0);
     expect(result.run.outputBytes).toBeGreaterThan(0);
-    expect(result.run.costUsd).toBe(0);
     const report = evaluatePromotion([result]);
     expect(report.promotable).toBe(false);
     expect(report.blocks.some((block) => block.includes("over-budget"))).toBe(
@@ -551,7 +556,13 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
       result.integrity.revisionBefore,
     );
     expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
-    // Failed runs track zero commands/voxels/output and no spend.
+    // Issue #78: the canceled run still reports the completed rounds and
+    // executed tool calls (the golden trace carries no usage, so the
+    // token/cost counters stay zero).
+    expect(result.run.rounds).toBe(2);
+    expect(result.run.toolCalls).toBe(2);
+    expect(result.run.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    // Nothing was applied: zero commands/voxels/output and no spend.
     expect(result.run.appliedCommands).toBe(0);
     expect(result.run.modifiedVoxels).toBe(0);
     expect(result.run.outputBytes).toBeGreaterThan(0);
@@ -561,6 +572,46 @@ describe("fixed geometry evaluation: scoring detects failures", () => {
     expect(report.blocks.some((block) => block.includes("not applied"))).toBe(
       true,
     );
+  });
+
+  it("reports completed rounds, usage, and cost on cancellation (issue #78 AC)", async () => {
+    // Two completed rounds with real usage, then the cancel lands at the
+    // next boundary: the run report must preserve the consumed evidence
+    // (2 rounds, 2 tool calls, 2000 input + 200 output tokens, priced at
+    // $1/M input + $2/M output = $0.0024) while still reporting zero
+    // applied commands.
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "inspecting",
+        toolCalls: [{ id: "call_1", name: "inspectSummary", arguments: {} }],
+        usage: { inputTokens: 1000, outputTokens: 100 },
+      },
+      {
+        text: "inspecting again",
+        toolCalls: [{ id: "call_2", name: "inspectSummary", arguments: {} }],
+        usage: { inputTokens: 1000, outputTokens: 100 },
+      },
+      {
+        text: "never reached",
+        usage: { inputTokens: 1000, outputTokens: 100 },
+      },
+    ];
+    const result = await evaluateScenario({
+      scenarioId: "chair-create",
+      script,
+      cancelAfterToolCalls: 1,
+    });
+    expect(result.run.ok).toBe(false);
+    expect(result.run.reason).toBe("canceled");
+    expect(result.run.rounds).toBe(2);
+    expect(result.run.toolCalls).toBe(2);
+    expect(result.run.usage).toEqual({
+      inputTokens: 2000,
+      outputTokens: 200,
+    });
+    expect(result.run.costUsd).toBe(0.0024);
+    expect(result.run.appliedCommands).toBe(0);
+    expect(result.integrity.zeroStateChangeOnFailure).toBe(true);
   });
 
   it("tracks virtual time and estimated cost through the real pricing path", async () => {

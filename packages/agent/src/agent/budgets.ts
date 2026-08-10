@@ -332,26 +332,24 @@ export class BudgetLedger {
   }
 
   recordUsage(usage: ProviderUsage): BudgetResult {
-    const nextTokens =
-      this.#inputTokens +
-      usage.inputTokens +
-      this.#outputTokens +
-      usage.outputTokens;
+    // Issue #78: record the provider-reported usage BEFORE enforcing the
+    // budget. The response was already consumed and billed, so a run that
+    // fails on this response must still report its tokens and cost; the
+    // limit check below fails the run closed with the true totals.
+    this.#inputTokens += usage.inputTokens;
+    this.#outputTokens += usage.outputTokens;
+    this.#costUsd += usage.estimatedCostUsd ?? 0;
+    const nextTokens = this.#inputTokens + this.#outputTokens;
     if (nextTokens > this.budgets.maxTokens) {
       return limit("tokens", this.budgets.maxTokens, nextTokens);
     }
-    const cost = usage.estimatedCostUsd ?? 0;
-    const nextCost = this.#costUsd + cost;
-    if (nextCost > this.budgets.maxEstimatedCostUsd) {
+    if (this.#costUsd > this.budgets.maxEstimatedCostUsd) {
       return limit(
         "estimatedCostUsd",
         this.budgets.maxEstimatedCostUsd,
-        nextCost,
+        this.#costUsd,
       );
     }
-    this.#inputTokens += usage.inputTokens;
-    this.#outputTokens += usage.outputTokens;
-    this.#costUsd = nextCost;
     return { ok: true };
   }
 

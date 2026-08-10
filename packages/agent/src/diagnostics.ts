@@ -88,7 +88,9 @@ export function buildSessionDiagnostics(
   input: SessionDiagnosticsInput,
 ): SessionDiagnostics {
   const result = input.result;
-  const usage = result.ok ? result.usage : undefined;
+  // Issue #78: failed/canceled runs carry the cumulative counters, so the
+  // report never erases consumed rounds, tokens, or cost.
+  const usage = result.usage;
   const failureCode = result.ok ? undefined : errorCode(result.error);
   const outcome: SessionDiagnostics["outcome"] = {
     ok: result.ok,
@@ -99,11 +101,11 @@ export function buildSessionDiagnostics(
       : {}),
   };
   const usageReport: SessionDiagnostics["usage"] = {
-    rounds: result.ok ? result.rounds : 0,
-    toolCalls: result.ok ? result.toolCalls : 0,
-    inputTokens: usage?.inputTokens ?? 0,
-    outputTokens: usage?.outputTokens ?? 0,
-    ...(usage?.estimatedCostUsd === undefined
+    rounds: result.rounds,
+    toolCalls: result.toolCalls,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(usage.estimatedCostUsd === undefined
       ? {}
       : { estimatedCostUsd: usage.estimatedCostUsd }),
   };
