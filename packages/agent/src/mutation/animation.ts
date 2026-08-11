@@ -461,7 +461,14 @@ export function setTrackInterpolation(
     trackId: trackIdValue,
     interpolation: requireInterpolation(record),
   });
-  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
+  // Changing a track's interpolation modifies that track against the
+  // session track budget (issue #119: every animation mutation must
+  // reserve its modified tracks/keyframes).
+  return {
+    command,
+    voxelEstimate: estimateVoxelDelta(command, ctx.store),
+    animation: { tracks: 1 },
+  };
 }
 
 /** `setKeyframe` contract: construct a `keyframe.set` command. */
@@ -570,7 +577,8 @@ export function moveKeyframe(
     keyframeId: keyframeId(requireString(record, "keyframeId")),
     time: requireKeyframeTime(record, "time"),
   });
-  // Retiming modifies one keyframe (issue #119).
+  // Retiming counts one modified keyframe against the session budget
+  // (issue #119): destruction must not bypass keyframe caps.
   return {
     command,
     voxelEstimate: estimateVoxelDelta(command, ctx.store),
@@ -616,7 +624,8 @@ export function deleteKeyframe(
     trackId: trackIdValue,
     keyframeId: keyframeId(requireString(record, "keyframeId")),
   });
-  // Deleting modifies one keyframe (issue #119).
+  // Deleting counts one modified keyframe against the session budget
+  // (issue #119): destruction must not bypass keyframe caps.
   return {
     command,
     voxelEstimate: estimateVoxelDelta(command, ctx.store),

@@ -196,7 +196,7 @@ describe("animation mutation tools (plan S13.5)", () => {
       animationId: FIXTURE_IDS.animationWave,
       trackId: FIXTURE_IDS.trackWave,
       keyframeId: FIXTURE_IDS.keyframeEnd,
-      time: 1.5,
+      time: 0.5,
     });
     expect(move.animation).toEqual({ keyframes: 1 });
 
@@ -213,6 +213,14 @@ describe("animation mutation tools (plan S13.5)", () => {
       animationId: FIXTURE_IDS.animationWave,
     });
     expect(deleteClip.animation).toEqual({ tracks: 1, keyframes: 2 });
+
+    // setTrackInterpolation modifies one track.
+    const interpolation = constructOk(mutator, "setTrackInterpolation", {
+      animationId: FIXTURE_IDS.animationWave,
+      trackId: FIXTURE_IDS.trackWave,
+      interpolation: "linear",
+    });
+    expect(interpolation.animation).toEqual({ tracks: 1 });
   });
 
   it("rejects missing references and malformed values with stable errors", () => {
