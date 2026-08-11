@@ -108,6 +108,7 @@ interface TraceOutput {
     historyPast: number;
     historyFresh: string;
     undoAfterRecovery: { accepted: boolean; code: string | null };
+    commandReuseAfterRecovery: { accepted: boolean; code: string | null };
   };
   corruptTail: {
     replayedFrames: number;
@@ -169,6 +170,12 @@ describe("headless crash recovery", () => {
     expect(output.crash.undoAfterRecovery).toEqual({
       accepted: false,
       code: "NOTHING_TO_UNDO",
+    });
+    // Issue #115: the recovered bus retains replayed command ids for the
+    // recovery horizon, so reusing one in a fresh commit is rejected.
+    expect(output.crash.commandReuseAfterRecovery).toEqual({
+      accepted: false,
+      code: "DUPLICATE_COMMAND_ID",
     });
 
     // Corrupt tail: valid frames replay, garbage is reported, never guessed.

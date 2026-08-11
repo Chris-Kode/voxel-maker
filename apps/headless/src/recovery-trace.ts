@@ -313,6 +313,28 @@ export async function runRecoveryTrace(): Promise<string> {
     const undoAfterRecovery = undoAfterRecoveryResult.ok
       ? { accepted: true, code: null }
       : { accepted: false, code: undoAfterRecoveryResult.error.code };
+    // Issue #115: the recovered bus retains the replayed command ids for
+    // the recovery horizon, so a fresh normal commit that reuses a
+    // replayed id is rejected atomically instead of creating a second
+    // committed transaction with the same identity.
+    // `fill-extra` is the frame the trace awaited before the crash, so it
+    // always replays into the recovered bus's executed command-id set;
+    // `fill` may be covered by the durable snapshot and skipped.
+    const commandReuseAfterRecoveryResult = crashRecovery.bus.execute(
+      fillBoxCommand(commandId("command:recovery:trace:fill-extra"), {
+        volumeId: TRACE_VOLUME,
+        region: { min: [-4, 9, -4], max: [5, 10, 5] },
+        material: materialId(1),
+      }),
+      {
+        transactionId: transactionId("transaction:recovery:trace:reuse-after"),
+        expectedRevision: crashRecovery.report.recoveredRevision,
+        source: "ui",
+      },
+    );
+    const commandReuseAfterRecovery = commandReuseAfterRecoveryResult.ok
+      ? { accepted: true, code: null }
+      : { accepted: false, code: commandReuseAfterRecoveryResult.error.code };
 
     // --- corrupt tail: garbage after the last complete frame ---
     await port.appendJournal(
@@ -448,6 +470,7 @@ export async function runRecoveryTrace(): Promise<string> {
         historyPast: crashRecovery.bus.historySnapshot().past.length,
         historyFresh: crashRecovery.report.history,
         undoAfterRecovery,
+        commandReuseAfterRecovery,
       },
       corruptTail: {
         replayedFrames: tailRecovery.report.replayedFrames,

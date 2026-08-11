@@ -567,7 +567,7 @@ describe("visual refinement: corrections stay staged commands (AC4)", () => {
     // The correction is an ordinary command constructed by the same
     // mutator, with the same deterministic id scheme.
     expect(commands[1]?.type).toBe("voxel.fillBox");
-    expect(commands[1]?.id).toBe("command:fillBox:1");
+    expect(commands[1]?.id).toBe("command:fillBox:1:1");
   });
 
   it("applies the refined proposal as ONE labeled undoable history entry", async () => {

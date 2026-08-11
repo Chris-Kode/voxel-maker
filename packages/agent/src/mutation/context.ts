@@ -20,7 +20,11 @@ export interface MutationToolContext {
   readonly baseRevision: number;
   /** Tool name of the dispatched call (stable kebab-case). */
   readonly toolName: string;
-  /** Deterministic per-mutator sequence for generated command ids. */
+  /**
+   * Deterministic per-mutator sequence for generated command ids; the
+   * fallback id also carries `baseRevision`, so ids stay unique across
+   * runs on the same bus (issue #115).
+   */
   readonly commandSequence: number;
 }
 

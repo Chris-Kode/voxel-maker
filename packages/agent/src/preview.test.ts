@@ -18,6 +18,8 @@ import {
   nodeId,
   transactionId,
   volumeId,
+  type CommandId,
+  type JsonValue,
   type MaterialId,
 } from "@voxel-maker/shared";
 import { FIXTURE_IDS, createInspectionStore } from "./fixtures.js";
@@ -28,6 +30,7 @@ import {
   contractByName,
 } from "./registry.js";
 import { createPreviewSession, previewSessionId } from "./preview.js";
+import { createMutator } from "./mutator.js";
 
 /**
  * Preview session tests (plan S11.11/S11.15, ticket #32): a copy-on-write
@@ -154,6 +157,53 @@ describe("preview session creation (AC: mandatory base revision)", () => {
     expect(store.revision).toBe(2);
     a.discard();
     b.discard();
+  });
+
+  it("applies two sequential AI-style runs with fresh mutators on one bus (issue #115)", () => {
+    const { store, bus } = liveFixture();
+    const run = (label: string): void => {
+      const session = createPreviewSession({ live: store, applyBus: bus });
+      const mutator = createMutator({
+        store: session,
+        registry: createPreviewRegistry(),
+        session,
+        capabilities: ["mutate"],
+      });
+      // The model omits an explicit commandId, so the mutator falls back
+      // to its deterministic scheme; the scheme must stay unique across
+      // runs on the same bus (issue #115) or the second Apply would fail
+      // with DUPLICATE_COMMAND_ID.
+      const constructed = mutator.construct("fillBox", {
+        volumeId: FIXTURE_IDS.volumeMain,
+        region: { min: [0, 0, 0], max: [1, 1, 1] },
+        material: 1,
+      });
+      expect(constructed.ok, JSON.stringify(constructed)).toBe(true);
+      if (!constructed.ok) return;
+      const envelope = constructed.value as Readonly<Record<string, JsonValue>>;
+      const raw = envelope.command;
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return;
+      const record = raw as Readonly<Record<string, JsonValue>>;
+      const command: Command = {
+        id: record.id as CommandId,
+        type: record.type as string,
+        schemaVersion: record.schemaVersion as number,
+        payload: record.payload,
+      };
+      const staged = session.stage(command);
+      expect(staged.ok, JSON.stringify(staged)).toBe(true);
+      if (!staged.ok) return;
+      const applied = session.apply({
+        transactionId: transactionId(`transaction:test:run:${label}`),
+      });
+      expect(applied.ok, JSON.stringify(applied)).toBe(true);
+      if (!applied.ok) return;
+      session.discard();
+    };
+    run("0001");
+    run("0002");
+    expect(store.revision).toBe(3);
+    expect(bus.historySnapshot().past).toHaveLength(2);
   });
 
   it("exposes a distinct worker namespace per session", () => {
