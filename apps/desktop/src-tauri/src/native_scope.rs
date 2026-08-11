@@ -127,7 +127,7 @@ pub enum AtomicWritePhase {
 /// IPC). Only the listed phases fail, each with its canonical error code,
 /// so the native conformance matrix can inject every phase failure
 /// through the real command surface (issue #120).
-#[derive(serde::Deserialize, Clone, Debug, Default)]
+#[derive(serde::Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AtomicWriteFaultPlan {
     pub fail_at: Option<Vec<AtomicWritePhase>>,
@@ -668,7 +668,7 @@ fn input_file_limit_message(path: &Path, requested: u64) -> String {
 /// file that grows between the metadata check and the read can never be
 /// allocated beyond the limit.
 fn read_bounded_bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(path).map_err(|error| read_io_error(path, &error))?;
+    let file = std::fs::File::open(path).map_err(|error| read_io_error(&error))?;
     read_bounded_file(file, path)
 }
 
@@ -678,7 +678,7 @@ fn read_bounded_bytes_or_none(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match std::fs::File::open(path) {
         Ok(file) => read_bounded_file(file, path).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(read_io_error(path, &error)),
+        Err(error) => Err(read_io_error(&error)),
     }
 }
 
@@ -687,9 +687,7 @@ fn read_bounded_bytes_or_none(path: &Path) -> Result<Option<Vec<u8>>, String> {
 /// grows past the cap is never allocated beyond it.
 fn read_bounded_file(file: std::fs::File, path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let metadata = file
-        .metadata()
-        .map_err(|error| read_io_error(path, &error))?;
+    let metadata = file.metadata().map_err(|error| read_io_error(&error))?;
     if !metadata.is_file() {
         return Err(format!(
             "{IO_NOT_REGULAR_FILE}: input path is not a regular file: {}",
@@ -705,7 +703,7 @@ fn read_bounded_file(file: std::fs::File, path: &Path) -> Result<Vec<u8>, String
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_INPUT_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|error| read_io_error(path, &error))?;
+        .map_err(|error| read_io_error(&error))?;
     if bytes.len() as u64 > MAX_INPUT_FILE_BYTES {
         return Err(format!(
             "{INPUT_FILE_LIMIT_EXCEEDED}: {}",
@@ -740,26 +738,35 @@ pub fn read_project_bytes(
 /// interrupts the write before the replace when set, mirroring the port's
 /// AbortSignal contract. Errors are stable `CODE: message` strings the
 /// webview adapter maps back to the shared io-family error contract.
+/// The same-directory hidden temporary paths of one atomic write: the
+/// destination temp and the backup-refresh temp. Hidden dotfiles beside
+/// the destination keep every rename on one filesystem, and the nonce
+/// makes both names exclusive (a stale temp from a crashed process is
+/// never reused or truncated).
+fn temp_paths_for(destination: &Path, nonce: &str) -> (PathBuf, PathBuf) {
+    let parent = destination.parent().expect("canonical path has a parent");
+    let file_name = destination
+        .file_name()
+        .expect("canonical path has a file name")
+        .to_string_lossy();
+    (
+        parent.join(format!(".{file_name}.{nonce}.tmp")),
+        parent.join(format!(".{file_name}.bak.{nonce}.tmp")),
+    )
+}
+
 fn write_project_atomic_phased(
     destination: &Path,
     bytes: &[u8],
-    nonce: &str,
+    temp_path: &Path,
+    backup_temp_path: &Path,
     fault_plan: Option<&AtomicWriteFaultPlan>,
     cancel: Option<&AtomicBool>,
 ) -> Result<AtomicWriteResult, String> {
     let parent = destination
         .parent()
         .ok_or_else(|| "project path has no parent directory".to_string())?;
-    let file_name = destination
-        .file_name()
-        .ok_or_else(|| "project path has no file name".to_string())?;
-    let file_name = file_name.to_string_lossy();
-    // Hidden same-directory temporary output so the final rename never
-    // crosses a filesystem boundary, with an exclusive nonce name so a
-    // stale temp from a crashed process can never be reused or truncated.
-    let temp_path = parent.join(format!(".{file_name}.{nonce}.tmp"));
     let backup_path = sibling_path_for(destination, ".bak");
-    let backup_temp_path = parent.join(format!(".{file_name}.bak.{nonce}.tmp"));
 
     // Preflight every symlink guard BEFORE any write (issue #94 defense in
     // depth): the destination (never back up THROUGH a planted link — copy
@@ -772,33 +779,31 @@ fn write_project_atomic_phased(
         reject_symlink(destination)?;
         reject_symlink(&backup_path)?;
     }
-    reject_symlink(&temp_path)?;
-    reject_symlink(&backup_temp_path)?;
+    reject_symlink(temp_path)?;
+    reject_symlink(backup_temp_path)?;
 
     // create-temp: exclusive creation never follows or reuses an existing
     // path (a stale or planted file at the nonce temp fails the phase).
-    throw_write_fault(fault_plan, AtomicWritePhase::CreateTemp)?;
-    throw_if_cancelled(cancel)?;
+    phase_gate(fault_plan, cancel, AtomicWritePhase::CreateTemp)?;
     let mut temp = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&temp_path)
-        .map_err(|error| write_phase_error(AtomicWritePhase::CreateTemp, &temp_path, &error))?;
+        .open(temp_path)
+        .map_err(|error| write_phase_error(AtomicWritePhase::CreateTemp, &error))?;
 
     // write-temp: chunked so cancellation can interrupt large saves.
-    throw_write_fault(fault_plan, AtomicWritePhase::WriteTemp)?;
+    phase_gate(fault_plan, cancel, AtomicWritePhase::WriteTemp)?;
     for chunk in bytes.chunks(WRITE_CHUNK_BYTES) {
         throw_if_cancelled(cancel)?;
         temp.write_all(chunk)
-            .map_err(|error| write_phase_error(AtomicWritePhase::WriteTemp, &temp_path, &error))?;
+            .map_err(|error| write_phase_error(AtomicWritePhase::WriteTemp, &error))?;
     }
 
     // flush-temp: fsync before the backup/replace so a resolved save is
     // durable (a failure leaves destination and backup intact).
-    throw_write_fault(fault_plan, AtomicWritePhase::FlushTemp)?;
-    throw_if_cancelled(cancel)?;
+    phase_gate(fault_plan, cancel, AtomicWritePhase::FlushTemp)?;
     temp.sync_all()
-        .map_err(|error| write_phase_error(AtomicWritePhase::FlushTemp, &temp_path, &error))?;
+        .map_err(|error| write_phase_error(AtomicWritePhase::FlushTemp, &error))?;
     drop(temp);
 
     // backup: atomically refresh the last-known-good backup — copy to a
@@ -806,23 +811,20 @@ fn write_project_atomic_phased(
     // mid-copy failure can never truncate the previous backup.
     let mut backup_created = false;
     if destination_present {
-        throw_write_fault(fault_plan, AtomicWritePhase::Backup)?;
+        phase_gate(fault_plan, cancel, AtomicWritePhase::Backup)?;
+        std::fs::copy(destination, backup_temp_path)
+            .map_err(|error| write_phase_error(AtomicWritePhase::Backup, &error))?;
         throw_if_cancelled(cancel)?;
-        std::fs::copy(destination, &backup_temp_path).map_err(|error| {
-            write_phase_error(AtomicWritePhase::Backup, &backup_temp_path, &error)
-        })?;
-        throw_if_cancelled(cancel)?;
-        std::fs::rename(&backup_temp_path, &backup_path)
-            .map_err(|error| write_phase_error(AtomicWritePhase::Backup, &backup_path, &error))?;
+        std::fs::rename(backup_temp_path, &backup_path)
+            .map_err(|error| write_phase_error(AtomicWritePhase::Backup, &error))?;
         backup_created = true;
     }
 
     // replace: rename replaces a destination link itself and never follows
     // it; a failure leaves the previous destination in place.
-    throw_write_fault(fault_plan, AtomicWritePhase::Replace)?;
-    throw_if_cancelled(cancel)?;
-    std::fs::rename(&temp_path, destination)
-        .map_err(|error| write_phase_error(AtomicWritePhase::Replace, destination, &error))?;
+    phase_gate(fault_plan, cancel, AtomicWritePhase::Replace)?;
+    std::fs::rename(temp_path, destination)
+        .map_err(|error| write_phase_error(AtomicWritePhase::Replace, &error))?;
 
     // sync-directory: best-effort — an injected fault or a real sync
     // failure never fails the save, only weakens crash durability.
@@ -852,16 +854,15 @@ fn write_project_atomic_cleaned(
     fault_plan: Option<&AtomicWriteFaultPlan>,
     cancel: Option<&AtomicBool>,
 ) -> Result<AtomicWriteResult, String> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| "project path has no parent directory".to_string())?;
-    let file_name = destination
-        .file_name()
-        .ok_or_else(|| "project path has no file name".to_string())?;
-    let file_name = file_name.to_string_lossy();
-    let temp_path = parent.join(format!(".{file_name}.{nonce}.tmp"));
-    let backup_temp_path = parent.join(format!(".{file_name}.bak.{nonce}.tmp"));
-    let outcome = write_project_atomic_phased(destination, bytes, nonce, fault_plan, cancel);
+    let (temp_path, backup_temp_path) = temp_paths_for(destination, nonce);
+    let outcome = write_project_atomic_phased(
+        destination,
+        bytes,
+        &temp_path,
+        &backup_temp_path,
+        fault_plan,
+        cancel,
+    );
     if outcome.is_err() {
         let _ = std::fs::remove_file(&temp_path);
         let _ = std::fs::remove_file(&backup_temp_path);
@@ -954,43 +955,49 @@ pub fn cancel_project_write(state: State<'_, NativeScope>, token: String) -> Res
     Ok(())
 }
 
-/// Canonical error code for a phase (mirror of `PHASE_ERROR_CODES` in
-/// `@voxel-maker/storage`): one mapping shared by fault injection and real
-/// filesystem errors, so a contract change cannot drift between them.
-fn phase_error_code(phase: AtomicWritePhase) -> &'static str {
-    match phase {
-        AtomicWritePhase::CreateTemp => IO_PERMISSION_DENIED,
-        AtomicWritePhase::WriteTemp => IO_DISK_FULL,
-        AtomicWritePhase::FlushTemp => IO_DISK_FULL,
-        AtomicWritePhase::Backup => IO_PERMISSION_DENIED,
-        AtomicWritePhase::Replace => IO_RENAME_FAILED,
-        AtomicWritePhase::SyncDirectory => IO_SYNC_FAILED,
-    }
+/// One per-phase contract table (mirror of `PHASE_ERROR_CODES` /
+/// `PHASE_ERROR_MESSAGES` in `@voxel-maker/storage`): the canonical error
+/// code, the stable message, and the wire phase name. Fault injection and
+/// real filesystem errors share this table, so a contract change cannot
+/// drift between them.
+struct PhaseContract {
+    code: &'static str,
+    message: &'static str,
+    name: &'static str,
 }
 
-/// Stable per-phase message (mirror of the storage port phase messages).
-fn phase_error_message(phase: AtomicWritePhase) -> &'static str {
+fn phase_contract(phase: AtomicWritePhase) -> PhaseContract {
     match phase {
-        AtomicWritePhase::CreateTemp => {
-            "Cannot create the temporary project file in the project directory"
-        }
-        AtomicWritePhase::WriteTemp => "Cannot write the temporary project file",
-        AtomicWritePhase::FlushTemp => "Cannot flush the temporary project file to disk",
-        AtomicWritePhase::Backup => "Cannot preserve the last-known-good backup",
-        AtomicWritePhase::Replace => "Cannot atomically replace the project file",
-        AtomicWritePhase::SyncDirectory => "Cannot sync the project directory",
-    }
-}
-
-/// Kebab-case phase name for diagnostics and the wire error message.
-fn phase_name(phase: AtomicWritePhase) -> &'static str {
-    match phase {
-        AtomicWritePhase::CreateTemp => "create-temp",
-        AtomicWritePhase::WriteTemp => "write-temp",
-        AtomicWritePhase::FlushTemp => "flush-temp",
-        AtomicWritePhase::Backup => "backup",
-        AtomicWritePhase::Replace => "replace",
-        AtomicWritePhase::SyncDirectory => "sync-directory",
+        AtomicWritePhase::CreateTemp => PhaseContract {
+            code: IO_PERMISSION_DENIED,
+            message: "Cannot create the temporary project file in the project directory",
+            name: "create-temp",
+        },
+        AtomicWritePhase::WriteTemp => PhaseContract {
+            code: IO_DISK_FULL,
+            message: "Cannot write the temporary project file",
+            name: "write-temp",
+        },
+        AtomicWritePhase::FlushTemp => PhaseContract {
+            code: IO_DISK_FULL,
+            message: "Cannot flush the temporary project file to disk",
+            name: "flush-temp",
+        },
+        AtomicWritePhase::Backup => PhaseContract {
+            code: IO_PERMISSION_DENIED,
+            message: "Cannot preserve the last-known-good backup",
+            name: "backup",
+        },
+        AtomicWritePhase::Replace => PhaseContract {
+            code: IO_RENAME_FAILED,
+            message: "Cannot atomically replace the project file",
+            name: "replace",
+        },
+        AtomicWritePhase::SyncDirectory => PhaseContract {
+            code: IO_SYNC_FAILED,
+            message: "Cannot sync the project directory",
+            name: "sync-directory",
+        },
     }
 }
 
@@ -1007,15 +1014,26 @@ fn throw_write_fault(
     phase: AtomicWritePhase,
 ) -> Result<(), String> {
     if fault_at(fault_plan, phase) {
+        let contract = phase_contract(phase);
         Err(format!(
             "{}: {} (phase {})",
-            phase_error_code(phase),
-            phase_error_message(phase),
-            phase_name(phase)
+            contract.code, contract.message, contract.name
         ))
     } else {
         Ok(())
     }
+}
+
+/// One phase gate: injects the canonical phase fault, then observes
+/// cancellation, before a phase runs (the port's per-phase fault and
+/// abort checks).
+fn phase_gate(
+    fault_plan: Option<&AtomicWriteFaultPlan>,
+    cancel: Option<&AtomicBool>,
+    phase: AtomicWritePhase,
+) -> Result<(), String> {
+    throw_write_fault(fault_plan, phase)?;
+    throw_if_cancelled(cancel)
 }
 
 /// Cooperative abort check between atomic write phases and chunks.
@@ -1033,7 +1051,8 @@ fn throw_if_cancelled(cancel: Option<&AtomicBool>) -> Result<(), String> {
 /// real filesystem failure, classifying by error kind (parity with the
 /// Node adapter's `mapFsError`). Unclassified kinds keep the phase's
 /// canonical code.
-fn write_phase_error(phase: AtomicWritePhase, _path: &Path, error: &std::io::Error) -> String {
+fn write_phase_error(phase: AtomicWritePhase, error: &std::io::Error) -> String {
+    let contract = phase_contract(phase);
     let code = match error.kind() {
         std::io::ErrorKind::NotFound => IO_WRITE_FAILED,
         std::io::ErrorKind::StorageFull => IO_DISK_FULL,
@@ -1041,18 +1060,17 @@ fn write_phase_error(phase: AtomicWritePhase, _path: &Path, error: &std::io::Err
         // Exclusive-create collision: a file (or planted link) already
         // exists at the nonce temp path.
         std::io::ErrorKind::AlreadyExists => IO_PERMISSION_DENIED,
-        _ => phase_error_code(phase),
+        _ => contract.code,
     };
     format!(
         "{code}: {} (phase {}): {error}",
-        phase_error_message(phase),
-        phase_name(phase)
+        contract.message, contract.name
     )
 }
 
 /// Builds the stable `CODE: message` string for a read failure (parity
 /// with the Node adapter's read mapping).
-fn read_io_error(_path: &Path, error: &std::io::Error) -> String {
+fn read_io_error(error: &std::io::Error) -> String {
     let code = match error.kind() {
         std::io::ErrorKind::NotFound => IO_NOT_FOUND,
         std::io::ErrorKind::PermissionDenied => IO_PERMISSION_DENIED,
@@ -2101,14 +2119,7 @@ mod tests {
                 Some(plan),
             )
             .expect_err("the injected phase failure must fail the write");
-            let code = match phase {
-                AtomicWritePhase::CreateTemp => IO_PERMISSION_DENIED,
-                AtomicWritePhase::WriteTemp => IO_DISK_FULL,
-                AtomicWritePhase::FlushTemp => IO_DISK_FULL,
-                AtomicWritePhase::Backup => IO_PERMISSION_DENIED,
-                AtomicWritePhase::Replace => IO_RENAME_FAILED,
-                AtomicWritePhase::SyncDirectory => unreachable!("covered separately"),
-            };
+            let code = phase_contract(phase).code;
             assert!(
                 error.starts_with(&format!("{code}:")),
                 "{phase:?} must fail with {code}: {error}"
@@ -2206,11 +2217,6 @@ mod tests {
                 .is_none(),
             "backup untouched"
         );
-        assert!(
-            state.write_cancels.lock().expect("cancel lock").is_empty(),
-            "the write token is removed when the write finishes"
-        );
-
         // Second interrupted write after a successful one: the latest good
         // destination and its backup stay readable.
         write_project(state.clone(), token.clone(), b"v1".to_vec()).expect("seed v1");
@@ -2220,7 +2226,7 @@ mod tests {
             state.clone(),
             token.clone(),
             b"v2".to_vec(),
-            Some(cancel_token),
+            Some(cancel_token.clone()),
             None,
         )
         .expect_err("a second cancelled write must be interrupted");
@@ -2238,6 +2244,29 @@ mod tests {
             "backup intact"
         );
         assert!(temp_files(&dir).is_empty(), "temporary files removed");
+
+        // The token is cleaned up when the write finishes: reusing the
+        // same token for a later write must see a FRESH (uncancelled)
+        // flag, so the write succeeds instead of being interrupted again.
+        write_project_with(
+            state.clone(),
+            token.clone(),
+            b"v2".to_vec(),
+            Some(cancel_token.clone()),
+            None,
+        )
+        .expect("a later write with the same token succeeds");
+        assert_eq!(
+            read_bytes(&app, token.clone()).expect("read project"),
+            b"v2"
+        );
+        assert_eq!(
+            read_backup_bytes(state.clone(), token.clone())
+                .expect("backup read")
+                .expect("backup present"),
+            b"v1",
+            "the later write preserved the previous destination"
+        );
     }
 
     #[test]
@@ -2316,6 +2345,57 @@ mod tests {
                 .expect("backup read")
                 .is_none(),
             "missing backup reads resolve None"
+        );
+    }
+
+    #[test]
+    fn a_stale_temp_from_a_crashed_process_is_never_reused_or_truncated() {
+        let dir = TempDir::new("issue120-crash");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("crash.vxl"))
+            .expect("mint");
+        write_project(state.clone(), token.clone(), b"v1".to_vec()).expect("seed v1");
+
+        // Simulate a process that died mid-write: its nonce temp survives
+        // with partial bytes (and no fsync). The next save must use a
+        // FRESH nonce and must never reuse or truncate the stale temp.
+        let stale = dir.file(".crash.vxl.stalenonce.tmp");
+        std::fs::write(&stale, b"partial").expect("plant stale temp");
+        let stale_backup = dir.file(".crash.vxl.bak.stalenonce.tmp");
+        std::fs::write(&stale_backup, b"partial-backup").expect("plant stale backup temp");
+
+        write_project(state.clone(), token.clone(), b"v2".to_vec()).expect("write succeeds");
+        assert_eq!(
+            read_bytes(&app, token.clone()).expect("read project"),
+            b"v2",
+            "the fresh save replaced the destination"
+        );
+        assert_eq!(
+            read_backup_bytes(state.clone(), token.clone())
+                .expect("backup read")
+                .expect("backup present"),
+            b"v1",
+            "the fresh save preserved the previous destination"
+        );
+        // The stale crash artifacts are untouched (exclusive creation
+        // never opens an existing nonce temp) and the fresh temps are gone.
+        assert_eq!(
+            std::fs::read(&stale).expect("stale temp untouched"),
+            b"partial"
+        );
+        assert_eq!(
+            std::fs::read(&stale_backup).expect("stale backup temp untouched"),
+            b"partial-backup"
+        );
+        assert_eq!(
+            temp_files(&dir),
+            vec![
+                ".crash.vxl.bak.stalenonce.tmp".to_string(),
+                ".crash.vxl.stalenonce.tmp".to_string(),
+            ],
+            "only the stale crash artifacts remain"
         );
     }
 

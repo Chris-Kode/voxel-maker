@@ -83,14 +83,15 @@ export class TauriProjectStorage
       }
     };
     signal?.addEventListener("abort", onAbort, { once: true });
+    const faultPhases = canonicalFaultPhases(options?.faults);
     try {
       return await invoke<AtomicWriteResult>("write_project_bytes_atomic", {
         handle,
         bytes,
         ...(cancelToken === undefined ? {} : { cancelToken }),
-        ...(canonicalFaultPhases(options?.faults) === undefined
+        ...(faultPhases === undefined
           ? {}
-          : { faults: { failAt: canonicalFaultPhases(options?.faults) } }),
+          : { faults: { failAt: faultPhases } }),
       });
     } catch (error) {
       throw mapTauriStorageError(error, handle);
