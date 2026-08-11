@@ -738,20 +738,18 @@ describe("caller-held payload isolation (issue #113)", () => {
   const mutableSet = (
     id: string,
     coordinate: [number, number, number],
-  ): { command: Command; payload: { coordinate: number[] } } => {
-    const payload = {
-      volumeId: VOLUME,
-      coordinate,
-      material: materialId(1),
-    };
+  ): { command: Command } => {
     return {
       command: {
         id: commandId(`command:bus:${id}`),
         type: VOXEL_SET_COMMAND,
         schemaVersion: 1,
-        payload,
+        payload: {
+          volumeId: VOLUME,
+          coordinate,
+          material: materialId(1),
+        },
       },
-      payload,
     };
   };
 
@@ -812,6 +810,73 @@ describe("caller-held payload isolation (issue #113)", () => {
     const event = result.value.event;
     (command.payload as { coordinate: number[] }).coordinate[0] = 1;
     expect(event.commandIds).toEqual(["command:bus:issue113:event:0001"]);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+  });
+
+  it("replays the committed command array, not a caller-replaced array", () => {
+    const { bus, store } = createBus();
+    const submitted = [set("issue113:array:0001", [0, 0, 0])];
+    expect(
+      bus.executeTransaction(submitted, options("issue113:array:0001", 0)).ok,
+    ).toBe(true);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(bus.undo(options("issue113:array:undo:0001", 1)).ok).toBe(true);
+    // Replacing the caller's array entry after commit must not change what
+    // redo replays (the committed snapshot owns its own array).
+    submitted[0] = set("issue113:array:0001", [5, 0, 0]);
+    const redo = bus.redo(options("issue113:array:redo:0001", 2));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [5, 0, 0])).toBe(0);
+  });
+
+  it("keeps the committed envelope, not a caller-mutated command id", () => {
+    const { bus, store } = createBus();
+    const payload = {
+      volumeId: VOLUME,
+      coordinate: [0, 0, 0] as [number, number, number],
+      material: materialId(1),
+    };
+    const command = {
+      id: commandId("command:bus:issue113:envelope:0001"),
+      type: VOXEL_SET_COMMAND,
+      schemaVersion: 1,
+      payload,
+    };
+    expect(bus.execute(command, options("issue113:envelope:0001", 0)).ok).toBe(
+      true,
+    );
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(bus.undo(options("issue113:envelope:undo:0001", 1)).ok).toBe(true);
+    // Mutating the caller's envelope after commit must not change what redo
+    // replays or how the redo event identifies the commands.
+    command.id = commandId("command:bus:mutated:0001");
+    const redo = bus.redo(options("issue113:envelope:redo:0001", 2));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(redo.value.event.commandIds).toEqual([
+      "command:bus:issue113:envelope:0001",
+    ]);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+  });
+
+  it("rejects an idempotent retry whose caller-mutated bytes differ", () => {
+    const { bus, store } = createRecordingBus();
+    const { command } = mutableSet("issue113:idem:0002", [0, 0, 0]);
+    const first = bus.execute(command, options("issue113:idem:0002", 0));
+    expect(first.ok).toBe(true);
+    // The recorded idempotency record stays intact, and the mutated retry is
+    // detected as a different transaction rather than silently replayed
+    // (plan 5.4: "an ID reused with different bytes is an error").
+    (command.payload as { coordinate: number[] }).coordinate[0] = 1;
+    const retry = bus.execute(command, options("issue113:idem:0002", 1));
+    expect(retry.ok).toBe(false);
+    if (retry.ok) return;
+    expect(retry.error.code).toBe("DUPLICATE_TRANSACTION_ID");
+    expect(store.revision).toBe(1);
     expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
     expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
   });

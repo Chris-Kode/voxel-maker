@@ -435,8 +435,16 @@ export class CommandBus {
     const context = this.#makeContext(staged);
     const executions: CommandExecution[] = [];
     const inverses: (InverseCommand | readonly InverseCommand[])[] = [];
-    /** Parsed payload of each executed command (issue #113). */
-    const parsedPayloads: unknown[] = [];
+    /**
+     * Each executed command paired with its parsed, bounded payload
+     * (issue #113). The pair keeps the envelope and payload alignment
+     * structural instead of index-dependent; collected for new commits
+     * only, which are the only runs that build a forward snapshot.
+     */
+    const parsedCommands: Array<{
+      readonly command: Command;
+      readonly payload: unknown;
+    }> = [];
     // Issue #92: ADR-0009's 1,000,000-voxel transaction budget is a
     // cumulative meter over every command and volume of the transaction.
     // Like the byte budgets, it applies to new commits only: undo, redo,
@@ -493,7 +501,9 @@ export class CommandBus {
       } catch (error) {
         return err(withCommandIndex(toWorkspaceError(error), index));
       }
-      parsedPayloads.push(payload);
+      if (mode.kind === "commit") {
+        parsedCommands.push({ command, payload });
+      }
       executions.push(execution);
       inverses.push(execution.inverse);
       if (mode.kind === "commit") {
@@ -518,7 +528,7 @@ export class CommandBus {
     // owned by the bus (handler-built inverses or frozen snapshots).
     const forwardCommands =
       mode.kind === "commit"
-        ? snapshotForwardCommands(commands, parsedPayloads)
+        ? snapshotForwardCommands(parsedCommands)
         : commands;
     const revisionBefore = this.#store.revision;
     const revisionAfter = revisionBefore + 1;
@@ -1161,46 +1171,68 @@ function historyMetadata(
  * serialize into the recovery journal.
  */
 function snapshotForwardCommands(
-  commands: readonly Command[],
-  parsedPayloads: readonly unknown[],
+  parsed: readonly { readonly command: Command; readonly payload: unknown }[],
 ): readonly Command[] {
-  return commands.map((command, index) =>
-    Object.freeze({
-      id: command.id,
-      type: command.type,
-      schemaVersion: command.schemaVersion,
-      payload: deepFreezeClone(parsedPayloads[index]),
-    }),
+  return parsed.map(({ command, payload }) =>
+    Object.freeze(
+      commandEnvelope(
+        command.id,
+        command.type,
+        command.schemaVersion,
+        deepFreezeClone(payload),
+      ),
+    ),
   );
 }
 
 /**
- * Owned deep-frozen copy of a JSON-compatible value (issue #113). Primitives
- * are immutable and returned as-is; arrays and records are rebuilt so the
- * copy never shares identity with caller-held objects, then frozen. Cyclic
- * values cannot reach this point: commit-time canonicalization and the
- * parse helpers reject them before snapshotting.
+ * Owned deep-frozen copy of a parsed command payload (issue #113).
+ * Primitives are immutable and returned as-is; arrays and records are
+ * rebuilt so the copy never shares identity with caller-held objects, then
+ * frozen. Only plain JSON trees can reach this walker by contract: parse
+ * helpers rebuild fresh plain structures from input that already passed
+ * commit-time canonicalization (the budget check), and the one caller
+ * record a parse may keep by reference (`volume.create` entries) also
+ * passed canonicalization. Null-prototype records are preserved so an
+ * absent ID-keyed member can never resolve to an inherited
+ * `Object.prototype` member in the owned snapshot (issue #103).
  */
 function deepFreezeClone(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) {
     return Object.freeze(value.map((item) => deepFreezeClone(item)));
   }
-  return Object.freeze(
-    Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, deepFreezeClone(item)]),
-    ),
-  );
+  const source = value as Record<string, unknown>;
+  const copy: Record<string, unknown> =
+    Object.getPrototypeOf(value) === null
+      ? (Object.create(null) as Record<string, unknown>)
+      : {};
+  for (const key of Object.keys(source)) {
+    copy[key] = deepFreezeClone(source[key]);
+  }
+  return Object.freeze(copy);
+}
+
+/** One command envelope; shared by the snapshot and byte-budget paths. */
+function commandEnvelope(
+  id: CommandId,
+  type: string,
+  schemaVersion: number,
+  payload: unknown,
+): { id: CommandId; type: string; schemaVersion: number; payload: unknown } {
+  return { id, type, schemaVersion, payload };
 }
 
 function transactionBytes(commands: readonly Command[]): string {
   return canonicalJson(
-    commands.map((command) => ({
-      id: command.id,
-      type: command.type,
-      schemaVersion: command.schemaVersion,
-      payload: command.payload,
-    })) as JsonValue,
+    commands.map((command) =>
+      commandEnvelope(
+        command.id,
+        command.type,
+        command.schemaVersion,
+        command.payload,
+      ),
+    ) as JsonValue,
   );
 }
 
