@@ -9,7 +9,11 @@ import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
 import { CommandRegistry } from "./registry.js";
-import { DEFAULT_COMMAND_LIMITS, type CommandLimits } from "./types.js";
+import {
+  DEFAULT_COMMAND_LIMITS,
+  type Command,
+  type CommandLimits,
+} from "./types.js";
 import {
   parseJournalTransaction,
   type JournalTransactionLimits,
@@ -494,5 +498,120 @@ describe("adversarial command execution", () => {
     });
     expect(result2.ok).toBe(false);
     expect(store.revision).toBe(before);
+  });
+
+  it("returns a failed result for a cyclic payload instead of throwing (issue #114)", () => {
+    const { bus, store } = createBus();
+    const before = store.revision;
+    // A self-referencing payload is untrusted input that canonicalJson
+    // rejects; it must surface as a structured failed TransactionResult,
+    // never as a synchronous throw through the public API.
+    const cyclic: Record<string, unknown> = {
+      nodeId: "node:adversarial:root",
+      metadata: { a: 1 },
+    };
+    cyclic.self = cyclic;
+    const command: Command = {
+      id: commandId("command:adversarial:cyclic"),
+      type: NODE_SET_METADATA_COMMAND,
+      schemaVersion: 1,
+      payload: cyclic,
+    };
+    const result = bus.execute(command, {
+      transactionId: transactionId("transaction:adversarial:cyclic"),
+      expectedRevision: before,
+      source: "ai",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("CYCLIC_VALUE");
+    expect(store.revision).toBe(before);
+    expect(bus.historySnapshot().past).toHaveLength(0);
+  });
+
+  it("returns a failed result for a noncanonical number payload instead of throwing (issue #114)", () => {
+    const { bus, store } = createBus();
+    const before = store.revision;
+    const result = bus.executeTransaction(
+      [
+        {
+          id: commandId("command:adversarial:nan"),
+          type: NODE_SET_METADATA_COMMAND,
+          schemaVersion: 1,
+          payload: {
+            nodeId: "node:adversarial:root",
+            metadata: { v: Number.NaN },
+          },
+        },
+      ],
+      {
+        transactionId: transactionId("transaction:adversarial:nan"),
+        expectedRevision: before,
+        source: "ai",
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_CANONICAL_NUMBER");
+    expect(store.revision).toBe(before);
+    expect(bus.historySnapshot().past).toHaveLength(0);
+  });
+
+  it("returns a failed result for a depth-bomb payload instead of throwing (issue #114)", () => {
+    const { bus, store } = createBus();
+    const before = store.revision;
+    let nested: unknown = { leaf: true };
+    for (let i = 0; i < 600; i += 1) nested = { next: nested };
+    const result = bus.execute(
+      {
+        id: commandId("command:adversarial:depth"),
+        type: NODE_SET_METADATA_COMMAND,
+        schemaVersion: 1,
+        payload: {
+          nodeId: "node:adversarial:root",
+          metadata: { nested },
+        },
+      },
+      {
+        transactionId: transactionId("transaction:adversarial:depth"),
+        expectedRevision: before,
+        source: "ai",
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("LIMIT_EXCEEDED");
+    expect(store.revision).toBe(before);
+    expect(bus.historySnapshot().past).toHaveLength(0);
+  });
+
+  it("returns a failed result when the idempotency envelope pushes payload nesting over the depth cap (issue #114)", () => {
+    const { bus, store } = createBus();
+    const before = store.revision;
+    // A chain of 508 nested objects sits exactly between the two
+    // canonicalization wrappers: the envelope budget canonicalization
+    // (one array wrap; deepest value at depth 512) passes, while the
+    // idempotency-envelope canonicalization (array + envelope object;
+    // deepest value at depth 513) exceeds the cap. The depth cap must
+    // fail closed instead of throwing through the TransactionResult API.
+    let nested: unknown = { leaf: true };
+    for (let i = 0; i < 508; i += 1) nested = { next: nested };
+    const result = bus.execute(
+      {
+        id: commandId("command:adversarial:envelope-depth"),
+        type: NODE_SET_METADATA_COMMAND,
+        schemaVersion: 1,
+        payload: {
+          nodeId: "node:adversarial:root",
+          metadata: { nested },
+        },
+      },
+      {
+        transactionId: transactionId("transaction:adversarial:envelope-depth"),
+        expectedRevision: before,
+        source: "ai",
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("LIMIT_EXCEEDED");
+    expect(store.revision).toBe(before);
+    expect(bus.historySnapshot().past).toHaveLength(0);
   });
 });

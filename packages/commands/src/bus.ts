@@ -427,7 +427,16 @@ export class CommandBus {
       );
     }
 
-    const bytes = transactionBytes(commands);
+    // Issue #114: the idempotency envelope canonicalizes untrusted
+    // payloads again (one wrapper deeper than the budget check), so its
+    // exceptions must also convert to the stable result instead of throwing
+    // through the public TransactionResult API.
+    let bytes: string;
+    try {
+      bytes = transactionBytes(commands);
+    } catch (error) {
+      return err(toWorkspaceError(error));
+    }
     const recorded = this.#idempotency.get(options.transactionId);
     if (recorded !== undefined) {
       if (recorded.bytes === bytes) {
@@ -712,9 +721,18 @@ export class CommandBus {
         context: { count: commands.length },
       });
     }
-    const envelope = canonicalJson(
-      commands.map((command) => command.payload) as JsonValue,
-    );
+    let envelope: string;
+    try {
+      envelope = canonicalJson(
+        commands.map((command) => command.payload) as JsonValue,
+      );
+    } catch (error) {
+      // Issue #114: untrusted payloads reach canonicalization before the
+      // guarded parse loop; convert its exceptions (cycles, noncanonical
+      // numbers, depth bombs) to the stable budget error instead of
+      // throwing through the public TransactionResult API.
+      return toWorkspaceError(error);
+    }
     if (envelope.length > this.#limits.maxTransactionEnvelopeBytes) {
       return new WorkspaceError({
         family: "limit",
@@ -724,7 +742,13 @@ export class CommandBus {
       });
     }
     for (const command of commands) {
-      const payloadBytes = canonicalJson(command.payload as JsonValue).length;
+      let payloadBytes: number;
+      try {
+        payloadBytes = canonicalJson(command.payload as JsonValue).length;
+      } catch (error) {
+        // Issue #114: same boundary as the envelope canonicalization above.
+        return toWorkspaceError(error);
+      }
       if (payloadBytes > this.#limits.maxCommandPayloadBytes) {
         return new WorkspaceError({
           family: "limit",
