@@ -585,12 +585,14 @@ describe("adversarial command execution", () => {
   it("returns a failed result when the idempotency envelope pushes payload nesting over the depth cap (issue #114)", () => {
     const { bus, store } = createBus();
     const before = store.revision;
-    // A payload chain just inside the canonical-depth cap passes the
-    // envelope budget check (one array wrap) but the idempotency-envelope
-    // canonicalization wraps it one level deeper (envelope object), so the
-    // depth cap must still fail closed instead of throwing.
+    // A chain of 508 nested objects sits exactly between the two
+    // canonicalization wrappers: the envelope budget canonicalization
+    // (one array wrap; deepest value at depth 512) passes, while the
+    // idempotency-envelope canonicalization (array + envelope object;
+    // deepest value at depth 513) exceeds the cap. The depth cap must
+    // fail closed instead of throwing through the TransactionResult API.
     let nested: unknown = { leaf: true };
-    for (let i = 0; i < 510; i += 1) nested = { next: nested };
+    for (let i = 0; i < 508; i += 1) nested = { next: nested };
     const result = bus.execute(
       {
         id: commandId("command:adversarial:envelope-depth"),
