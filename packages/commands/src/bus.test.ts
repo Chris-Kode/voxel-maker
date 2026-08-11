@@ -368,6 +368,138 @@ describe("idempotency", () => {
   });
 });
 
+describe("committed command id reuse (issue #115)", () => {
+  it("rejects a second normal transaction that reuses a committed command id", () => {
+    const { bus, store } = createBus();
+    const first = bus.execute(
+      set("reuse:0001", [0, 0, 0]),
+      options("reuse:0001", 0),
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = bus.execute(
+      set("reuse:0001", [1, 0, 0]),
+      options("reuse:0002", 1),
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.error.code).toBe("DUPLICATE_COMMAND_ID");
+    expect(second.error.context?.commandId).toBe("command:bus:reuse:0001");
+    // Atomic failure: no revision, voxel, or history change.
+    expect(store.revision).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+    expect(bus.canUndo()).toBe(true);
+    expect(bus.canRedo()).toBe(false);
+  });
+
+  it("rejects identical-bytes reuse of a committed command id under a new transaction id", () => {
+    const { bus, store } = createBus();
+    bus.execute(set("reuse:0002", [0, 0, 0]), options("reuse:0002", 0));
+    const second = bus.execute(
+      set("reuse:0002", [0, 0, 0]),
+      options("reuse:0003", 1),
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.error.code).toBe("DUPLICATE_COMMAND_ID");
+    expect(store.revision).toBe(1);
+  });
+
+  it("fails the whole transaction atomically when any command reuses a committed id", () => {
+    const { bus, store } = createBus();
+    bus.execute(set("reuse:0003", [0, 0, 0]), options("reuse:0003", 0));
+    const batch = bus.executeTransaction(
+      [
+        set("reuse:0004", [1, 0, 0]),
+        set("reuse:0003", [2, 0, 0]),
+        set("reuse:0005", [-1, 0, 0]),
+      ],
+      options("reuse:0004", 1),
+    );
+    expect(batch.ok).toBe(false);
+    if (batch.ok) return;
+    expect(batch.error.code).toBe("DUPLICATE_COMMAND_ID");
+    expect(batch.error.context?.commandId).toBe("command:bus:reuse:0003");
+    expect(store.revision).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+    expect(store.getVoxel(VOLUME, [2, 0, 0])).toBe(0);
+    expect(store.getVoxel(VOLUME, [-1, 0, 0])).toBe(0);
+  });
+
+  it("permits redo to replay the original committed command ids", () => {
+    const { bus, store } = createBus();
+    bus.execute(set("reuse:0006", [0, 0, 0]), options("reuse:0006", 0));
+    const undo = bus.undo(options("reuse:undo:0001", 1));
+    expect(undo.ok).toBe(true);
+    if (!undo.ok) return;
+    const redo = bus.redo(options("reuse:redo:0001", 2));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+  });
+
+  it("permits recovery-style replay of committed command ids on a fresh bus", () => {
+    // Recovery installs a fresh bus (plan S5.15) and replays recorded
+    // frames through normal commits; the ids are new to that bus.
+    const original = createBus();
+    const recovered = createBus();
+    original.bus.execute(
+      set("reuse:0007", [0, 0, 0]),
+      options("reuse:0007", 0),
+    );
+    const replay = recovered.bus.execute(
+      set("reuse:0007", [0, 0, 0]),
+      options("reuse:0007", 0),
+    );
+    expect(replay.ok).toBe(true);
+    if (!replay.ok) return;
+    expect(replay.value.revisionAfter).toBe(1);
+    expect(recovered.store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+  });
+
+  it("retains committed command ids across resetHistory", () => {
+    const { bus, store } = createBus();
+    bus.execute(set("reuse:0008", [0, 0, 0]), options("reuse:0008", 0));
+    bus.resetHistory();
+    const reuse = bus.execute(
+      set("reuse:0008", [1, 0, 0]),
+      options("reuse:0009", 1),
+    );
+    expect(reuse.ok).toBe(false);
+    if (reuse.ok) return;
+    expect(reuse.error.code).toBe("DUPLICATE_COMMAND_ID");
+    expect(store.revision).toBe(1);
+  });
+
+  it("does not reserve command ids from a failed transaction", () => {
+    const { bus, store } = createBus();
+    const failed = bus.execute(
+      {
+        id: commandId("command:bus:reuse:0009"),
+        type: "voxel.set",
+        schemaVersion: 1,
+        payload: {
+          volumeId: volumeId("volume:missing:0001"),
+          coordinate: [1, 0, 0],
+          material: materialId(1),
+        },
+      },
+      options("reuse:0009", 0),
+    );
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(failed.error.code).toBe("MISSING_VOLUME");
+    // The same command id may be retried after an atomic failure.
+    const retry = bus.execute(
+      set("reuse:0009", [1, 0, 0]),
+      options("reuse:0010", 0),
+    );
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) return;
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(1);
+  });
+});
+
 describe("undo and redo", () => {
   it("undoes a set and redoes it, restoring exact semantic state", () => {
     const { bus, store } = createBus();

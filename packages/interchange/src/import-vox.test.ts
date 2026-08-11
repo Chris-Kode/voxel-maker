@@ -178,6 +178,32 @@ describe("importVox", () => {
     expect(store.getVoxel(volumeId("volume:import:0001"), [1, 0, -1])).toBe(2);
   });
 
+  it("commits two imports on one bus without reusing command ids (issue #115)", () => {
+    const { store, bus } = harness();
+    const bytes = encodeVox({ models: [cube], palette });
+    const first = importVox(bus, store, {
+      bytes,
+      expectedRevision: 0,
+      transactionId: transactionId("transaction:import:test:0001"),
+    });
+    // A second import at the advanced revision reuses the deterministic
+    // node/volume namespaces (suffixed) but must mint fresh command ids:
+    // reusing the first import's command ids would fail with
+    // DUPLICATE_COMMAND_ID (issue #115).
+    const second = importVox(bus, store, {
+      bytes,
+      expectedRevision: first.revisionAfter,
+      transactionId: transactionId("transaction:import:test:0002"),
+    });
+    expect(second.revisionAfter).toBe(first.revisionAfter + 1);
+    expect(second.nodesCreated).toBe(1);
+    const document = store.getDocument();
+    expect(document.nodes[nodeId("node:import:0001:001")]).toBeDefined();
+    expect(store.getVoxel(volumeId("volume:import:0001:001"), [1, 0, 0])).toBe(
+      materialId(1),
+    );
+  });
+
   it("rejects malformed files without changing state", () => {
     const { store, bus } = harness();
     const bytes = encodeVox({ models: [cube], palette });

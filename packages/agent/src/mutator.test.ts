@@ -275,8 +275,11 @@ describe("mutation tool surface (AC: registered commands, explicit ids, base rev
     const second = constructOk(mutator, "createNode", VALID_ARGS.createNode);
     const firstCommand = first.command as Readonly<Record<string, JsonValue>>;
     const secondCommand = second.command as Readonly<Record<string, JsonValue>>;
-    expect(firstCommand.id).toBe("command:createNode:0");
-    expect(secondCommand.id).toBe("command:createNode:1");
+    // The fallback id carries the base revision so ids stay unique
+    // across runs on the same bus (issue #115); the inspection fixture
+    // store starts at revision 1.
+    expect(firstCommand.id).toBe("command:createNode:1:0");
+    expect(secondCommand.id).toBe("command:createNode:1:1");
   });
 
   it("rejects unknown tool names", () => {

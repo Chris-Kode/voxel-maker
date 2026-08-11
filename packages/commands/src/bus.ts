@@ -203,6 +203,20 @@ export class CommandBus {
   /** The unsealed coalescing gesture, when one is active (plan S4.10). */
   #pending: PendingGesture | undefined;
   readonly #idempotency = new Map<TransactionId, IdempotencyRecord>();
+  /**
+   * Command ids that already ran in this session's transaction stream
+   * (issue #115). A committed command id is the unique identity of one
+   * committed transaction: a new normal commit must never reuse one, or
+   * audit/replay identity becomes ambiguous. Records are retained for the
+   * open session and every retained recovery frame (like idempotency
+   * records): resetHistory clears history but not this set, and recovery
+   * replays recorded frames through normal commits on a fresh bus, so the
+   * ids only become known as their frames replay. Undo/redo/cancel replay
+   * stored commands and derived inverses and are explicitly exempt from
+   * the reuse check (ADR-0003), but their executed ids are still recorded
+   * so no later normal commit can claim one.
+   */
+  readonly #executedCommandIds = new Set<CommandId>();
 
   readonly #hooks: CommandBusHooks;
 
@@ -251,16 +265,18 @@ export class CommandBus {
 
   /**
    * Clears the undo/redo history while preserving idempotency records
-   * (plan 5.4, ADR-0003). Recovery replay applies recorded revision
-   * transitions through normal command decoding, but a recovered document
-   * starts a fresh bounded user history, so replayed transactions must
-   * not be undoable. Idempotency records are retained because they live
-   * for the open session and every retained recovery frame: a caller
-   * retrying a replayed transaction id still receives its recorded result
-   * instead of re-applying the edit. Seals any unsealed gesture so
-   * retained handles report inactive. Owned by recovery and lifecycle
-   * transitions; arbitrary projections must never reset a live bus's
-   * history.
+   * and the executed command-id records (plan 5.4, ADR-0003, issue #115).
+   * Recovery replay applies recorded revision transitions through normal
+   * command decoding, but a recovered document starts a fresh bounded
+   * user history, so replayed transactions must not be undoable.
+   * Idempotency records are retained because they live for the open
+   * session and every retained recovery frame: a caller retrying a
+   * replayed transaction id still receives its recorded result instead of
+   * re-applying the edit. Executed command ids are retained for the same
+   * horizon so a later normal commit can never reuse a replayed command
+   * id. Seals any unsealed gesture so retained handles report inactive.
+   * Owned by recovery and lifecycle transitions; arbitrary projections
+   * must never reset a live bus's history.
    */
   resetHistory(): void {
     this.#sealPending();
@@ -425,6 +441,30 @@ export class CommandBus {
           context: { transactionId: options.transactionId },
         }),
       );
+    }
+
+    // Issue #115: a committed command id is the unique identity of one
+    // committed transaction for the open session and every retained
+    // recovery frame. Normal commits reject reuse atomically (before any
+    // staging); undo/redo/cancel replay stored commands and derived
+    // inverses and are exempt by design. The error code is the issue's
+    // mandated `DUPLICATE_COMMAND_ID`; the same code with family
+    // "validation" also covers same-batch duplicates in #checkBudgets,
+    // and callers can distinguish the two failure modes by family.
+    if (mode.kind === "commit") {
+      for (const command of commands) {
+        if (this.#executedCommandIds.has(command.id)) {
+          return err(
+            new WorkspaceError({
+              family: "conflict",
+              code: "DUPLICATE_COMMAND_ID",
+              message:
+                "Command id was already committed by a previous transaction",
+              context: { commandId: command.id },
+            }),
+          );
+        }
+      }
     }
 
     const staged: StagedOverlay = {
@@ -630,6 +670,9 @@ export class CommandBus {
       replayed: false,
     };
     this.#idempotency.set(options.transactionId, { bytes, result });
+    for (const command of commands) {
+      this.#executedCommandIds.add(command.id);
+    }
     // Plan S5.9: semantic commit precedes durable recovery I/O. The hook
     // fires after the commit and history bookkeeping are fully done; the
     // journal writer appends asynchronously and its failures never roll

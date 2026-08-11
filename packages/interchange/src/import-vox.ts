@@ -213,11 +213,20 @@ export function importVox(
   // Compile commands: materials first, then volume.create (split into
   // payload-bounded commands, first one carrying the descriptor), then
   // root-level nodes with voxel components.
+  // Issue #115: a command id is the unique identity of one committed
+  // transaction on the open bus, so the per-import serial alone would
+  // collide across imports (`command:import:000001` repeats for every
+  // import). The namespace includes the observed revision: every
+  // committed import on a bus targets a distinct expectedRevision, which
+  // keeps ids unique while staying deterministic (ADR-0003).
   const commands: Command[] = [];
   let serial = 0;
+  const importNamespace = String(options.expectedRevision).padStart(4, "0");
   const nextCommandId = (): CommandId => {
     serial += 1;
-    return commandId(`command:import:${String(serial).padStart(6, "0")}`);
+    return commandId(
+      `command:import:${importNamespace}:${String(serial).padStart(6, "0")}`,
+    );
   };
   for (const material of plan.materials) {
     if (materialCreated.has(material.materialId)) continue;

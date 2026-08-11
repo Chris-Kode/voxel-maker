@@ -63,7 +63,13 @@ export function requireOptionalString(
 /**
  * Resolves the command id: the explicit `commandId` argument when present
  * (bounded, then branded), otherwise a deterministic id generated from the
- * tool name and the per-mutator call sequence.
+ * tool name, the base revision, and the per-mutator call sequence. The
+ * base revision namespaces the fallback per run (issue #115): the
+ * per-mutator sequence alone restarts at 0 for every run, so two runs
+ * that omit an explicit commandId would mint the same ids and the second
+ * Apply would fail with DUPLICATE_COMMAND_ID. Committed runs on a bus
+ * always observe distinct base revisions (a stale preview is rejected at
+ * creation), keeping the ids unique while staying deterministic.
  */
 export function resolveCommandId(
   ctx: MutationToolContext,
@@ -83,7 +89,9 @@ export function resolveCommandId(
     }
     return commandId(explicit);
   }
-  return commandId(`command:${ctx.toolName}:${String(ctx.commandSequence)}`);
+  return commandId(
+    `command:${ctx.toolName}:${String(ctx.baseRevision)}:${String(ctx.commandSequence)}`,
+  );
 }
 
 /** Bounded node id argument (existence is checked by the caller). */
