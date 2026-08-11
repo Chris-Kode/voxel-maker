@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CommandBus, CommandRegistry } from "@voxel-maker/commands";
 import type { DocumentStoreRead } from "@voxel-maker/document";
-import { WorkspaceError } from "@voxel-maker/shared";
+import { WorkspaceError, type JsonValue } from "@voxel-maker/shared";
 import { FIXTURE_IDS, createInspectionStore } from "../fixtures.js";
 import { createInspector } from "../inspector.js";
 import { createMutator } from "../mutator.js";
@@ -19,6 +19,7 @@ import {
   type AgentLoopOptions,
   type AgentRunResult,
 } from "./loop.js";
+import type { AgentBudgets } from "./budgets.js";
 
 /**
  * Bounded agent loop tests (plan S12.5, ticket #33 AC): the deterministic
@@ -272,6 +273,144 @@ describe("agent loop: rigging and animation staging (plan S13.5)", () => {
     expect(
       h.store.getDocument().animations["anim:loop:huge" as never],
     ).toBeUndefined();
+  });
+
+  it("rejects destructive animation tools beyond track/keyframe budgets before preview mutation (issue #119)", async () => {
+    const h = harness();
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "Removing the wave clip.",
+        toolCalls: [
+          {
+            id: "call_delete_anim",
+            name: "deleteAnimation",
+            arguments: { animationId: FIXTURE_IDS.animationWave },
+          },
+        ],
+      },
+    ];
+    // Caps of zero must stop deletion of a clip holding 1 track and 2
+    // keyframes; the reservation is derived from the staged read view.
+    const session = h.makeSession(script, {
+      budgets: { maxTracks: 0, maxKeyframes: 0 },
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.code).toBe("LIMIT_EXCEEDED");
+    }
+    expect(session.preview.stagedCount).toBe(0);
+    expect(session.preview.closed).toBe(true);
+    // The live document is untouched.
+    expect(
+      h.store.getDocument().animations[FIXTURE_IDS.animationWave],
+    ).toBeDefined();
+  });
+
+  it("rejects every animation mutation beyond track/keyframe caps and stages at the boundary (issue #119)", async () => {
+    const cases: ReadonlyArray<{
+      readonly name: string;
+      readonly args: JsonValue;
+      readonly overCapBudgets: Partial<AgentBudgets>;
+      readonly boundaryBudgets: Partial<AgentBudgets>;
+    }> = [
+      {
+        name: "deleteAnimation",
+        args: { animationId: FIXTURE_IDS.animationWave },
+        overCapBudgets: { maxTracks: 0, maxKeyframes: 0 },
+        boundaryBudgets: { maxTracks: 1, maxKeyframes: 2 },
+      },
+      {
+        name: "removeTrack",
+        args: {
+          animationId: FIXTURE_IDS.animationWave,
+          trackId: FIXTURE_IDS.trackWave,
+        },
+        overCapBudgets: { maxTracks: 0, maxKeyframes: 0 },
+        boundaryBudgets: { maxTracks: 1, maxKeyframes: 2 },
+      },
+      {
+        name: "moveKeyframe",
+        args: {
+          animationId: FIXTURE_IDS.animationWave,
+          trackId: FIXTURE_IDS.trackWave,
+          keyframeId: FIXTURE_IDS.keyframeEnd,
+          // Within the fixture clip's 1-second duration and distinct
+          // from the other keyframe at time 0.
+          time: 0.5,
+        },
+        overCapBudgets: { maxKeyframes: 0 },
+        boundaryBudgets: { maxTracks: 0, maxKeyframes: 1 },
+      },
+      {
+        name: "deleteKeyframe",
+        args: {
+          animationId: FIXTURE_IDS.animationWave,
+          trackId: FIXTURE_IDS.trackWave,
+          keyframeId: FIXTURE_IDS.keyframeEnd,
+        },
+        overCapBudgets: { maxKeyframes: 0 },
+        boundaryBudgets: { maxTracks: 0, maxKeyframes: 1 },
+      },
+      {
+        name: "setTrackInterpolation",
+        args: {
+          animationId: FIXTURE_IDS.animationWave,
+          trackId: FIXTURE_IDS.trackWave,
+          interpolation: "linear",
+        },
+        overCapBudgets: { maxTracks: 0 },
+        boundaryBudgets: { maxTracks: 1, maxKeyframes: 0 },
+      },
+    ];
+    for (const testCase of cases) {
+      // Beyond either cap: the run fails with LIMIT_EXCEEDED before any
+      // preview mutation and the preview closes.
+      const over = harness();
+      const overSession = over.makeSession(
+        [
+          {
+            text: "Mutating the wave clip.",
+            toolCalls: [
+              {
+                id: `call_over_${testCase.name}`,
+                name: testCase.name,
+                arguments: testCase.args,
+              },
+            ],
+          },
+        ],
+        { budgets: testCase.overCapBudgets },
+      );
+      const overResult = runErr(await overSession.run());
+      expect(overResult.reason, testCase.name).toBe("limit");
+      if (overResult.error instanceof WorkspaceError) {
+        expect(overResult.error.code, testCase.name).toBe("LIMIT_EXCEEDED");
+      }
+      expect(overSession.preview.stagedCount, testCase.name).toBe(0);
+      expect(overSession.preview.closed, testCase.name).toBe(true);
+
+      // At the exact boundary: the same call stages normally.
+      const at = harness();
+      const atSession = at.makeSession(
+        [
+          {
+            text: "Mutating the wave clip.",
+            toolCalls: [
+              {
+                id: `call_at_${testCase.name}`,
+                name: testCase.name,
+                arguments: testCase.args,
+              },
+            ],
+          },
+        ],
+        { budgets: testCase.boundaryBudgets },
+      );
+      const atResult = runOk(await atSession.run());
+      expect(atResult.stagedCommands, testCase.name).toBe(1);
+      expect(atSession.preview.closed, testCase.name).toBe(false);
+    }
   });
 });
 

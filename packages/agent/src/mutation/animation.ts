@@ -306,11 +306,26 @@ export function deleteAnimation(
 ): MutationPayload {
   const record = args as Readonly<Record<string, JsonValue>>;
   const animationIdValue = animationId(requireString(record, "animationId"));
-  requireAnimation(ctx.store.getDocument(), animationIdValue);
+  const animation = requireAnimation(ctx.store.getDocument(), animationIdValue);
   const command = deleteAnimationCommand(resolveCommandId(ctx, record), {
     animationId: animationIdValue,
   });
-  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
+  // Deleting the clip modifies every nested track and keyframe; derive
+  // the counts from the staged read view so the session budgets cannot
+  // be bypassed by destruction (issue #119).
+  const tracks = animation.tracks.length;
+  const keyframes = animation.tracks.reduce(
+    (total, track) => total + track.keyframes.length,
+    0,
+  );
+  return {
+    command,
+    voxelEstimate: estimateVoxelDelta(command, ctx.store),
+    animation: {
+      ...(tracks > 0 ? { tracks } : {}),
+      ...(keyframes > 0 ? { keyframes } : {}),
+    },
+  };
 }
 
 /** `addTrack` contract: construct a `track.add` command. */
@@ -386,7 +401,7 @@ export function removeTrack(
   const record = args as Readonly<Record<string, JsonValue>>;
   const animationIdValue = animationId(requireString(record, "animationId"));
   const trackIdValue = trackId(requireString(record, "trackId"));
-  requireTrackInAnimation(
+  const track = requireTrackInAnimation(
     ctx.store.getDocument(),
     animationIdValue,
     trackIdValue,
@@ -395,7 +410,17 @@ export function removeTrack(
     animationId: animationIdValue,
     trackId: trackIdValue,
   });
-  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
+  // Removing the track modifies it and every nested keyframe (issue
+  // #119): both counts come from the staged read view.
+  const keyframes = track.keyframes.length;
+  return {
+    command,
+    voxelEstimate: estimateVoxelDelta(command, ctx.store),
+    animation: {
+      tracks: 1,
+      ...(keyframes > 0 ? { keyframes } : {}),
+    },
+  };
 }
 
 /** `setTrackInterpolation` contract: `track.setInterpolation` command. */
@@ -436,7 +461,14 @@ export function setTrackInterpolation(
     trackId: trackIdValue,
     interpolation: requireInterpolation(record),
   });
-  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
+  // Changing a track's interpolation modifies that track against the
+  // session track budget (issue #119: every animation mutation must
+  // reserve its modified tracks/keyframes).
+  return {
+    command,
+    voxelEstimate: estimateVoxelDelta(command, ctx.store),
+    animation: { tracks: 1 },
+  };
 }
 
 /** `setKeyframe` contract: construct a `keyframe.set` command. */
@@ -545,7 +577,13 @@ export function moveKeyframe(
     keyframeId: keyframeId(requireString(record, "keyframeId")),
     time: requireKeyframeTime(record, "time"),
   });
-  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
+  // Retiming counts one modified keyframe against the session budget
+  // (issue #119): destruction must not bypass keyframe caps.
+  return {
+    command,
+    voxelEstimate: estimateVoxelDelta(command, ctx.store),
+    animation: { keyframes: 1 },
+  };
 }
 
 /** `deleteKeyframe` contract: construct a `keyframe.delete` command. */
@@ -586,7 +624,13 @@ export function deleteKeyframe(
     trackId: trackIdValue,
     keyframeId: keyframeId(requireString(record, "keyframeId")),
   });
-  return { command, voxelEstimate: estimateVoxelDelta(command, ctx.store) };
+  // Deleting counts one modified keyframe against the session budget
+  // (issue #119): destruction must not bypass keyframe caps.
+  return {
+    command,
+    voxelEstimate: estimateVoxelDelta(command, ctx.store),
+    animation: { keyframes: 1 },
+  };
 }
 
 function requireLoop(

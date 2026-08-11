@@ -30,9 +30,9 @@ export interface MutationToolContext {
 
 /** Animation deltas a staging tool reports for the session budget ledger. */
 export type AnimationProposal = {
-  /** New tracks this command would add. */
+  /** Tracks this command would add or remove (issue #119). */
   readonly tracks?: number;
-  /** New keyframes this command would write. */
+  /** Keyframes this command would write, retime, or remove (issue #119). */
   readonly keyframes?: number;
   /** Clip duration in seconds this command would establish. */
   readonly clipDurationSeconds?: number;
