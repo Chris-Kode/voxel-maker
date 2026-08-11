@@ -357,6 +357,20 @@ function advanceWalk(
   }
 }
 
+/**
+ * The optional caps a user accepted in a consent record. `createConsent`
+ * validates them, but a persisted record predating that validation (or a
+ * corrupt store) could carry a non-finite or negative value; such a
+ * record degrades to "no consent cap" so the session defaults still
+ * bind (bounded trust). -0 normalizes to 0, which clamps the limit to
+ * zero and fails closed instead of surfacing a "-0 maximum".
+ */
+function validConsentCap(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.max(0, value)
+    : undefined;
+}
+
 /** Stable error for running the same session twice. */
 function alreadyStartedError(): WorkspaceError {
   return new WorkspaceError({
@@ -440,7 +454,28 @@ class AgentSessionImpl implements AgentSession {
     this.#sleep =
       options.sleep ??
       ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-    this.#budgets = resolveAgentBudgets(options.budgets);
+    // Issue #117: the per-run token and spend caps the user accepted in
+    // the consent record bind the session. They can only tighten the
+    // immutable ADR-0009 budgets (min with the resolved default/override),
+    // never raise them; a corrupt persisted record degrades to the
+    // session limit instead of poisoning the budget.
+    const resolvedBudgets = resolveAgentBudgets(options.budgets);
+    const consentTokenCap = validConsentCap(options.consent.tokenCap);
+    const consentCostCap = validConsentCap(options.consent.costCapUsd);
+    this.#budgets = Object.freeze({
+      ...resolvedBudgets,
+      ...(consentTokenCap === undefined
+        ? {}
+        : { maxTokens: Math.min(resolvedBudgets.maxTokens, consentTokenCap) }),
+      ...(consentCostCap === undefined
+        ? {}
+        : {
+            maxEstimatedCostUsd: Math.min(
+              resolvedBudgets.maxEstimatedCostUsd,
+              consentCostCap,
+            ),
+          }),
+    });
     this.#refinement = options.refinement;
     this.#retry = options.retry ?? DEFAULT_RETRY_POLICY;
     this.#requestTimeoutMs = options.requestTimeoutMs;
@@ -506,9 +541,9 @@ class AgentSessionImpl implements AgentSession {
           tools: contracts,
           maxTokens: this.#maxOutputTokens,
         };
-        const costError = this.#reserveCost(request);
-        if (costError !== undefined) {
-          return this.#failedResult("limit", costError);
+        const reserveError = this.#reserveRequest(request);
+        if (reserveError !== undefined) {
+          return this.#failedResult("limit", reserveError);
         }
         const outcome = await this.#request(request);
         if (outcome.kind === "canceled") return this.#canceledResult();
@@ -643,6 +678,18 @@ class AgentSessionImpl implements AgentSession {
   }
 
   /**
+   * Refuses a request before transmission when its worst-case token or
+   * cost reservation cannot fit the remaining consent-bounded budgets
+   * (ADR-0009, issue #117). Token check first, then cost, so a capped
+   * run reports the first violated resource.
+   */
+  #reserveRequest(request: ProviderChatRequest): WorkspaceError | undefined {
+    const tokenError = this.#reserveRequestTokens(request);
+    if (tokenError !== undefined) return tokenError;
+    return this.#reserveCost(request);
+  }
+
+  /**
    * Reserves the worst-case request cost before sending (ADR-0009): when
    * the model is priceable the full output cap is reserved; when it is
    * not, an already-exhausted cap cannot be guaranteed and the run
@@ -670,6 +717,30 @@ class AgentSessionImpl implements AgentSession {
         "estimatedCostUsd",
         this.#budgets.maxEstimatedCostUsd,
         this.#ledger.costUsd,
+      );
+    }
+    return undefined;
+  }
+
+  /**
+   * Reserves the worst-case token count of the next request before
+   * sending (ADR-0009, issue #117): the deterministic request estimate
+   * (messages, tool schemas, and evidence images) plus the full output
+   * cap must fit the remaining session token budget — already clamped
+   * to the consent token cap — or the request is refused before
+   * transmission. Actual usage is recorded on the response, so this
+   * check mutates no counters.
+   */
+  #reserveRequestTokens(
+    request: ProviderChatRequest,
+  ): WorkspaceError | undefined {
+    const estimated = estimateRequestTokens(request) + this.#maxOutputTokens;
+    const remaining = this.#budgets.maxTokens - this.#ledger.tokens;
+    if (remaining < estimated) {
+      return budgetLimitError(
+        "tokens",
+        this.#budgets.maxTokens,
+        this.#ledger.tokens + estimated,
       );
     }
     return undefined;
@@ -799,11 +870,11 @@ class AgentSessionImpl implements AgentSession {
         };
       }
       const request = this.#critiqueRequest(config, current.set);
-      const costError = this.#reserveCost(request);
-      if (costError !== undefined) {
+      const reserveError = this.#reserveRequest(request);
+      if (reserveError !== undefined) {
         return {
           kind: "failed",
-          result: this.#failedResult("limit", costError),
+          result: this.#failedResult("limit", reserveError),
         };
       }
       const outcome = await this.#request(request);

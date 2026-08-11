@@ -66,6 +66,15 @@ function consentError(message: string, code: string): WorkspaceError {
   });
 }
 
+/**
+ * A valid consent cap: a finite number that is not negative. -0 is
+ * rejected explicitly: it compares equal to 0 but would surface as a
+ * "maximum -0" in limit errors, and no user consents to "-0 tokens".
+ */
+function isFiniteNonNegative(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && !Object.is(value, -0);
+}
+
 /** Validates and freezes a consent record. */
 export function createConsent(input: ConsentInput): ProviderConsent {
   const now = input.clock?.now() ?? Date.now();
@@ -90,6 +99,26 @@ export function createConsent(input: ConsentInput): ProviderConsent {
     throw consentError(
       "Consent expiry must be after the consent time",
       "INVALID_CONSENT_EXPIRY",
+    );
+  }
+  // Issue #117: the caps a user accepted are part of the consent
+  // boundary. A non-finite or negative cap (including -0, which is not
+  // a value a user can consent to) would poison the session budget
+  // clamp (NaN budgets, a "cap" that raises a limit, or a "-0 maximum"
+  // in limit errors), so a record carrying one is rejected at creation.
+  if (
+    input.costCapUsd !== undefined &&
+    !isFiniteNonNegative(input.costCapUsd)
+  ) {
+    throw consentError(
+      "Consent cost cap must be a finite nonnegative number (USD)",
+      "INVALID_CONSENT_COST_CAP",
+    );
+  }
+  if (input.tokenCap !== undefined && !isFiniteNonNegative(input.tokenCap)) {
+    throw consentError(
+      "Consent token cap must be a finite nonnegative number",
+      "INVALID_CONSENT_TOKEN_CAP",
     );
   }
   const categories = Object.freeze([
