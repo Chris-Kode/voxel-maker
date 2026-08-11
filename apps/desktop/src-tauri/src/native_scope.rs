@@ -24,8 +24,10 @@
 //! token map at startup so a recent entry stays openable after a restart.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
@@ -39,6 +41,19 @@ const MAX_HANDLES_PER_KIND: usize = 256;
 
 /// Title bound for recent entries (bounded metadata, ARCHITECTURE.md).
 const MAX_RECENT_TITLE_CHARS: usize = 512;
+
+/// Bytes written per atomic-write chunk so cancellation can interrupt
+/// large saves (mirrors the Node adapter's default chunk size).
+const WRITE_CHUNK_BYTES: usize = 256 * 1024;
+
+/// Bound on a webview-supplied cancellation token (bounded input).
+const MAX_CANCEL_TOKEN_CHARS: usize = 128;
+
+/// Bound on live cancellation tokens (one per in-flight write). Tokens
+/// are webview-chosen, so the registry must not grow without limit; a
+/// write beyond the cap simply runs without cancellation (the save still
+/// succeeds, Cancel only degrades to "cannot interrupt this write").
+const MAX_LIVE_CANCEL_TOKENS: usize = 256;
 
 /// The four standard preview views the shell can derive from one chosen
 /// PNG base path (mirrors `STANDARD_PREVIEW_VIEWS` in
@@ -82,7 +97,7 @@ pub struct RecentEntry {
 }
 
 /// Result of one atomic project/image write (unchanged webview contract).
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AtomicWriteResult {
     pub temp_path: String,
@@ -90,6 +105,47 @@ pub struct AtomicWriteResult {
     pub backup_path: Option<String>,
     pub directory_sync_succeeded: bool,
 }
+
+/// Atomic write phases (mirror of `AtomicWritePhase` in
+/// `@voxel-maker/storage`, docs/storage/atomic-save-v1.md). One shared
+/// enum drives the IPC fault plan and the canonical per-phase error
+/// codes, so a contract change cannot drift between them.
+#[derive(serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum AtomicWritePhase {
+    CreateTemp,
+    WriteTemp,
+    FlushTemp,
+    Backup,
+    Replace,
+    SyncDirectory,
+}
+
+/// Wire fault plan for one atomic write (the shared
+/// `AtomicWriteFaultPlan` restricted to `true` canonical errors; custom
+/// `WorkspaceError` faults are a memory/Node-only seam and cannot cross
+/// IPC). Only the listed phases fail, each with its canonical error code,
+/// so the native conformance matrix can inject every phase failure
+/// through the real command surface (issue #120).
+#[derive(serde::Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AtomicWriteFaultPlan {
+    pub fail_at: Option<Vec<AtomicWritePhase>>,
+}
+
+/// Stable io-family error codes (mirror of `IO_ERROR_CODES` in
+/// `@voxel-maker/storage`). Errors cross IPC as `CODE: message` strings
+/// and the webview adapter maps them back to the shared contract.
+const IO_NOT_FOUND: &str = "IO_NOT_FOUND";
+const IO_NOT_REGULAR_FILE: &str = "IO_NOT_REGULAR_FILE";
+const IO_DISK_FULL: &str = "IO_DISK_FULL";
+const IO_PERMISSION_DENIED: &str = "IO_PERMISSION_DENIED";
+const IO_RENAME_FAILED: &str = "IO_RENAME_FAILED";
+const IO_WRITE_INTERRUPTED: &str = "IO_WRITE_INTERRUPTED";
+const IO_READ_FAILED: &str = "IO_READ_FAILED";
+const IO_WRITE_FAILED: &str = "IO_WRITE_FAILED";
+const IO_SYNC_FAILED: &str = "IO_SYNC_FAILED";
+const INPUT_FILE_LIMIT_EXCEEDED: &str = "INPUT_FILE_LIMIT_EXCEEDED";
 
 /// Live dialog-issued handles with FIFO eviction order. Handles are
 /// user-driven (one per dialog pick) and become useless once the webview
@@ -110,6 +166,12 @@ pub struct NativeScope {
     recent: Mutex<HashMap<String, PathBuf>>,
     /// App-config location of the recent-project JSON (set in `setup`).
     recent_file: Mutex<Option<PathBuf>>,
+    /// Live atomic-write cancellation flags: token -> shared flag. The
+    /// write command registers a flag under the webview-chosen token, the
+    /// `cancel_project_write` command flips it, and the write loop observes
+    /// it between chunks and before each phase (issue #120). Entries are
+    /// removed when the write finishes.
+    write_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl Default for NativeScope {
@@ -121,6 +183,7 @@ impl Default for NativeScope {
             }),
             recent: Mutex::new(HashMap::new()),
             recent_file: Mutex::new(None),
+            write_cancels: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -246,6 +309,44 @@ impl NativeScope {
         match table.entries.get(token) {
             Some(handle) if handle.kind == HandleKind::Image => Ok(handle.path.clone()),
             _ => Err(unrecognized_handle()),
+        }
+    }
+
+    /// Registers (or reuses) the cancellation flag for a write token. An
+    /// existing flag is reused so a pre-cancelled token stays cancelled
+    /// (the native conformance tests cancel before invoking the write);
+    /// beyond the live-token cap the write runs without cancellation.
+    pub fn register_cancel(&self, token: &str) -> Option<Arc<AtomicBool>> {
+        let mut cancels = self.write_cancels.lock().expect("cancel lock poisoned");
+        if let Some(flag) = cancels.get(token) {
+            return Some(flag.clone());
+        }
+        if cancels.len() >= MAX_LIVE_CANCEL_TOKENS {
+            return None;
+        }
+        let flag = Arc::new(AtomicBool::new(false));
+        cancels.insert(token.to_string(), flag.clone());
+        Some(flag)
+    }
+
+    /// Forgets a write token; called when its write finishes.
+    pub fn unregister_cancel(&self, token: &str) {
+        self.write_cancels
+            .lock()
+            .expect("cancel lock poisoned")
+            .remove(token);
+    }
+
+    /// Flips the cancellation flag for a token; a missing token is not an
+    /// error (the write already finished).
+    pub fn cancel_write(&self, token: &str) {
+        if let Some(flag) = self
+            .write_cancels
+            .lock()
+            .expect("cancel lock poisoned")
+            .get(token)
+        {
+            flag.store(true, Ordering::Relaxed);
         }
     }
 
@@ -567,7 +668,7 @@ fn input_file_limit_message(path: &Path, requested: u64) -> String {
 /// file that grows between the metadata check and the read can never be
 /// allocated beyond the limit.
 fn read_bounded_bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let file = std::fs::File::open(path).map_err(|error| read_io_error(path, &error))?;
     read_bounded_file(file, path)
 }
 
@@ -577,7 +678,7 @@ fn read_bounded_bytes_or_none(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match std::fs::File::open(path) {
         Ok(file) => read_bounded_file(file, path).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(read_io_error(path, &error)),
     }
 }
 
@@ -586,22 +687,30 @@ fn read_bounded_bytes_or_none(path: &Path) -> Result<Option<Vec<u8>>, String> {
 /// grows past the cap is never allocated beyond it.
 fn read_bounded_file(file: std::fs::File, path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| read_io_error(path, &error))?;
     if !metadata.is_file() {
         return Err(format!(
-            "input path is not a regular file: {}",
+            "{IO_NOT_REGULAR_FILE}: input path is not a regular file: {}",
             path.display()
         ));
     }
     if metadata.len() > MAX_INPUT_FILE_BYTES {
-        return Err(input_file_limit_message(path, metadata.len()));
+        return Err(format!(
+            "{INPUT_FILE_LIMIT_EXCEEDED}: {}",
+            input_file_limit_message(path, metadata.len())
+        ));
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_INPUT_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| read_io_error(path, &error))?;
     if bytes.len() as u64 > MAX_INPUT_FILE_BYTES {
-        return Err(input_file_limit_message(path, bytes.len() as u64));
+        return Err(format!(
+            "{INPUT_FILE_LIMIT_EXCEEDED}: {}",
+            input_file_limit_message(path, bytes.len() as u64)
+        ));
     }
     Ok(bytes)
 }
@@ -618,16 +727,26 @@ pub fn read_project_bytes(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// Atomically replaces a project file through a project handle:
-/// same-directory temporary file, preserve the previous destination as a
-/// `.bak` backup, rename over the destination, best-effort sync.
-#[tauri::command]
-pub fn write_project_bytes_atomic(
-    state: State<'_, NativeScope>,
-    handle: String,
-    bytes: Vec<u8>,
+/// The frozen phased atomic-save algorithm (docs/storage/atomic-save-v1.md,
+/// plan S5.7/S6.18, tickets #13/#22, issue #120): exclusive same-directory
+/// nonce temp -> chunked cancellable write -> fsync -> atomic backup refresh
+/// -> replace -> best-effort directory sync. Every failure before `replace`
+/// removes its temporary files and leaves destination and backup
+/// byte-identical; a `replace` failure leaves the previous destination in
+/// place with the backup already refreshed to it. `nonce` is the
+/// adapter-supplied temp nonce (a fresh UUID in the command; fixed values
+/// in tests so temp-path attacks are deterministic). `fault_plan` injects
+/// canonical per-phase failures (native conformance seam); `cancel`
+/// interrupts the write before the replace when set, mirroring the port's
+/// AbortSignal contract. Errors are stable `CODE: message` strings the
+/// webview adapter maps back to the shared io-family error contract.
+fn write_project_atomic_phased(
+    destination: &Path,
+    bytes: &[u8],
+    nonce: &str,
+    fault_plan: Option<&AtomicWriteFaultPlan>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<AtomicWriteResult, String> {
-    let destination = state.resolve_project(&handle)?;
     let parent = destination
         .parent()
         .ok_or_else(|| "project path has no parent directory".to_string())?;
@@ -635,49 +754,311 @@ pub fn write_project_bytes_atomic(
         .file_name()
         .ok_or_else(|| "project path has no file name".to_string())?;
     let file_name = file_name.to_string_lossy();
-    let temp_path = parent.join(format!(".{file_name}.tmp"));
+    // Hidden same-directory temporary output so the final rename never
+    // crosses a filesystem boundary, with an exclusive nonce name so a
+    // stale temp from a crashed process can never be reused or truncated.
+    let temp_path = parent.join(format!(".{file_name}.{nonce}.tmp"));
+    let backup_path = sibling_path_for(destination, ".bak");
+    let backup_temp_path = parent.join(format!(".{file_name}.bak.{nonce}.tmp"));
 
-    // Preflight every symlink guard BEFORE any write: the destination
-    // (never back up THROUGH a planted link — copy follows its source),
-    // the adjacent backup, and the temp path (fs::write would follow a
-    // planted link). A rejection here leaves the filesystem untouched.
+    // Preflight every symlink guard BEFORE any write (issue #94 defense in
+    // depth): the destination (never back up THROUGH a planted link — copy
+    // follows its source), the adjacent backup, and both temp paths. The
+    // destination temp also refuses a planted link via exclusive creation;
+    // the backup temp copy would otherwise follow one, so its preflight is
+    // load-bearing. A rejection leaves the filesystem untouched.
     let destination_present = destination.exists();
-    let backup = destination_present.then(|| sibling_path_for(&destination, ".bak"));
     if destination_present {
-        reject_symlink(&destination)?;
-        if let Some(backup) = &backup {
-            reject_symlink(backup)?;
-        }
+        reject_symlink(destination)?;
+        reject_symlink(&backup_path)?;
     }
     reject_symlink(&temp_path)?;
-    std::fs::write(&temp_path, &bytes).map_err(|error| error.to_string())?;
+    reject_symlink(&backup_temp_path)?;
 
-    let mut backup_created = false;
-    let backup_path;
-    // Adjacent-suffix convention (`<path>.bak`, matching `backupPathFor`
-    // in @voxel-maker/storage): write and read agree.
-    if let Some(backup) = &backup {
-        std::fs::copy(&destination, backup).map_err(|error| error.to_string())?;
-        backup_created = true;
-        backup_path = Some(backup.to_string_lossy().into_owned());
-    } else {
-        backup_path = None;
+    // create-temp: exclusive creation never follows or reuses an existing
+    // path (a stale or planted file at the nonce temp fails the phase).
+    throw_write_fault(fault_plan, AtomicWritePhase::CreateTemp)?;
+    throw_if_cancelled(cancel)?;
+    let mut temp = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|error| write_phase_error(AtomicWritePhase::CreateTemp, &temp_path, &error))?;
+
+    // write-temp: chunked so cancellation can interrupt large saves.
+    throw_write_fault(fault_plan, AtomicWritePhase::WriteTemp)?;
+    for chunk in bytes.chunks(WRITE_CHUNK_BYTES) {
+        throw_if_cancelled(cancel)?;
+        temp.write_all(chunk)
+            .map_err(|error| write_phase_error(AtomicWritePhase::WriteTemp, &temp_path, &error))?;
     }
 
-    // rename replaces a destination link itself; it never follows it.
-    std::fs::rename(&temp_path, &destination).map_err(|error| error.to_string())?;
-    // Best-effort durability: a failed sync weakens crash durability but
-    // does not fail the save.
-    let directory_sync_succeeded = std::fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .is_ok();
+    // flush-temp: fsync before the backup/replace so a resolved save is
+    // durable (a failure leaves destination and backup intact).
+    throw_write_fault(fault_plan, AtomicWritePhase::FlushTemp)?;
+    throw_if_cancelled(cancel)?;
+    temp.sync_all()
+        .map_err(|error| write_phase_error(AtomicWritePhase::FlushTemp, &temp_path, &error))?;
+    drop(temp);
+
+    // backup: atomically refresh the last-known-good backup — copy to a
+    // same-directory temporary, then rename over `<path>.bak` — so a
+    // mid-copy failure can never truncate the previous backup.
+    let mut backup_created = false;
+    if destination_present {
+        throw_write_fault(fault_plan, AtomicWritePhase::Backup)?;
+        throw_if_cancelled(cancel)?;
+        std::fs::copy(destination, &backup_temp_path).map_err(|error| {
+            write_phase_error(AtomicWritePhase::Backup, &backup_temp_path, &error)
+        })?;
+        throw_if_cancelled(cancel)?;
+        std::fs::rename(&backup_temp_path, &backup_path)
+            .map_err(|error| write_phase_error(AtomicWritePhase::Backup, &backup_path, &error))?;
+        backup_created = true;
+    }
+
+    // replace: rename replaces a destination link itself and never follows
+    // it; a failure leaves the previous destination in place.
+    throw_write_fault(fault_plan, AtomicWritePhase::Replace)?;
+    throw_if_cancelled(cancel)?;
+    std::fs::rename(&temp_path, destination)
+        .map_err(|error| write_phase_error(AtomicWritePhase::Replace, destination, &error))?;
+
+    // sync-directory: best-effort — an injected fault or a real sync
+    // failure never fails the save, only weakens crash durability.
+    let directory_sync_succeeded = if fault_at(fault_plan, AtomicWritePhase::SyncDirectory) {
+        false
+    } else {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .is_ok()
+    };
 
     Ok(AtomicWriteResult {
         temp_path: temp_path.to_string_lossy().into_owned(),
         backup_created,
-        backup_path,
+        backup_path: backup_created.then(|| backup_path.to_string_lossy().into_owned()),
         directory_sync_succeeded,
     })
+}
+
+/// Runs the phased algorithm and guarantees temp cleanup on every failure
+/// path: destination and backup stay untouched and every temporary file is
+/// removed (contract, issue #120).
+fn write_project_atomic_cleaned(
+    destination: &Path,
+    bytes: &[u8],
+    nonce: &str,
+    fault_plan: Option<&AtomicWriteFaultPlan>,
+    cancel: Option<&AtomicBool>,
+) -> Result<AtomicWriteResult, String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "project path has no parent directory".to_string())?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "project path has no file name".to_string())?;
+    let file_name = file_name.to_string_lossy();
+    let temp_path = parent.join(format!(".{file_name}.{nonce}.tmp"));
+    let backup_temp_path = parent.join(format!(".{file_name}.bak.{nonce}.tmp"));
+    let outcome = write_project_atomic_phased(destination, bytes, nonce, fault_plan, cancel);
+    if outcome.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+        let _ = std::fs::remove_file(&backup_temp_path);
+    }
+    outcome
+}
+
+/// Atomically replaces a project file through a project handle (issue
+/// #120): the frozen phased algorithm — exclusive nonce temp, chunked
+/// cancellable write, fsync, atomic standard-name backup refresh, replace,
+/// cleanup, and structured parity errors. `cancel_token` names a
+/// Rust-side cancellation flag that `cancel_project_write` flips; the
+/// write observes it between chunks and before each phase, so Cancel can
+/// interrupt a large save before the replace (an abort after the replace
+/// committed completes normally). `faults` is the native conformance seam:
+/// the webview adapter forwards `true` phase faults so the shared fault
+/// matrix runs against the real command surface.
+#[tauri::command]
+pub async fn write_project_bytes_atomic(
+    state: State<'_, NativeScope>,
+    handle: String,
+    bytes: Vec<u8>,
+    cancel_token: Option<String>,
+    faults: Option<AtomicWriteFaultPlan>,
+) -> Result<AtomicWriteResult, String> {
+    let destination = state.resolve_project(&handle)?;
+    validate_cancel_token(cancel_token.as_deref())?;
+    if bytes.len() as u64 > MAX_INPUT_FILE_BYTES {
+        return Err(format!(
+            "{INPUT_FILE_LIMIT_EXCEEDED}: {}",
+            input_file_limit_message(&destination, bytes.len() as u64)
+        ));
+    }
+    let cancel_flag = cancel_token
+        .as_deref()
+        .and_then(|token| state.register_cancel(token));
+    // The guard removes the token when the write finishes (success or
+    // failure), so the registry never retains finished writes.
+    let guard = CancelGuard {
+        scope: &state,
+        token: cancel_token,
+    };
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        write_project_atomic_cleaned(
+            &destination,
+            &bytes,
+            &nonce,
+            faults.as_ref(),
+            cancel_flag.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| format!("{IO_WRITE_FAILED}: The project write failed: {error}"))?;
+    drop(guard);
+    outcome
+}
+
+/// Removes a write's cancellation token when the write finishes.
+struct CancelGuard<'a> {
+    scope: &'a NativeScope,
+    token: Option<String>,
+}
+
+impl Drop for CancelGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            self.scope.unregister_cancel(&token);
+        }
+    }
+}
+
+/// Bounds a webview-supplied cancellation token before it is registered.
+fn validate_cancel_token(token: Option<&str>) -> Result<(), String> {
+    if token.is_some_and(|token| token.is_empty() || token.len() > MAX_CANCEL_TOKEN_CHARS) {
+        return Err("cancel token is empty or exceeds the size limit".to_string());
+    }
+    Ok(())
+}
+
+/// Cancels an in-flight atomic project write named by its token (issue
+/// #120). The write observes the flag between chunks and before each
+/// phase; an observation before the replace aborts with
+/// `IO_WRITE_INTERRUPTED` and removes the temporary files. A token that
+/// is unknown (the write already finished) is not an error.
+#[tauri::command]
+pub fn cancel_project_write(state: State<'_, NativeScope>, token: String) -> Result<(), String> {
+    validate_cancel_token(Some(&token))?;
+    state.cancel_write(&token);
+    Ok(())
+}
+
+/// Canonical error code for a phase (mirror of `PHASE_ERROR_CODES` in
+/// `@voxel-maker/storage`): one mapping shared by fault injection and real
+/// filesystem errors, so a contract change cannot drift between them.
+fn phase_error_code(phase: AtomicWritePhase) -> &'static str {
+    match phase {
+        AtomicWritePhase::CreateTemp => IO_PERMISSION_DENIED,
+        AtomicWritePhase::WriteTemp => IO_DISK_FULL,
+        AtomicWritePhase::FlushTemp => IO_DISK_FULL,
+        AtomicWritePhase::Backup => IO_PERMISSION_DENIED,
+        AtomicWritePhase::Replace => IO_RENAME_FAILED,
+        AtomicWritePhase::SyncDirectory => IO_SYNC_FAILED,
+    }
+}
+
+/// Stable per-phase message (mirror of the storage port phase messages).
+fn phase_error_message(phase: AtomicWritePhase) -> &'static str {
+    match phase {
+        AtomicWritePhase::CreateTemp => {
+            "Cannot create the temporary project file in the project directory"
+        }
+        AtomicWritePhase::WriteTemp => "Cannot write the temporary project file",
+        AtomicWritePhase::FlushTemp => "Cannot flush the temporary project file to disk",
+        AtomicWritePhase::Backup => "Cannot preserve the last-known-good backup",
+        AtomicWritePhase::Replace => "Cannot atomically replace the project file",
+        AtomicWritePhase::SyncDirectory => "Cannot sync the project directory",
+    }
+}
+
+/// Kebab-case phase name for diagnostics and the wire error message.
+fn phase_name(phase: AtomicWritePhase) -> &'static str {
+    match phase {
+        AtomicWritePhase::CreateTemp => "create-temp",
+        AtomicWritePhase::WriteTemp => "write-temp",
+        AtomicWritePhase::FlushTemp => "flush-temp",
+        AtomicWritePhase::Backup => "backup",
+        AtomicWritePhase::Replace => "replace",
+        AtomicWritePhase::SyncDirectory => "sync-directory",
+    }
+}
+
+/// True when the fault plan injects a canonical failure at `phase`.
+fn fault_at(fault_plan: Option<&AtomicWriteFaultPlan>, phase: AtomicWritePhase) -> bool {
+    fault_plan
+        .and_then(|plan| plan.fail_at.as_ref())
+        .is_some_and(|phases| phases.contains(&phase))
+}
+
+/// Injects the canonical phase fault when the plan names the phase.
+fn throw_write_fault(
+    fault_plan: Option<&AtomicWriteFaultPlan>,
+    phase: AtomicWritePhase,
+) -> Result<(), String> {
+    if fault_at(fault_plan, phase) {
+        Err(format!(
+            "{}: {} (phase {})",
+            phase_error_code(phase),
+            phase_error_message(phase),
+            phase_name(phase)
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Cooperative abort check between atomic write phases and chunks.
+fn throw_if_cancelled(cancel: Option<&AtomicBool>) -> Result<(), String> {
+    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        Err(format!(
+            "{IO_WRITE_INTERRUPTED}: The project write was interrupted"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Builds the stable `CODE: message (phase X): cause` error string for a
+/// real filesystem failure, classifying by error kind (parity with the
+/// Node adapter's `mapFsError`). Unclassified kinds keep the phase's
+/// canonical code.
+fn write_phase_error(phase: AtomicWritePhase, _path: &Path, error: &std::io::Error) -> String {
+    let code = match error.kind() {
+        std::io::ErrorKind::NotFound => IO_WRITE_FAILED,
+        std::io::ErrorKind::StorageFull => IO_DISK_FULL,
+        std::io::ErrorKind::PermissionDenied => IO_PERMISSION_DENIED,
+        // Exclusive-create collision: a file (or planted link) already
+        // exists at the nonce temp path.
+        std::io::ErrorKind::AlreadyExists => IO_PERMISSION_DENIED,
+        _ => phase_error_code(phase),
+    };
+    format!(
+        "{code}: {} (phase {}): {error}",
+        phase_error_message(phase),
+        phase_name(phase)
+    )
+}
+
+/// Builds the stable `CODE: message` string for a read failure (parity
+/// with the Node adapter's read mapping).
+fn read_io_error(_path: &Path, error: &std::io::Error) -> String {
+    let code = match error.kind() {
+        std::io::ErrorKind::NotFound => IO_NOT_FOUND,
+        std::io::ErrorKind::PermissionDenied => IO_PERMISSION_DENIED,
+        _ => IO_READ_FAILED,
+    };
+    format!("{code}: Cannot read the file: {error}")
 }
 
 /// Existence probe for a project handle (dialog-chosen files only).
@@ -959,6 +1340,47 @@ mod tests {
         }
     }
 
+    /// Blocks on the async atomic-write command (the test runtime has no
+    /// poller of its own; issue #120 made the command async so the native
+    /// write runs on the blocking pool and stays cancellable).
+    fn write_project(
+        state: State<'_, NativeScope>,
+        handle: String,
+        bytes: Vec<u8>,
+    ) -> Result<AtomicWriteResult, String> {
+        write_project_with(state, handle, bytes, None, None)
+    }
+
+    /// `write_project` with the native conformance seam (cancel token and
+    /// canonical phase faults).
+    fn write_project_with(
+        state: State<'_, NativeScope>,
+        handle: String,
+        bytes: Vec<u8>,
+        cancel_token: Option<String>,
+        faults: Option<AtomicWriteFaultPlan>,
+    ) -> Result<AtomicWriteResult, String> {
+        tauri::async_runtime::block_on(write_project_bytes_atomic(
+            state,
+            handle,
+            bytes,
+            cancel_token,
+            faults,
+        ))
+    }
+
+    /// Same-directory temp artifacts currently present in the fixture dir.
+    fn temp_files(dir: &TempDir) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&dir.path)
+            .expect("read fixture dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        names.sort();
+        names
+    }
+
     // -------------------------------------------------------------------
     // Acceptance: direct IPC with arbitrary paths fails BEFORE fs access.
     // -------------------------------------------------------------------
@@ -985,7 +1407,7 @@ mod tests {
                 "{message}"
             );
             assert!(
-                write_project_bytes_atomic(state.clone(), raw.clone(), vec![1]).is_err(),
+                write_project(state.clone(), raw.clone(), vec![1]).is_err(),
                 "{message}"
             );
             assert!(
@@ -1089,7 +1511,7 @@ mod tests {
 
         // Image token on project commands: rejected (scope mismatch).
         assert!(read_project_bytes(state.clone(), image.clone()).is_err());
-        assert!(write_project_bytes_atomic(state.clone(), image.clone(), vec![1]).is_err());
+        assert!(write_project(state.clone(), image.clone(), vec![1]).is_err());
         assert!(project_exists(state.clone(), image.clone()).is_err());
         assert!(read_backup_bytes(state.clone(), image.clone()).is_err());
         assert!(remove_project(state.clone(), image.clone()).is_err());
@@ -1137,8 +1559,8 @@ mod tests {
         assert!(project_exists(state.clone(), token.clone()).expect("exists"));
 
         // Atomic write with backup: destination replaced, backup holds v1.
-        let result = write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec())
-            .expect("atomic write");
+        let result =
+            write_project(state.clone(), token.clone(), b"v2".to_vec()).expect("atomic write");
         assert!(result.backup_created);
         assert_eq!(std::fs::read(&project_file).expect("read v2"), b"v2");
         assert_eq!(
@@ -1151,8 +1573,8 @@ mod tests {
                 .expect("backup present"),
             b"v1"
         );
-        // No stray temp file is left behind.
-        assert!(!dir.file(".flow.vxl.tmp").exists());
+        // No stray temp file is left behind (nonce temps are removed).
+        assert!(temp_files(&dir).is_empty(), "no temp files remain");
 
         // Journal: append, read, replace, remove.
         append_journal_bytes(state.clone(), token.clone(), b"frame1".to_vec()).expect("append");
@@ -1303,22 +1725,37 @@ mod tests {
         // Symlink at the backup path: the write must refuse BEFORE the
         // backup copy (fs::copy would otherwise truncate the link target).
         symlink(&secret, dir.file("proj.vxl.bak")).expect("plant backup link");
-        assert!(write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec()).is_err());
+        assert!(write_project(state.clone(), token.clone(), b"v2".to_vec()).is_err());
         assert_eq!(
             std::fs::read(&secret).expect("secret intact 2"),
             b"top-secret"
         );
         std::fs::remove_file(dir.file("proj.vxl.bak")).expect("remove backup link");
 
-        // Symlink at the temp path: the temp write must refuse (fs::write
-        // would otherwise follow the link).
-        symlink(&secret, dir.file(".proj.vxl.tmp")).expect("plant temp link");
-        assert!(write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec()).is_err());
+        // Symlink at a nonce temp path: the phased write must refuse. The
+        // destination-temp preflight and the exclusive create both refuse
+        // a planted link (O_EXCL fails on an existing link instead of
+        // following it); the backup-temp preflight is load-bearing because
+        // fs::copy would otherwise follow a planted link and truncate its
+        // target. A fixed nonce makes the temp names deterministic.
+        symlink(&secret, dir.file(".proj.vxl.attacknonce.tmp")).expect("plant temp link");
+        symlink(&secret, dir.file(".proj.vxl.bak.attacknonce.tmp"))
+            .expect("plant backup temp link");
+        let error = write_project_atomic_cleaned(&project_file, b"v2", "attacknonce", None, None)
+            .expect_err("planted temp links must refuse the write");
+        assert!(
+            error.contains("symbolic link"),
+            "the refusal must name the link guard: {error}"
+        );
         assert_eq!(
             std::fs::read(&secret).expect("secret intact 3"),
             b"top-secret"
         );
-        std::fs::remove_file(dir.file(".proj.vxl.tmp")).expect("remove temp link");
+        // The failed write removed both planted temp links as part of its
+        // cleanup (the links never existed as our files, but removing them
+        // is the same temp cleanup the failure path guarantees).
+        assert!(!dir.file(".proj.vxl.attacknonce.tmp").exists());
+        assert!(!dir.file(".proj.vxl.bak.attacknonce.tmp").exists());
 
         // Symlink REPLACING the destination file: reads and existence
         // probes refuse (never an oracle on the link target), and the
@@ -1327,7 +1764,7 @@ mod tests {
         symlink(&secret, &project_file).expect("plant destination link");
         assert!(read_bytes(&app, token.clone()).is_err());
         assert!(project_exists(state.clone(), token.clone()).is_err());
-        assert!(write_project_bytes_atomic(state.clone(), token.clone(), b"v2".to_vec()).is_err());
+        assert!(write_project(state.clone(), token.clone(), b"v2".to_vec()).is_err());
         assert_eq!(
             std::fs::read(&secret).expect("secret intact 4"),
             b"top-secret"
@@ -1556,5 +1993,362 @@ mod tests {
         let token = state.mint_project(project).expect("mint project");
         let bytes = read_bytes(&app, token).expect("read project");
         assert_eq!(bytes, b"hello");
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #120: the frozen atomic-save phases
+    // (docs/storage/atomic-save-v1.md). This native matrix mirrors the
+    // storage-port conformance cases: destination and backup stay
+    // byte-identical under every injected phase failure, every temporary
+    // file is removed, readBackup returns the previous destination, and
+    // cancellation interrupts the write before the replace.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn atomic_write_round_trips_and_reports_result_fields() {
+        let dir = TempDir::new("issue120-roundtrip");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("roundtrip.vxl"))
+            .expect("mint");
+
+        let result = write_project(state.clone(), token.clone(), b"version-one".to_vec())
+            .expect("atomic write");
+        assert!(!result.backup_created, "first save has no backup");
+        assert!(
+            result.directory_sync_succeeded,
+            "directory sync succeeds on a normal save"
+        );
+        assert_eq!(
+            read_bytes(&app, token.clone()).expect("read project"),
+            b"version-one"
+        );
+        assert!(
+            temp_files(&dir).is_empty(),
+            "no temporary files remain after success"
+        );
+    }
+
+    #[test]
+    fn first_save_has_no_backup_second_save_preserves_the_previous_destination() {
+        let dir = TempDir::new("issue120-backup");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("backup.vxl"))
+            .expect("mint");
+
+        let first = write_project(state.clone(), token.clone(), b"v0".to_vec()).expect("first");
+        assert!(!first.backup_created, "first save must not create a backup");
+        assert!(
+            read_backup_bytes(state.clone(), token.clone())
+                .expect("backup read")
+                .is_none(),
+            "no backup after the first save"
+        );
+
+        let second = write_project(state.clone(), token.clone(), b"v1".to_vec()).expect("second");
+        assert!(second.backup_created, "second save must create a backup");
+        assert_eq!(
+            second.backup_path.as_deref(),
+            Some(dir.canonical("backup.vxl.bak").to_string_lossy().as_ref()),
+            "backup is the adjacent standard-name sibling"
+        );
+        assert_eq!(
+            read_backup_bytes(state.clone(), token.clone())
+                .expect("backup read")
+                .expect("backup present"),
+            b"v0",
+            "backup holds the previous destination"
+        );
+        assert_eq!(
+            read_bytes(&app, token.clone()).expect("read project"),
+            b"v1",
+            "destination holds the new bytes"
+        );
+        assert!(temp_files(&dir).is_empty(), "no temp files remain");
+    }
+
+    #[test]
+    fn a_failure_at_every_phase_leaves_destination_and_backup_untouched_and_removes_temps() {
+        let phases = [
+            AtomicWritePhase::CreateTemp,
+            AtomicWritePhase::WriteTemp,
+            AtomicWritePhase::FlushTemp,
+            AtomicWritePhase::Backup,
+            AtomicWritePhase::Replace,
+        ];
+        for phase in phases {
+            let dir = TempDir::new(&format!("issue120-fault-{phase:?}"));
+            let app = managed_app(None);
+            let state = app.state::<NativeScope>();
+            let token = state
+                .mint_project(dir.canonical("fault.vxl"))
+                .expect("mint");
+            write_project(state.clone(), token.clone(), b"v0".to_vec()).expect("seed v0");
+            write_project(state.clone(), token.clone(), b"v1".to_vec())
+                .expect("seed v1 (backup v0)");
+
+            let plan = AtomicWriteFaultPlan {
+                fail_at: Some(vec![phase]),
+            };
+            let error = write_project_with(
+                state.clone(),
+                token.clone(),
+                b"v2".to_vec(),
+                None,
+                Some(plan),
+            )
+            .expect_err("the injected phase failure must fail the write");
+            let code = match phase {
+                AtomicWritePhase::CreateTemp => IO_PERMISSION_DENIED,
+                AtomicWritePhase::WriteTemp => IO_DISK_FULL,
+                AtomicWritePhase::FlushTemp => IO_DISK_FULL,
+                AtomicWritePhase::Backup => IO_PERMISSION_DENIED,
+                AtomicWritePhase::Replace => IO_RENAME_FAILED,
+                AtomicWritePhase::SyncDirectory => unreachable!("covered separately"),
+            };
+            assert!(
+                error.starts_with(&format!("{code}:")),
+                "{phase:?} must fail with {code}: {error}"
+            );
+
+            let expected_backup: &[u8] = if phase == AtomicWritePhase::Replace {
+                b"v1"
+            } else {
+                b"v0"
+            };
+            assert_eq!(
+                read_backup_bytes(state.clone(), token.clone())
+                    .expect("backup read")
+                    .expect("backup present"),
+                expected_backup,
+                "backup holds the last-known-good destination after {phase:?} failure"
+            );
+            assert_eq!(
+                read_bytes(&app, token.clone()).expect("read project"),
+                b"v1",
+                "destination untouched after {phase:?} failure"
+            );
+            assert!(
+                temp_files(&dir).is_empty(),
+                "no temporary file remains after {phase:?} failure"
+            );
+        }
+    }
+
+    #[test]
+    fn directory_sync_failure_is_best_effort_and_never_fails_the_save() {
+        let dir = TempDir::new("issue120-sync");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state.mint_project(dir.canonical("sync.vxl")).expect("mint");
+
+        let plan = AtomicWriteFaultPlan {
+            fail_at: Some(vec![AtomicWritePhase::SyncDirectory]),
+        };
+        let result = write_project_with(
+            state.clone(),
+            token.clone(),
+            b"v1".to_vec(),
+            None,
+            Some(plan),
+        )
+        .expect("a directory-sync fault never fails the save");
+        assert!(
+            !result.directory_sync_succeeded,
+            "the result reports the sync failure"
+        );
+        assert_eq!(
+            read_bytes(&app, token.clone()).expect("read project"),
+            b"v1",
+            "the save still succeeded"
+        );
+        assert!(temp_files(&dir).is_empty(), "no temp files remain");
+    }
+
+    #[test]
+    fn a_cancelled_write_interrupts_before_replace_and_removes_temps() {
+        let dir = TempDir::new("issue120-cancel");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("cancel.vxl"))
+            .expect("mint");
+        write_project(state.clone(), token.clone(), b"v0".to_vec()).expect("seed v0");
+
+        // First save with no backup yet: an aborted write must leave the
+        // destination and the (absent) backup untouched.
+        let cancel_token = "issue120-cancel-token".to_string();
+        assert!(state.register_cancel(&cancel_token).is_some());
+        state.cancel_write(&cancel_token);
+        let error = write_project_with(
+            state.clone(),
+            token.clone(),
+            b"v1".to_vec(),
+            Some(cancel_token.clone()),
+            None,
+        )
+        .expect_err("a cancelled write must be interrupted");
+        assert!(
+            error.starts_with(&format!("{IO_WRITE_INTERRUPTED}:")),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            read_bytes(&app, token.clone()).expect("read project"),
+            b"v0",
+            "destination untouched"
+        );
+        assert!(
+            read_backup_bytes(state.clone(), token.clone())
+                .expect("backup read")
+                .is_none(),
+            "backup untouched"
+        );
+        assert!(
+            state.write_cancels.lock().expect("cancel lock").is_empty(),
+            "the write token is removed when the write finishes"
+        );
+
+        // Second interrupted write after a successful one: the latest good
+        // destination and its backup stay readable.
+        write_project(state.clone(), token.clone(), b"v1".to_vec()).expect("seed v1");
+        assert!(state.register_cancel(&cancel_token).is_some());
+        state.cancel_write(&cancel_token);
+        let error = write_project_with(
+            state.clone(),
+            token.clone(),
+            b"v2".to_vec(),
+            Some(cancel_token),
+            None,
+        )
+        .expect_err("a second cancelled write must be interrupted");
+        assert!(error.starts_with(&format!("{IO_WRITE_INTERRUPTED}:")));
+        assert_eq!(
+            read_bytes(&app, token.clone()).expect("read project"),
+            b"v1",
+            "latest good version intact"
+        );
+        assert_eq!(
+            read_backup_bytes(state.clone(), token.clone())
+                .expect("backup read")
+                .expect("backup present"),
+            b"v0",
+            "backup intact"
+        );
+        assert!(temp_files(&dir).is_empty(), "temporary files removed");
+    }
+
+    #[test]
+    fn cancelling_an_unknown_token_is_not_an_error_and_tokens_are_bounded() {
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        // Unknown token: the write already finished (or never started).
+        assert!(cancel_project_write(state, "no-such-token".to_string()).is_ok());
+        // Empty and oversized tokens are rejected before any registry use.
+        assert!(cancel_project_write(app.state::<NativeScope>(), String::new()).is_err());
+        assert!(cancel_project_write(
+            app.state::<NativeScope>(),
+            "x".repeat(MAX_CANCEL_TOKEN_CHARS + 1),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn write_command_rejects_empty_or_oversized_cancel_tokens() {
+        let dir = TempDir::new("issue120-token-bounds");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("bounds.vxl"))
+            .expect("mint");
+
+        assert!(
+            write_project_with(
+                state.clone(),
+                token.clone(),
+                b"v1".to_vec(),
+                Some(String::new()),
+                None
+            )
+            .is_err(),
+            "an empty cancel token is rejected"
+        );
+        assert!(
+            write_project_with(
+                state.clone(),
+                token.clone(),
+                b"v1".to_vec(),
+                Some("x".repeat(MAX_CANCEL_TOKEN_CHARS + 1)),
+                None,
+            )
+            .is_err(),
+            "an oversized cancel token is rejected"
+        );
+        assert!(
+            !dir.file("bounds.vxl").exists(),
+            "rejected writes never touch the destination"
+        );
+        assert!(temp_files(&dir).is_empty(), "no temp files remain");
+    }
+
+    #[test]
+    fn read_errors_carry_stable_io_codes() {
+        let dir = TempDir::new("issue120-read-codes");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("missing.vxl"))
+            .expect("mint");
+
+        let error = match read_project_bytes(state.clone(), token.clone()) {
+            Ok(_) => panic!("reading a missing project must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error.starts_with(&format!("{IO_NOT_FOUND}:")),
+            "missing reads reject IO_NOT_FOUND: {error}"
+        );
+        // A missing backup is a normal state, not an error.
+        assert!(
+            read_backup_bytes(state, token)
+                .expect("backup read")
+                .is_none(),
+            "missing backup reads resolve None"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_permission_failures_classify_and_clean_up() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("issue120-perms");
+        let app = managed_app(None);
+        let state = app.state::<NativeScope>();
+        let token = state
+            .mint_project(dir.canonical("perms.vxl"))
+            .expect("mint");
+
+        // Skip under root, where permission enforcement is disabled.
+        let probe = dir.file("probe");
+        if std::fs::write(&probe, b"x").is_ok() {
+            return;
+        }
+        std::fs::set_permissions(&dir.path, std::fs::Permissions::from_mode(0o555))
+            .expect("chmod read-only");
+        let error = write_project(state.clone(), token.clone(), b"v1".to_vec())
+            .expect_err("a read-only project directory must fail the write");
+        std::fs::set_permissions(&dir.path, std::fs::Permissions::from_mode(0o755))
+            .expect("restore permissions");
+        assert!(
+            error.starts_with(&format!("{IO_PERMISSION_DENIED}:")),
+            "permission failures classify as IO_PERMISSION_DENIED: {error}"
+        );
+        assert!(
+            temp_files(&dir).is_empty(),
+            "the failed write removed its temporary file"
+        );
     }
 }

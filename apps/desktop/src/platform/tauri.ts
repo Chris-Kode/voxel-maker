@@ -1,10 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  AtomicWriteResult,
-  ImageStoragePort,
-  ProjectStoragePort,
-  RecoveryJournalPort,
+import {
+  IO_ERROR_CODES,
+  storageIoError,
+  throwIfAborted,
+  type AtomicWriteFaultPlan,
+  type AtomicWriteOptions,
+  type AtomicWritePhase,
+  type AtomicWriteResult,
+  type ImageStoragePort,
+  type ProjectStoragePort,
+  type RecoveryJournalPort,
 } from "@voxel-maker/storage";
+import { INPUT_FILE_LIMIT_EXCEEDED, WorkspaceError } from "@voxel-maker/shared";
 import type { FilePicker, PickedPath } from "../composition.js";
 import {
   KEYCHAIN_SERVICE,
@@ -22,70 +29,196 @@ import {
 const MAX_RECENT = 10;
 
 /**
- * Tauri storage adapter (plan S6.18 seam, tickets #15/#22, issue #94):
- * reads, atomic writes, existence checks, removal, backup reads, and the
- * adjacent recovery journal through the shell's own allowlisted commands
- * (`src-tauri`).
+ * Tauri storage adapter (plan S6.18 seam, tickets #15/#22, issues #94 and
+ * #120): reads, atomic writes, existence checks, removal, backup reads, and
+ * the adjacent recovery journal through the shell's own allowlisted
+ * commands (`src-tauri`).
  *
  * The `path` argument is an OPAGUE HANDLE TOKEN, never a filesystem path:
  * the native open/save dialogs run in Rust and mint one scoped handle per
  * chosen file; every command below passes the token straight to the shell
  * and the Rust side resolves it to the canonical dialog-scoped path. The
  * webview therefore cannot address any file the user never picked. The
- * Rust side performs the same temp-write/backup/rename order as the Node
- * adapter; `signal`/`faults` are ignored here (documented limitation).
+ * Rust side implements the frozen atomic-save phases of
+ * `docs/storage/atomic-save-v1.md` (exclusive nonce temp, chunked
+ * cancellable write, fsync, atomic backup refresh, replace, cleanup), so
+ * `signal` is honored through a Rust-side cancellation token and `faults`
+ * forwards the canonical `true` per-phase faults for native conformance.
+ * Native `CODE: message` errors are mapped back to the shared io-family
+ * contract; custom `WorkspaceError` faults cannot cross IPC (they are a
+ * memory/Node-only seam).
  */
 export class TauriProjectStorage
   implements ProjectStoragePort, RecoveryJournalPort
 {
   async readProject(handle: string): Promise<Uint8Array> {
-    const bytes = await invoke<ArrayBuffer>("read_project_bytes", { handle });
-    return new Uint8Array(bytes);
+    try {
+      const bytes = await invoke<ArrayBuffer>("read_project_bytes", {
+        handle,
+      });
+      return new Uint8Array(bytes);
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
 
   async writeProjectAtomic(
     handle: string,
     bytes: Uint8Array,
+    options?: AtomicWriteOptions,
   ): Promise<AtomicWriteResult> {
-    return await invoke<AtomicWriteResult>("write_project_bytes_atomic", {
-      handle,
-      bytes,
-    });
+    const signal = options?.signal;
+    // The native write loop observes the signal between chunks and before
+    // each phase through a Rust-side cancellation flag (issue #120); an
+    // abort already observed here rejects before the IPC call.
+    throwIfAborted(signal, handle);
+    const cancelToken = signal === undefined ? undefined : nextCancelToken();
+    const onAbort = () => {
+      if (cancelToken !== undefined) {
+        // Best-effort delivery: the write may already have finished (or
+        // replaced the destination), which is a normal completion.
+        void Promise.resolve(
+          invoke("cancel_project_write", { token: cancelToken }),
+        ).catch(() => undefined);
+      }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      return await invoke<AtomicWriteResult>("write_project_bytes_atomic", {
+        handle,
+        bytes,
+        ...(cancelToken === undefined ? {} : { cancelToken }),
+        ...(canonicalFaultPhases(options?.faults) === undefined
+          ? {}
+          : { faults: { failAt: canonicalFaultPhases(options?.faults) } }),
+      });
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   async exists(handle: string): Promise<boolean> {
-    return await invoke<boolean>("project_exists", { handle });
+    try {
+      return await invoke<boolean>("project_exists", { handle });
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
 
   async remove(handle: string): Promise<void> {
-    await invoke("remove_project", { handle });
+    try {
+      await invoke("remove_project", { handle });
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
 
   async readBackup(handle: string): Promise<Uint8Array | undefined> {
-    const bytes = await invoke<ArrayBuffer | null>("read_backup_bytes", {
-      handle,
-    });
-    return bytes === null ? undefined : new Uint8Array(bytes);
+    try {
+      const bytes = await invoke<ArrayBuffer | null>("read_backup_bytes", {
+        handle,
+      });
+      return bytes === null ? undefined : new Uint8Array(bytes);
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
 
   async readJournal(handle: string): Promise<Uint8Array | undefined> {
-    const bytes = await invoke<ArrayBuffer | null>("read_journal_bytes", {
-      handle,
-    });
-    return bytes === null ? undefined : new Uint8Array(bytes);
+    try {
+      const bytes = await invoke<ArrayBuffer | null>("read_journal_bytes", {
+        handle,
+      });
+      return bytes === null ? undefined : new Uint8Array(bytes);
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
 
   async appendJournal(handle: string, bytes: Uint8Array): Promise<void> {
-    await invoke("append_journal_bytes", { handle, bytes });
+    try {
+      await invoke("append_journal_bytes", { handle, bytes });
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
 
   async replaceJournal(handle: string, bytes: Uint8Array): Promise<void> {
-    await invoke("replace_journal_bytes", { handle, bytes });
+    try {
+      await invoke("replace_journal_bytes", { handle, bytes });
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
 
   async removeJournal(handle: string): Promise<void> {
-    await invoke("remove_journal", { handle });
+    try {
+      await invoke("remove_journal", { handle });
+    } catch (error) {
+      throw mapTauriStorageError(error, handle);
+    }
   }
+}
+
+/** Monotonic suffix keeps write tokens unique within one webview session. */
+let cancelTokenSequence = 0;
+
+/** Builds an opaque cancellation token for one native write (issue #120). */
+function nextCancelToken(): string {
+  cancelTokenSequence += 1;
+  return `write-${Date.now().toString(36)}-${cancelTokenSequence.toString(36)}`;
+}
+
+/** The atomic write phases in contract order (mirror of the Rust enum). */
+const ATOMIC_WRITE_PHASES: readonly AtomicWritePhase[] = [
+  "create-temp",
+  "write-temp",
+  "flush-temp",
+  "backup",
+  "replace",
+  "sync-directory",
+];
+
+/**
+ * The canonical per-phase faults a Tauri write can carry over IPC: only
+ * `true` (adapter-canonical error) faults are representable; custom
+ * `WorkspaceError` faults stay a memory/Node-only seam.
+ */
+function canonicalFaultPhases(
+  faults: AtomicWriteFaultPlan | undefined,
+): readonly AtomicWritePhase[] | undefined {
+  if (faults === undefined) return undefined;
+  const phases = ATOMIC_WRITE_PHASES.filter(
+    (phase) => faults.failAt?.[phase] === true,
+  );
+  return phases.length === 0 ? undefined : phases;
+}
+
+const IO_ERROR_CODE_SET: ReadonlySet<string> = new Set(
+  Object.values(IO_ERROR_CODES),
+);
+
+/**
+ * Maps the native `CODE: message` error strings back to the shared storage
+ * error contract (issue #120). Unknown strings pass through unchanged
+ * (scope rejections such as "unrecognized handle token" are not io-family
+ * errors).
+ */
+function mapTauriStorageError(error: unknown, path: string): unknown {
+  if (typeof error !== "string") return error;
+  const separator = error.indexOf(":");
+  if (separator < 0) return error;
+  const code = error.slice(0, separator);
+  const message = error.slice(separator + 1).trim();
+  if (code === INPUT_FILE_LIMIT_EXCEEDED) {
+    return new WorkspaceError({ family: "limit", code, message });
+  }
+  if (IO_ERROR_CODE_SET.has(code)) {
+    return storageIoError(code, message, { path });
+  }
+  return error;
 }
 
 /**
