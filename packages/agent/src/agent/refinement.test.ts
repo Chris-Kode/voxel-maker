@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CommandBus, CommandRegistry } from "@voxel-maker/commands";
-import { transactionId } from "@voxel-maker/shared";
+import { transactionId, WorkspaceError } from "@voxel-maker/shared";
 import type { DocumentStoreRead } from "@voxel-maker/document";
 import { createInspectionStore } from "../fixtures.js";
 import { createInspector } from "../inspector.js";
@@ -702,6 +702,45 @@ describe("visual refinement: regression and oscillation gates (AC5)", () => {
     expect(evaluation.visual.length).toBe(4);
     expect(evaluation.overallSimilarity).toBeGreaterThan(0);
     expect(evaluation.overallSimilarity).toBeLessThan(1);
+  });
+});
+
+describe("visual refinement: consent token caps bind critique requests (issue #117)", () => {
+  it("fails before a critique request exceeds the remaining consent token cap", async () => {
+    const h = harness();
+    // The measured text-round requests of this harness are ~26.2k tokens
+    // worst-case (estimate + 2,048 output cap) and the image-bearing
+    // critique request is ~26.8k: a 26,500 consent token cap lets the
+    // two text rounds through and refuses the critique request before
+    // transmission.
+    const session = h.makeSession([...BASE_SCRIPT, DONE_CRITIQUE_STEP], {
+      consent: createConsent({
+        providerId: "deterministic",
+        model: "deterministic-model",
+        categories: DISCLOSURE_CATEGORIES,
+        consentedAt: 0,
+        expiresAt: 1_000_000_000_000,
+        tokenCap: 26_500,
+      }),
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({ resource: "tokens" });
+    }
+    // Both text rounds were sent; the critique request never left the
+    // device, so no evidence images were transmitted.
+    expect(h.provider.requests).toHaveLength(BASE_SCRIPT.length);
+    expect(
+      h.provider.requests.every(
+        (request) =>
+          !request.messages.some(
+            (message) =>
+              message.role === "user" && (message.images?.length ?? 0) > 0,
+          ),
+      ),
+    ).toBe(true);
+    expect(session.preview.closed).toBe(true);
   });
 });
 

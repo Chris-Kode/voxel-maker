@@ -316,7 +316,7 @@ The agent state machine is:
 
 A revision conflict is never silently rebased. The user chooses discard, reinspect, or replan. Version 1 has no AI auto-apply path: every persistent proposal requires explicit user approval. Apply creates one labeled undoable history entry; Discard creates none.
 
-Every session enforces limits on rounds, tokens, tool calls, commands, output bytes, voxel modifications, tracks, keyframes, duration, elapsed time, and estimated cost. Provider credentials live in the operating-system keychain. Provider-specific types remain inside adapters. Logs and diagnostics follow approved consent, retention, and redaction policies.
+Every session enforces limits on rounds, tokens, tool calls, commands, output bytes, voxel modifications, tracks, keyframes, duration, elapsed time, and estimated cost; the per-run token and spend caps a user accepted in the consent record (ADR-0010) are hard limits clamped into those session budgets, and a request whose estimated worst-case usage cannot fit the remaining consent-bounded budget is refused before transmission (issue #117). Provider credentials live in the operating-system keychain. Provider-specific types remain inside adapters. Logs and diagnostics follow approved consent, retention, and redaction policies.
 
 Skills are removable versioned knowledge: instructions, allowed tools, constraints, deterministic generators, provenance, and evaluations. They produce generic command proposals. A saved document never requires the originating skill to open, edit, animate, or export.
 

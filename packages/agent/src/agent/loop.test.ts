@@ -133,6 +133,17 @@ function runErr(
   return result as Extract<AgentRunResult, { ok: false }>;
 }
 
+/** Asserts a limit failure on the given budget resource. */
+function expectLimit(
+  result: Extract<AgentRunResult, { ok: false }>,
+  resource: string,
+): void {
+  expect(result.reason).toBe("limit");
+  if (result.error instanceof WorkspaceError) {
+    expect(result.error.context).toMatchObject({ resource });
+  }
+}
+
 const SUCCESS_SCRIPT: readonly DeterministicStep[] = [
   { text: "I will inspect the chair.", toolCalls: [summaryCall()] },
   { text: "I will shorten the legs.", toolCalls: [fillBoxCall()] },
@@ -752,10 +763,7 @@ describe("agent loop: budget exhaustion", () => {
     ];
     const session = h.makeSession(script);
     const result = runErr(await session.run());
-    expect(result.reason).toBe("limit");
-    if (result.error instanceof WorkspaceError) {
-      expect(result.error.context).toMatchObject({ resource: "tokens" });
-    }
+    expectLimit(result, "tokens");
   });
 
   it("stops on estimated-cost exhaustion", async () => {
@@ -932,12 +940,7 @@ describe("agent loop: budget exhaustion", () => {
       budgets: { maxEstimatedCostUsd: 0 },
     });
     const result = runErr(await session.run());
-    expect(result.reason).toBe("limit");
-    if (result.error instanceof WorkspaceError) {
-      expect(result.error.context).toMatchObject({
-        resource: "estimatedCostUsd",
-      });
-    }
+    expectLimit(result, "estimatedCostUsd");
   });
 });
 
@@ -989,6 +992,156 @@ describe("agent loop: consent and transcript", () => {
     );
     expect(toolEvents.map((event) => event.tool)).toContain("inspectSummary");
     expect(events.some((event) => event.kind === "usage")).toBe(true);
+  });
+});
+
+describe("agent loop: consent token and spend caps (issue #117)", () => {
+  /**
+   * Regression for issue #117: the caps a user accepted in the consent
+   * record must bind the run. The measured first-request estimate of
+   * this harness is ~24,100 tokens plus the 2,048-token output cap, and
+   * the deterministic-model reserved cost is ~$0.0282, so every cap
+   * below chooses values that hold with wide margins.
+   */
+  function cappedConsent(overrides: {
+    readonly tokenCap?: number;
+    readonly costCapUsd?: number;
+  }): ReturnType<typeof createConsent> {
+    return createConsent({
+      providerId: "deterministic",
+      model: "deterministic-model",
+      categories: DISCLOSURE_CATEGORIES,
+      consentedAt: 0,
+      expiresAt: 1_000_000_000_000,
+      ...overrides,
+    });
+  }
+
+  it("fails before the first transmission when the estimated request exceeds the consent caps", async () => {
+    // Issue evidence: tokenCap 1 / costCapUsd 0.0001 used to allow a
+    // full 4-call run to approve; it must now fail before any provider
+    // call leaves the device.
+    const h = harness();
+    const session = h.makeSession(SUCCESS_SCRIPT, {
+      consent: cappedConsent({ tokenCap: 1, costCapUsd: 0.0001 }),
+    });
+    const result = runErr(await session.run());
+    expectLimit(result, "tokens");
+    expect(h.provider.callCount).toBe(0);
+    expect(session.preview.closed).toBe(true);
+  });
+
+  it("fails before transmission when the next request exceeds the remaining consent token cap", async () => {
+    const h = harness();
+    // Two inspection rounds each report 20k input tokens; the first two
+    // requests fit the 50k cap with margin, and the third request's
+    // estimate (~26.2k) does not fit the 10k remaining, so it must fail
+    // before the call.
+    const round = (text: string): DeterministicStep => ({
+      text,
+      toolCalls: [summaryCall()],
+      usage: { inputTokens: 20_000, outputTokens: 0 },
+    });
+    const session = h.makeSession(
+      [round("one"), round("two"), round("three")],
+      { consent: cappedConsent({ tokenCap: 50_000 }) },
+    );
+    const result = runErr(await session.run());
+    expectLimit(result, "tokens");
+    expect(h.provider.callCount).toBe(2);
+    expect(session.preview.closed).toBe(true);
+  });
+
+  it("fails when accumulated usage exceeds the consent token cap", async () => {
+    const h = harness();
+    const session = h.makeSession(
+      [{ text: "spendy", usage: { inputTokens: 100_000, outputTokens: 0 } }],
+      { consent: cappedConsent({ tokenCap: 50_000 }) },
+    );
+    const result = runErr(await session.run());
+    expectLimit(result, "tokens");
+    // The response was consumed and billed, so the run reports it
+    // (issue #78) but never transmits again.
+    expect(h.provider.callCount).toBe(1);
+    expect(result.usage.inputTokens).toBe(100_000);
+    expect(session.preview.closed).toBe(true);
+  });
+
+  it("fails when accumulated spend exceeds the consent cost cap", async () => {
+    const h = harness();
+    const session = h.makeSession(
+      [
+        {
+          text: "costly",
+          usage: { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0.1 },
+        },
+      ],
+      { consent: cappedConsent({ costCapUsd: 0.05 }) },
+    );
+    const result = runErr(await session.run());
+    expectLimit(result, "estimatedCostUsd");
+    expect(h.provider.callCount).toBe(1);
+    expect(session.preview.closed).toBe(true);
+  });
+
+  it("fails before transmission when the next request exceeds the remaining consent cost cap", async () => {
+    const h = harness();
+    // The reserved worst-case cost of one request is ~$0.0282, so two
+    // $0.02 rounds fit the $0.06 cap and the third request does not fit
+    // the $0.02 remaining: it must fail before the call.
+    const round = (text: string): DeterministicStep => ({
+      text,
+      toolCalls: [summaryCall()],
+      usage: { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0.02 },
+    });
+    const session = h.makeSession(
+      [round("one"), round("two"), round("three")],
+      { consent: cappedConsent({ costCapUsd: 0.06 }) },
+    );
+    const result = runErr(await session.run());
+    expectLimit(result, "estimatedCostUsd");
+    expect(h.provider.callCount).toBe(2);
+    expect(session.preview.closed).toBe(true);
+  });
+
+  it("clamps consent caps to the session budgets: consent can never raise a limit", async () => {
+    const h = harness();
+    // The consent token cap (1M) exceeds the budget override (50k), so
+    // the stricter session limit binds and a 100k-token round fails.
+    const session = h.makeSession(
+      [{ text: "huge", usage: { inputTokens: 100_000, outputTokens: 0 } }],
+      {
+        budgets: { maxTokens: 50_000 },
+        consent: cappedConsent({ tokenCap: 1_000_000 }),
+      },
+    );
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({ resource: "tokens" });
+    }
+  });
+
+  it("keeps the default spend cap when the consent cap is absent", async () => {
+    const h = harness();
+    // No cost cap in the consent record: the ADR-0009 default ($5) must
+    // still bind, and a $6 round must fail closed.
+    const session = h.makeSession(
+      [
+        {
+          text: "over default",
+          usage: { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 6 },
+        },
+      ],
+      { consent: cappedConsent({ tokenCap: 1_000_000 }) },
+    );
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({
+        resource: "estimatedCostUsd",
+      });
+    }
   });
 });
 
