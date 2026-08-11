@@ -26,13 +26,15 @@ import { deepFreeze } from "./freeze.js";
  * private `DocumentStore` behind one preview session. At creation the
  * store captures an immutable base-revision snapshot: the committed
  * document plus a deep clone of every volume, all tagged at the session's
- * base revision. Reads and first clones always come from that snapshot —
- * never from the moving live store — so a concurrent live commit can never
- * drift preview reads, staged overlays, or inspection evidence onto newer
- * voxels (issue #116). Staging clones the snapshot copy-on-write, commits
- * install only into the preview store and emit only to preview listeners;
- * the live store, its revision, its history, and its subscribers are never
- * touched.
+ * base revision. This deliberately replaces the earlier lazy first-touch
+ * cloning (plan S11.15): the live store mutates chunk data in place, so a
+ * lazy snapshot could not stay byte-identical once the live document
+ * advanced. Reads and first clones always come from the snapshot — never
+ * from the moving live store — so a concurrent live commit can never drift
+ * preview reads, staged overlays, or inspection evidence onto newer voxels
+ * (issue #116). Staging clones the snapshot copy-on-write, commits install
+ * only into the preview store and emit only to preview listeners; the live
+ * store, its revision, its history, and its subscribers are never touched.
  */
 
 export class PreviewStore implements DocumentStore {
@@ -62,7 +64,19 @@ export class PreviewStore implements DocumentStore {
     // remain byte-identical at the base revision until discard/reinspect.
     for (const volumeId of Object.keys(document.volumes) as VolumeId[]) {
       const view = live.getVolume(volumeId);
-      if (view === undefined) continue;
+      if (view === undefined) {
+        // The base document was cloned from the same live revision in the
+        // same synchronous turn, so every referenced volume must exist.
+        // A missing volume would silently corrupt the byte-identical
+        // snapshot promise, so fail loudly instead of skipping it.
+        throw new WorkspaceError({
+          family: "internal",
+          code: "MISSING_BASE_VOLUME",
+          message:
+            "Live store is missing a volume referenced by the base document",
+          context: { volumeId },
+        });
+      }
       this.#volumes.set(
         volumeId,
         cloneReadView(view, live.volumeLimits, capability),
@@ -222,7 +236,15 @@ export class PreviewStore implements DocumentStore {
   }
 }
 
-/** Deep clone of one committed read view (issue #116). */
+/**
+ * Deep clone of one committed read view (issue #116). Rebuilds through
+ * `fromChunks` instead of `VoxelVolume.clone()` because the read view has
+ * no clone surface and the snapshot must mint the preview's own write
+ * capability: a clone inheriting the live token would be immutable to the
+ * preview bus. Chunk revisions reset to 0, which is fine because they are
+ * runtime metadata and the preview store never runs the commit-time
+ * referential scan.
+ */
 function cloneReadView(
   view: VoxelVolumeReadView,
   limits: VoxelVolumeLimits,

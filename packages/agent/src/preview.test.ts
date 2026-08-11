@@ -13,6 +13,7 @@ import type {
   DocumentStoreRead,
 } from "@voxel-maker/document";
 import {
+  WorkspaceError,
   commandId,
   materialId,
   nodeId,
@@ -631,6 +632,32 @@ describe("issue #116: preview reads never drift to newer live revisions", () => 
     if (!apply.ok) expect(apply.error.code).toBe("REVISION_CONFLICT");
     expect(store.revision).toBe(2);
     session.discard();
+  });
+
+  it("fails loudly when the live store is missing a document-referenced volume", () => {
+    const { store } = liveFixture();
+    // A live surface whose repository lacks the document's volumes would
+    // silently corrupt the byte-identical snapshot promise; the preview
+    // store must reject it instead of skipping the volume.
+    const broken: DocumentStoreRead = {
+      revision: store.revision,
+      limits: store.limits,
+      volumeLimits: store.volumeLimits,
+      getDocument: () => store.getDocument(),
+      getVolume: () => undefined,
+      getVoxel: () => 0 as MaterialId,
+      subscribe: () => () => {},
+    };
+    let caught: unknown;
+    try {
+      createPreviewSession({ live: broken });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(WorkspaceError);
+    if (!(caught instanceof WorkspaceError)) throw new Error("unreachable");
+    expect(caught.code).toBe("MISSING_BASE_VOLUME");
+    expect(caught.family).toBe("internal");
   });
 });
 
