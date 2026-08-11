@@ -16,11 +16,11 @@
 mod native_scope;
 
 use native_scope::{
-    append_journal_bytes, image_exists, pick_open_project, pick_preview_image_paths,
-    pick_save_project, project_exists, read_backup_bytes, read_journal_bytes, read_project_bytes,
-    read_recent_projects, record_recent_project, remove_journal, remove_project,
-    remove_recent_project, replace_journal_bytes, write_image_bytes_atomic,
-    write_project_bytes_atomic, NativeScope,
+    append_journal_bytes, cancel_project_write, image_exists, pick_open_project,
+    pick_preview_image_paths, pick_save_project, project_exists, read_backup_bytes,
+    read_journal_bytes, read_project_bytes, read_recent_projects, record_recent_project,
+    remove_journal, remove_project, remove_recent_project, replace_journal_bytes,
+    write_image_bytes_atomic, write_project_bytes_atomic, NativeScope,
 };
 use tauri::Manager;
 
@@ -109,6 +109,7 @@ pub fn run() {
             pick_preview_image_paths,
             read_project_bytes,
             write_project_bytes_atomic,
+            cancel_project_write,
             project_exists,
             read_backup_bytes,
             remove_project,
