@@ -31,13 +31,17 @@ import { createPreviewRegistry } from "./registry.js";
 import { PreviewStore } from "./preview-store.js";
 
 /**
- * Preview session (plan S11.11/S11.15, ticket #32): an isolated
- * copy-on-write projection of the live document for staging AI geometry
- * changes. Staging executes each command as one atomic transaction on a
- * private store and bus, so staged reads observe prior staged commands
- * while live revision, history, dirty state, autosave, recovery, and
- * rendering stay untouched. Preview events are emitted only to preview
- * subscribers and the worker namespace is `preview:<sessionId>`.
+ * Preview session (plan S11.11/S11.15, ticket #32, issue #116): an
+ * isolated copy-on-write projection of the live document for staging AI
+ * geometry changes. Creation captures an immutable base-revision snapshot
+ * (document plus every volume), so preview reads, staged overlays, and
+ * evidence stay byte-identical at the base revision even when the live
+ * document commits later; only Apply, which then reports REVISION_CONFLICT,
+ * reaches the live bus. Staging executes each command as one atomic
+ * transaction on a private store and bus, so staged reads observe prior
+ * staged commands while live revision, history, dirty state, autosave,
+ * recovery, and rendering stay untouched. Preview events are emitted only
+ * to preview subscribers and the worker namespace is `preview:<sessionId>`.
  * Apply executes every staged command as ONE optimistic transaction on
  * the live bus against the captured base revision; Discard and
  * cancellation release all preview resources.
@@ -504,11 +508,11 @@ export function createPreviewSession(
 ): PreviewSession {
   const live = options.live;
   const baseRevision = options.baseRevision ?? live.revision;
-  // The staged snapshot must equal the live state at creation: staged reads
-  // fall through to live data for untouched volumes, so an older base would
-  // mix the base record snapshot with newer live voxel data. When the live
-  // document advances later, Apply reports REVISION_CONFLICT and the caller
-  // discards and reinspects (plan S12.9) instead of silently rebasing.
+  // The staged snapshot must equal the live state at creation: the document
+  // clone and every volume snapshot (issue #116) are captured now, so an
+  // older base would not match the captured bytes. When the live document
+  // advances later, Apply reports REVISION_CONFLICT and the caller discards
+  // and reinspects (plan S12.9) instead of silently rebasing.
   if (!Number.isInteger(baseRevision) || baseRevision !== live.revision) {
     throw new WorkspaceError({
       family: "validation",
@@ -519,6 +523,9 @@ export function createPreviewSession(
   }
   // Clone the committed document; the clone starts at the base revision so
   // the preview revision namespace is fully isolated from the live one.
+  // PreviewStore additionally snapshots every base-revision volume at
+  // creation (issue #116): preview reads, staged overlays, and evidence
+  // never delegate to the moving live store.
   const document = JSON.parse(
     JSON.stringify(live.getDocument()),
   ) as VoxelDocument;
