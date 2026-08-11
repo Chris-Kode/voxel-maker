@@ -2,10 +2,11 @@ import {
   WorkspaceError,
   volumeId,
   type CommandId,
+  type NodeId,
   type VolumeId,
 } from "@voxel-maker/shared";
 import { canonicalIntAabb, type IntAabb, type Vec3i } from "@voxel-maker/math";
-import type { DocumentLimits } from "@voxel-maker/model";
+import type { DocumentLimits, VolumeDescriptor } from "@voxel-maker/model";
 import {
   CHUNK_EDGE,
   MAX_VOXELS_PER_OPERATION,
@@ -383,10 +384,14 @@ const deleteVolumeHandler: CommandHandler<
     payload: DeleteVolumePayload,
     context: CommandValidationContext,
   ): void {
-    if (context.committedDocument.volumes[payload.volumeId] === undefined) {
-      // Deleting a volume that is already absent is a no-op commit (the
-      // desired end state already holds), matching the node/voxel no-op
-      // policy (plan 4.1).
+    // A volume counts as present when it is committed or was created
+    // earlier in this transaction (ticket #111); only a volume absent from
+    // both is a no-op commit (the desired end state already holds),
+    // matching the node/voxel no-op policy (plan 4.1).
+    if (
+      context.committedDocument.volumes[payload.volumeId] === undefined &&
+      !context.isVolumeStaged(payload.volumeId)
+    ) {
       return;
     }
     if (nodesReferencingVolume(context.document, payload.volumeId).length > 0) {
@@ -405,6 +410,24 @@ const deleteVolumeHandler: CommandHandler<
   ): CommandExecution {
     const committed = context.committedDocument;
     const descriptor = committed.volumes[payload.volumeId];
+    if (descriptor === undefined && context.isVolumeStaged(payload.volumeId)) {
+      // A volume created earlier in this transaction is deleted by
+      // cancelling the staged creation atomically (ticket #111): the staged
+      // volume and its descriptor are dropped together, so the commit
+      // installs neither and the repository never sees the volume. Unlike
+      // the committed path no repository removal is recorded.
+      const stagedDescriptor = context.document.volumes[payload.volumeId];
+      if (stagedDescriptor === undefined) throw missingVolume(payload.volumeId);
+      return executeVolumeRemoval(
+        payload,
+        context,
+        stagedDescriptor,
+        () => {
+          context.stageCancelVolume(payload.volumeId);
+        },
+        [],
+      );
+    }
     if (descriptor === undefined) {
       // No-op: the volume is already absent; the inverse replays the same
       // delete and remains a no-op.
@@ -423,46 +446,68 @@ const deleteVolumeHandler: CommandHandler<
         },
       };
     }
-    const volume = context.getVolume(payload.volumeId);
-    if (volume === undefined) throw missingVolume(payload.volumeId);
-    const entries = readVolumeEntries(volume);
-    if (entries.length > MAX_VOXELS_PER_OPERATION) {
-      throw new WorkspaceError({
-        family: "limit",
-        code: "TOO_MANY_VOXELS",
-        message: "Volume exceeds the per-operation voxel limit for deletion",
-        context: { limit: MAX_VOXELS_PER_OPERATION },
-      });
-    }
-    const inverse: InverseCommand = {
-      type: VOLUME_CREATE_COMMAND,
-      schemaVersion: VOLUME_COMMAND_SCHEMA_VERSION,
-      payload: {
-        volumeId: payload.volumeId,
-        ...(descriptor.name !== undefined ? { name: descriptor.name } : {}),
-        ...(descriptor.bounds !== undefined
-          ? { bounds: descriptor.bounds }
-          : {}),
-        ...(entries.length > 0
-          ? { entries: encodeVolumeEntries(entries) }
-          : {}),
+    return executeVolumeRemoval(
+      payload,
+      context,
+      descriptor,
+      () => {
+        context.stageRemoveVolume(payload.volumeId);
       },
-    };
-    context.stageRemoveVolume(payload.volumeId);
-    const document = context.stageDocument();
-    document.volumes = withoutRecordEntry(document.volumes, payload.volumeId);
-    return {
-      changedRecords: true,
-      inverse,
-      declaredAffectedResources: {
-        nodeIds: nodesReferencingVolume(committed, payload.volumeId),
-        materialIds: [],
-        animationIds: [],
-        volumeIds: [payload.volumeId],
-      },
-    };
+      nodesReferencingVolume(committed, payload.volumeId),
+    );
   },
 };
+
+/**
+ * Shared removal for `volume.delete`: reads the volume's exact voxel
+ * entries, builds the `volume.create` inverse that restores them with the
+ * descriptor, drops the volume from the staged overlay via `removeVolume`,
+ * and removes the descriptor from the staged document. The limit check
+ * keeps the inverse within what one `volume.create` command can carry, so
+ * undo can always replay it (matching the committed path).
+ */
+function executeVolumeRemoval(
+  payload: DeleteVolumePayload,
+  context: CommandExecutionContext,
+  descriptor: VolumeDescriptor,
+  removeVolume: () => void,
+  affectedNodeIds: readonly NodeId[],
+): CommandExecution {
+  const volume = context.getVolume(payload.volumeId);
+  if (volume === undefined) throw missingVolume(payload.volumeId);
+  const entries = readVolumeEntries(volume);
+  if (entries.length > MAX_VOXELS_PER_OPERATION) {
+    throw new WorkspaceError({
+      family: "limit",
+      code: "TOO_MANY_VOXELS",
+      message: "Volume exceeds the per-operation voxel limit for deletion",
+      context: { limit: MAX_VOXELS_PER_OPERATION },
+    });
+  }
+  const inverse: InverseCommand = {
+    type: VOLUME_CREATE_COMMAND,
+    schemaVersion: VOLUME_COMMAND_SCHEMA_VERSION,
+    payload: {
+      volumeId: payload.volumeId,
+      ...(descriptor.name !== undefined ? { name: descriptor.name } : {}),
+      ...(descriptor.bounds !== undefined ? { bounds: descriptor.bounds } : {}),
+      ...(entries.length > 0 ? { entries: encodeVolumeEntries(entries) } : {}),
+    },
+  };
+  removeVolume();
+  const document = context.stageDocument();
+  document.volumes = withoutRecordEntry(document.volumes, payload.volumeId);
+  return {
+    changedRecords: true,
+    inverse,
+    declaredAffectedResources: {
+      nodeIds: affectedNodeIds,
+      materialIds: [],
+      animationIds: [],
+      volumeIds: [payload.volumeId],
+    },
+  };
+}
 
 /** Registers the generic volume lifecycle commands. */
 export function registerVolumeCommands(registry: CommandRegistry): void {

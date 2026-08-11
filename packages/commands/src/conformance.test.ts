@@ -56,6 +56,7 @@ import {
   NODE_SET_METADATA_COMMAND,
   NODE_SET_TRANSFORM_COMMAND,
   registerNodeCommands,
+  setNodeComponentsCommand,
 } from "./node-commands.js";
 import {
   MATERIAL_CREATE_COMMAND,
@@ -69,7 +70,10 @@ import {
   createVolumeCommand,
   deleteVolumeCommand,
   registerVolumeCommands,
+  type CreateVolumePayload,
 } from "./volume-commands.js";
+import { decodeVolumeEntries } from "./volume-payload.js";
+import type { CommittedTransactionRecord } from "./codec.js";
 import {
   commandKey,
   runCommandConformanceSuite,
@@ -452,6 +456,228 @@ const volumeDeleteSpec: CommandConformanceSpec = {
   },
 };
 runCommandConformanceSuite(volumeDeleteSpec, { describe, it, expect });
+
+describe("volume.create then volume.delete in one transaction (issue #111)", () => {
+  const makeHarness = () => {
+    const document = createVolumeConformanceDocument();
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
+    const registry = new CommandRegistry();
+    registerVolumeCommands(registry);
+    registerNodeCommands(registry);
+    const bus = new CommandBus(store, registry, writeCapability);
+    return { store, bus };
+  };
+
+  const createThenDelete = (bus: CommandBus, tag: string) =>
+    bus.executeTransaction(
+      [
+        createVolumeCommand(
+          commandId(`command:conformance:issue111:${tag}:create`),
+          {
+            volumeId: NEW_VOLUME,
+            name: "Transient",
+            bounds: { min: [0, 0, 0], max: [2, 2, 2] },
+            entries: [
+              { coordinate: [0, 0, 0], material: materialId(1) },
+              { coordinate: [3, 3, 3], material: materialId(1) },
+            ],
+          },
+        ),
+        deleteVolumeCommand(
+          commandId(`command:conformance:issue111:${tag}:delete`),
+          { volumeId: NEW_VOLUME },
+        ),
+      ],
+      {
+        transactionId: transactionId(`transaction:conformance:issue111:${tag}`),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+
+  it("commits with no descriptor and no repository volume", () => {
+    const { store, bus } = makeHarness();
+    const result = createThenDelete(bus, "0001");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(store.revision).toBe(1);
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+  });
+
+  it("undo and redo preserve the net absent state", () => {
+    const { store, bus } = makeHarness();
+    const result = createThenDelete(bus, "0002");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const undone = bus.undo({
+      transactionId: transactionId(
+        "transaction:conformance:issue111:0002:undo",
+      ),
+      expectedRevision: 1,
+      source: "ui",
+    });
+    expect(undone.ok).toBe(true);
+    if (!undone.ok) return;
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+    const redone = bus.redo({
+      transactionId: transactionId(
+        "transaction:conformance:issue111:0002:redo",
+      ),
+      expectedRevision: store.revision,
+      source: "ui",
+    });
+    expect(redone.ok).toBe(true);
+    if (!redone.ok) return;
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+  });
+
+  it("stores an exact-restore delete inverse carrying descriptor and voxel entries", () => {
+    const document = createVolumeConformanceDocument();
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
+    const registry = new CommandRegistry();
+    registerVolumeCommands(registry);
+    registerNodeCommands(registry);
+    const records: CommittedTransactionRecord[] = [];
+    const bus = new CommandBus(store, registry, writeCapability, undefined, {
+      onCommitted: (record) => {
+        records.push(record);
+      },
+    });
+    const result = createThenDelete(bus, "0005");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Undo replays the stored inverses in reverse order: the delete's
+    // inverse (an exact volume.create) first, then the create's inverse
+    // (volume.delete). The hook records those exact commands, proving the
+    // inverse restores the descriptor and every voxel, not just net absence.
+    const undone = bus.undo({
+      transactionId: transactionId(
+        "transaction:conformance:issue111:0005:undo",
+      ),
+      expectedRevision: 1,
+      source: "ui",
+    });
+    expect(undone.ok).toBe(true);
+    if (!undone.ok) return;
+    const undoRecord = records.find(
+      (record) =>
+        record.transactionId ===
+        transactionId("transaction:conformance:issue111:0005:undo"),
+    );
+    expect(undoRecord).toBeDefined();
+    if (undoRecord === undefined) return;
+    expect(undoRecord.commands).toHaveLength(2);
+    const inverseCreate = undoRecord.commands[0];
+    if (inverseCreate === undefined) return;
+    expect(inverseCreate.type).toBe(VOLUME_CREATE_COMMAND);
+    expect(inverseCreate.payload).toMatchObject({
+      volumeId: NEW_VOLUME,
+      name: "Transient",
+      bounds: { min: [0, 0, 0], max: [2, 2, 2] },
+    });
+    expect(
+      decodeVolumeEntries(
+        (inverseCreate.payload as CreateVolumePayload).entries ?? {},
+        ["payload", "entries"],
+      ),
+    ).toEqual([
+      { coordinate: [0, 0, 0], material: materialId(1) },
+      { coordinate: [3, 3, 3], material: materialId(1) },
+    ]);
+    expect(undoRecord.commands[1]?.type).toBe(VOLUME_DELETE_COMMAND);
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+  });
+
+  it("later commands observe the volume as absent", () => {
+    const { store, bus } = makeHarness();
+    const result = createThenDelete(bus, "0003");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A later delete of the same volume is a no-op commit.
+    const laterDelete = bus.executeTransaction(
+      [
+        deleteVolumeCommand(
+          commandId("command:conformance:issue111:0003:later-delete"),
+          { volumeId: NEW_VOLUME },
+        ),
+      ],
+      {
+        transactionId: transactionId(
+          "transaction:conformance:issue111:0003:later-delete",
+        ),
+        expectedRevision: 1,
+        source: "ui",
+      },
+    );
+    expect(laterDelete.ok).toBe(true);
+    if (!laterDelete.ok) return;
+    // The no-op delete still commits one revision (plan 4.1) and reports no
+    // changed resources, and the volume stays absent.
+    expect(store.revision).toBe(2);
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+    // A later create of the same volume succeeds.
+    const laterCreate = bus.executeTransaction(
+      [
+        createVolumeCommand(
+          commandId("command:conformance:issue111:0003:later-create"),
+          { volumeId: NEW_VOLUME, name: "Reborn" },
+        ),
+      ],
+      {
+        transactionId: transactionId(
+          "transaction:conformance:issue111:0003:later-create",
+        ),
+        expectedRevision: 2,
+        source: "ui",
+      },
+    );
+    expect(laterCreate.ok).toBe(true);
+    if (!laterCreate.ok) return;
+    expect(store.revision).toBe(3);
+    expect(store.getDocument().volumes[NEW_VOLUME]?.name).toBe("Reborn");
+  });
+
+  it("rejects deleting a staged-new volume referenced by a node in the same transaction", () => {
+    const { store, bus } = makeHarness();
+    const result = bus.executeTransaction(
+      [
+        createVolumeCommand(
+          commandId("command:conformance:issue111:0004:create"),
+          { volumeId: NEW_VOLUME, name: "Wanted" },
+        ),
+        setNodeComponentsCommand(
+          commandId("command:conformance:issue111:0004:attach"),
+          {
+            nodeId: "node:conformance:root" as never,
+            components: [
+              { kind: "voxel", schemaVersion: 1, volumeId: NEW_VOLUME },
+            ],
+          },
+        ),
+        deleteVolumeCommand(
+          commandId("command:conformance:issue111:0004:delete"),
+          { volumeId: NEW_VOLUME },
+        ),
+      ],
+      {
+        transactionId: transactionId("transaction:conformance:issue111:0004"),
+        expectedRevision: 0,
+        source: "ui",
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("VOLUME_IN_USE");
+    expect(store.revision).toBe(0);
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+  });
+});
 
 /** Every registered persistent command must declare a conformance spec (plan 4.17). */
 const CONFORMANCE_TESTED_COMMANDS = [
