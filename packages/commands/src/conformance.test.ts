@@ -70,7 +70,10 @@ import {
   createVolumeCommand,
   deleteVolumeCommand,
   registerVolumeCommands,
+  type CreateVolumePayload,
 } from "./volume-commands.js";
+import { decodeVolumeEntries } from "./volume-payload.js";
+import type { CommittedTransactionRecord } from "./codec.js";
 import {
   commandKey,
   runCommandConformanceSuite,
@@ -527,6 +530,64 @@ describe("volume.create then volume.delete in one transaction (issue #111)", () 
     });
     expect(redone.ok).toBe(true);
     if (!redone.ok) return;
+    expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
+    expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
+  });
+
+  it("stores an exact-restore delete inverse carrying descriptor and voxel entries", () => {
+    const document = createVolumeConformanceDocument();
+    const { store, writeCapability } = createDocumentStoreHandle({ document });
+    const registry = new CommandRegistry();
+    registerVolumeCommands(registry);
+    registerNodeCommands(registry);
+    const records: CommittedTransactionRecord[] = [];
+    const bus = new CommandBus(store, registry, writeCapability, undefined, {
+      onCommitted: (record) => {
+        records.push(record);
+      },
+    });
+    const result = createThenDelete(bus, "0005");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Undo replays the stored inverses in reverse order: the delete's
+    // inverse (an exact volume.create) first, then the create's inverse
+    // (volume.delete). The hook records those exact commands, proving the
+    // inverse restores the descriptor and every voxel, not just net absence.
+    const undone = bus.undo({
+      transactionId: transactionId(
+        "transaction:conformance:issue111:0005:undo",
+      ),
+      expectedRevision: 1,
+      source: "ui",
+    });
+    expect(undone.ok).toBe(true);
+    if (!undone.ok) return;
+    const undoRecord = records.find(
+      (record) =>
+        record.transactionId ===
+        transactionId("transaction:conformance:issue111:0005:undo"),
+    );
+    expect(undoRecord).toBeDefined();
+    if (undoRecord === undefined) return;
+    expect(undoRecord.commands).toHaveLength(2);
+    const inverseCreate = undoRecord.commands[0];
+    if (inverseCreate === undefined) return;
+    expect(inverseCreate.type).toBe(VOLUME_CREATE_COMMAND);
+    expect(inverseCreate.payload).toMatchObject({
+      volumeId: NEW_VOLUME,
+      name: "Transient",
+      bounds: { min: [0, 0, 0], max: [2, 2, 2] },
+    });
+    expect(
+      decodeVolumeEntries(
+        (inverseCreate.payload as CreateVolumePayload).entries ?? {},
+        ["payload", "entries"],
+      ),
+    ).toEqual([
+      { coordinate: [0, 0, 0], material: materialId(1) },
+      { coordinate: [3, 3, 3], material: materialId(1) },
+    ]);
+    expect(undoRecord.commands[1]?.type).toBe(VOLUME_DELETE_COMMAND);
     expect(store.getDocument().volumes[NEW_VOLUME]).toBeUndefined();
     expect(store.getVolume(NEW_VOLUME)).toBeUndefined();
   });
