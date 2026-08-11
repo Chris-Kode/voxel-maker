@@ -134,6 +134,7 @@ export class BudgetLedger {
   #outputBytes = 0;
   #inputTokens = 0;
   #outputTokens = 0;
+  #reservedRequestTokens = 0;
   #costUsd = 0;
   #consecutiveErrors = 0;
   #visualIterations = 0;
@@ -174,6 +175,10 @@ export class BudgetLedger {
   }
   get outputTokens(): number {
     return this.#outputTokens;
+  }
+  /** Tokens reserved for in-flight provider requests, not yet reconciled. */
+  get reservedTokens(): number {
+    return this.#reservedRequestTokens;
   }
   get costUsd(): number {
     return this.#costUsd;
@@ -329,6 +334,57 @@ export class BudgetLedger {
     }
     this.#outputBytes = next;
     return { ok: true };
+  }
+
+  /**
+   * Reserves the worst-case token cost of one provider request BEFORE it
+   * is sent (issue #118): the known input estimate plus the bounded
+   * output allowance must fit the remaining token budget, otherwise the
+   * request fails without any provider work. The per-request output cap
+   * is clamped to the remaining allowance so the provider cannot spend
+   * beyond the session's hard token contract; a request that would clamp
+   * to a zero output cap is rejected too, because it could not produce
+   * any output and would only incur provider work. `releaseRequest`
+   * replaces the reservation once the normalized actual usage is
+   * recorded (or the request failed without consuming usage).
+   */
+  reserveRequest(
+    inputEstimate: number,
+    outputCap: number,
+  ):
+    | {
+        readonly ok: true;
+        /** Output cap clamped to the remaining token allowance. */
+        readonly maxTokens: number;
+        /** Reserved tokens to pass back to `releaseRequest`. */
+        readonly reservedTokens: number;
+      }
+    | { readonly ok: false; readonly error: WorkspaceError } {
+    const duration = this.#checkDuration(0);
+    if (!duration.ok) return duration;
+    const committed =
+      this.#inputTokens + this.#outputTokens + this.#reservedRequestTokens;
+    if (inputEstimate > this.budgets.maxTokens - committed) {
+      return limit("tokens", this.budgets.maxTokens, committed + inputEstimate);
+    }
+    const maxTokens = Math.min(
+      outputCap,
+      this.budgets.maxTokens - committed - inputEstimate,
+    );
+    if (maxTokens === 0) {
+      return limit("tokens", this.budgets.maxTokens, committed + inputEstimate);
+    }
+    const reservedTokens = inputEstimate + maxTokens;
+    this.#reservedRequestTokens += reservedTokens;
+    return { ok: true, maxTokens, reservedTokens };
+  }
+
+  /** Releases a request reservation after its usage was recorded or the request failed. */
+  releaseRequest(reservedTokens: number): void {
+    this.#reservedRequestTokens = Math.max(
+      0,
+      this.#reservedRequestTokens - reservedTokens,
+    );
   }
 
   recordUsage(usage: ProviderUsage): BudgetResult {
