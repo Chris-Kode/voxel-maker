@@ -15,27 +15,36 @@ import type {
 } from "@voxel-maker/document/internal";
 import {
   VoxelVolume,
+  type VoxelVolumeLimits,
   type VoxelVolumeReadView,
   type VoxelWriteCapability,
 } from "@voxel-maker/voxel";
 import { deepFreeze } from "./freeze.js";
 
 /**
- * Copy-on-write preview store (plan S11.15, ticket #32): the private
- * `DocumentStore` behind one preview session. Committed state starts as a
- * cloned document at the session's base revision; volumes are cloned from
- * the live store lazily on first touch, so an untouched volume is never
- * copied and staged reads fall through to live data. Commits install only
- * into the preview store and emit only to preview listeners; the live
- * store, its revision, its history, and its subscribers are never touched.
+ * Copy-on-write preview store (plan S11.15, ticket #32, issue #116): the
+ * private `DocumentStore` behind one preview session. At creation the
+ * store captures an immutable base-revision snapshot: the committed
+ * document plus a deep clone of every volume, all tagged at the session's
+ * base revision. Reads and first clones always come from that snapshot —
+ * never from the moving live store — so a concurrent live commit can never
+ * drift preview reads, staged overlays, or inspection evidence onto newer
+ * voxels (issue #116). Staging clones the snapshot copy-on-write, commits
+ * install only into the preview store and emit only to preview listeners;
+ * the live store, its revision, its history, and its subscribers are never
+ * touched.
  */
 
 export class PreviewStore implements DocumentStore {
   readonly #live: DocumentStoreRead;
   readonly #capability: VoxelWriteCapability;
   #document: VoxelDocument;
-  /** Volumes cloned from live on first touch (copy-on-write). */
-  readonly #cloned = new Map<VolumeId, VoxelVolume>();
+  /**
+   * Base-revision volume snapshots plus volumes installed by preview
+   * commits (copy-on-write overlay). Never mutated by handlers: staging
+   * clones before touching.
+   */
+  readonly #volumes = new Map<VolumeId, VoxelVolume>();
   readonly #listeners = new Set<(event: DocumentCommitted) => void>();
 
   constructor(
@@ -46,6 +55,19 @@ export class PreviewStore implements DocumentStore {
     this.#live = live;
     this.#capability = capability;
     this.#document = deepFreeze(document);
+    // Issue #116: snapshot every base-revision volume at creation. The
+    // live store mutates chunk data in place, so any read that falls
+    // through to it would silently drift onto newer live voxels while the
+    // preview document stays tagged at its base revision. The preview must
+    // remain byte-identical at the base revision until discard/reinspect.
+    for (const volumeId of Object.keys(document.volumes) as VolumeId[]) {
+      const view = live.getVolume(volumeId);
+      if (view === undefined) continue;
+      this.#volumes.set(
+        volumeId,
+        cloneReadView(view, live.volumeLimits, capability),
+      );
+    }
   }
 
   get revision(): number {
@@ -65,15 +87,13 @@ export class PreviewStore implements DocumentStore {
   }
 
   getVolume(volumeId: VolumeId): VoxelVolumeReadView | undefined {
-    const cloned = this.#cloned.get(volumeId);
-    if (cloned !== undefined) return cloned;
-    return this.#live.getVolume(volumeId);
+    return this.#volumes.get(volumeId);
   }
 
   getVoxel(volumeId: VolumeId, coordinate: Vec3i): MaterialId {
-    const cloned = this.#cloned.get(volumeId);
-    if (cloned !== undefined) return cloned.getVoxel(coordinate);
-    return this.#live.getVoxel(volumeId, coordinate);
+    return (
+      this.#volumes.get(volumeId)?.getVoxel(coordinate) ?? (0 as MaterialId)
+    );
   }
 
   subscribe(listener: (event: DocumentCommitted) => void): () => void {
@@ -84,22 +104,11 @@ export class PreviewStore implements DocumentStore {
   }
 
   stageVolume(volumeId: VolumeId): VoxelVolume | undefined {
-    const existing = this.#cloned.get(volumeId);
-    if (existing !== undefined) return existing;
-    const view = this.#live.getVolume(volumeId);
-    if (view === undefined) return undefined;
-    const seeds = view.chunkCoordinates().map((coordinate) => ({
-      coordinate,
-      values: view.getChunk(coordinate) ?? new Uint16Array(0),
-    }));
-    const clone = VoxelVolume.fromChunks(
-      volumeId,
-      this.#live.volumeLimits,
-      this.#capability,
-      seeds,
-    );
-    this.#cloned.set(volumeId, clone);
-    return clone;
+    // COW staging: return a fresh clone so a rejected transaction leaves
+    // the committed snapshot bytes untouched (same contract as the live
+    // store). The clone always seeds from the base-revision snapshot,
+    // never from the moving live store (issue #116).
+    return this.#volumes.get(volumeId)?.clone();
   }
 
   commit(
@@ -188,17 +197,17 @@ export class PreviewStore implements DocumentStore {
     }
     this.#document = deepFreeze(staged.document);
     for (const [volumeId, volume] of staged.volumes) {
-      this.#cloned.set(volumeId, volume);
+      this.#volumes.set(volumeId, volume);
     }
     for (const volumeId of staged.removedVolumes) {
-      this.#cloned.delete(volumeId);
+      this.#volumes.delete(volumeId);
     }
     this.#emit(deepFreeze(event));
   }
 
-  /** Releases every preview resource (volume clones and listeners). */
+  /** Releases every preview resource (volume snapshots and listeners). */
   release(): void {
-    this.#cloned.clear();
+    this.#volumes.clear();
     this.#listeners.clear();
   }
 
@@ -211,4 +220,17 @@ export class PreviewStore implements DocumentStore {
       }
     }
   }
+}
+
+/** Deep clone of one committed read view (issue #116). */
+function cloneReadView(
+  view: VoxelVolumeReadView,
+  limits: VoxelVolumeLimits,
+  capability: VoxelWriteCapability,
+): VoxelVolume {
+  const seeds = view.chunkCoordinates().map((coordinate) => ({
+    coordinate,
+    values: view.getChunk(coordinate) ?? new Uint16Array(0),
+  }));
+  return VoxelVolume.fromChunks(view.volumeId, limits, capability, seeds);
 }

@@ -566,6 +566,74 @@ describe("bounded semantic diff", () => {
   });
 });
 
+describe("issue #116: preview reads never drift to newer live revisions", () => {
+  it("keeps preview reads and evidence byte-identical at the base revision after a live commit", () => {
+    const { store, bus } = liveFixture();
+    const session = createPreviewSession({ live: store, applyBus: bus });
+    expect(session.baseRevision).toBe(1);
+    // The live document advances behind the session's back (revision 2).
+    const external = bus.execute(
+      setVoxelCommand(commandId("command:test:drift:0001"), {
+        volumeId: FIXTURE_IDS.volumeMain,
+        coordinate: [9, 9, 9],
+        material: materialId(2),
+      }),
+      {
+        transactionId: transactionId("transaction:test:drift:0001"),
+        expectedRevision: 1,
+        source: "ui",
+      },
+    );
+    expect(external.ok).toBe(true);
+    expect(store.revision).toBe(2);
+    expect(store.getVoxel(FIXTURE_IDS.volumeMain, [9, 9, 9])).toBe(
+      2 as MaterialId,
+    );
+    // The preview keeps its base revision tag and byte-identical voxels:
+    // reads must never fall through to the moving live store.
+    expect(session.revision).toBe(1);
+    expect(session.getVoxel(FIXTURE_IDS.volumeMain, [9, 9, 9])).toBe(
+      0 as MaterialId,
+    );
+    expect(session.getVoxel(FIXTURE_IDS.volumeMain, [0, 0, 0])).toBe(1);
+    expect(session.getVolume(FIXTURE_IDS.volumeMain)?.getVoxel([9, 9, 9])).toBe(
+      0 as MaterialId,
+    );
+    // Inspection evidence stays revision-1-tagged with base bytes.
+    const inspector = createInspector({ store: session });
+    const evidence = inspector.inspect("queryVoxels", {
+      volumeId: FIXTURE_IDS.volumeMain,
+      region: { min: [9, 9, 9], max: [10, 10, 10] },
+      maxVoxels: 100,
+    });
+    expect(evidence.ok, JSON.stringify(evidence)).toBe(true);
+    if (!evidence.ok) throw new Error("unreachable");
+    const value = evidence.value as Readonly<Record<string, unknown>>;
+    expect(value.revision).toBe(1);
+    expect(value.total).toBe(0);
+    // The preview's first clone starts from the base snapshot, not the
+    // live store: staged reads never observe the live-only voxel either.
+    const staged = session.stage(
+      fillCommand("command:test:drift:0002", [5, 5, 5], [6, 6, 6]),
+    );
+    expect(staged.ok, JSON.stringify(staged)).toBe(true);
+    expect(session.revision).toBe(2);
+    expect(session.getVoxel(FIXTURE_IDS.volumeMain, [9, 9, 9])).toBe(
+      0 as MaterialId,
+    );
+    expect(session.getVoxel(FIXTURE_IDS.volumeMain, [5, 5, 5])).toBe(1);
+    // Apply still reports the conflict; the proposal is never silently
+    // rebased onto the newer live revision.
+    const apply = session.apply({
+      transactionId: transactionId("transaction:test:drift:apply"),
+    });
+    expect(apply.ok).toBe(false);
+    if (!apply.ok) expect(apply.error.code).toBe("REVISION_CONFLICT");
+    expect(store.revision).toBe(2);
+    session.discard();
+  });
+});
+
 describe("apply: one optimistic transaction", () => {
   it("applies all staged commands as a single live transaction", () => {
     const { store, bus } = liveFixture();
