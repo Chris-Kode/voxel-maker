@@ -6,10 +6,14 @@ import type { SaveCoordinator } from "@voxel-maker/storage";
  * #22). The binding watches the save coordinator's dirty transitions:
  * when the project becomes dirty and a path exists, it schedules one
  * snapshot save after `delayMs`; a save already in flight, a pending
- * timer, or a scheduled retry suppresses new timers. Failures surface
- * through `onFailure` and schedule one bounded retry. Lifecycle
- * replacement disposes the binding (cancelling the timer and any
- * retry), which is how autosave bindings are reset on replace.
+ * timer, or a scheduled retry suppresses new timers. When a settled
+ * save still leaves the project dirty (edits landed while the snapshot
+ * was being written, issue #121), it schedules one more debounced run
+ * so the newer revision is eventually autosaved; clean completions
+ * never start a pointless timer. Failures surface through `onFailure`
+ * and schedule one bounded retry. Lifecycle replacement disposes the
+ * binding (cancelling the timer and any retry), which is how autosave
+ * bindings are reset on replace.
  *
  * Autosave is runtime projection policy: it never mutates semantic
  * state, writes only through the same serialized save coordinator as a
@@ -54,9 +58,11 @@ export function createAutosave(options: AutosaveOptions): AutosaveController {
     if (currentPath === undefined) return;
     inflight = coordinator.save(currentPath);
     options.onStart?.();
+    let saveSucceeded = false;
     try {
       await inflight;
       retries = 0;
+      saveSucceeded = true;
     } catch (error) {
       options.onFailure?.(
         error instanceof WorkspaceError
@@ -79,6 +85,17 @@ export function createAutosave(options: AutosaveOptions): AutosaveController {
       }
     } finally {
       inflight = undefined;
+      // Issue #121: an edit that lands while this snapshot is being
+      // written leaves the save stale and dirty already true, so no
+      // dirty-changed transition arrives to schedule the newer
+      // revision. Reschedule explicitly when the settled save still
+      // leaves the project dirty; the dirty guard keeps clean saves
+      // from starting a pointless timer, and the saveSucceeded guard
+      // keeps a persistent failure from looping past the single
+      // bounded retry. The reschedule runs before the user callbacks
+      // so a throwing onSettled listener cannot drop the follow-up
+      // save.
+      if (saveSucceeded && coordinator.isDirty()) schedule();
       options.onSettled?.();
     }
   };
