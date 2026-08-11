@@ -276,6 +276,46 @@ describe("CommandBus gesture coalescing (plan S4.10)", () => {
     expect(translationOf(store, A)).toEqual([1, 0, 0]);
   });
 
+  it("replays the first gesture update from the committed snapshot (issue #113)", () => {
+    const { bus, store } = createBus();
+    const gesture = begin(bus, "drag:translate:a");
+    // The caller keeps a reference to the first update it submits; mutating
+    // it after the gesture must not change what redo replays (the merged
+    // forward intent is first update followed by latest update).
+    // Mutable tuples on purpose: the caller may mutate the submitted
+    // command's payload after the gesture, and that must not affect redo.
+    const payload = {
+      nodeId: A,
+      transform: {
+        translation: [1, 0, 0] as [number, number, number],
+        pivot: [0, 0, 0] as [number, number, number],
+        rotation: [0, 0, 0, 1] as [number, number, number, number],
+        scale: [1, 1, 1] as [number, number, number],
+      },
+    };
+    const first: Command<
+      typeof NODE_SET_TRANSFORM_COMMAND,
+      SetNodeTransformPayload
+    > = {
+      id: commandId("command:coalesce:issue113:0001"),
+      type: NODE_SET_TRANSFORM_COMMAND,
+      schemaVersion: 1,
+      payload,
+    };
+    expect(gesture.update([first], tx(0)).ok).toBe(true);
+    expect(gesture.update([move(A, [2, 5, 0])], tx(1)).ok).toBe(true);
+    gesture.end();
+    // A mutated caller-held payload would make the first replayed command
+    // invalid (scale must be strictly positive).
+    payload.transform.scale[0] = 0;
+    const undo = bus.undo(tx(2));
+    expect(undo.ok).toBe(true);
+    const redo = bus.redo(tx(3));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(translationOf(store, A)).toEqual([2, 5, 0]);
+  });
+
   it("coalesces multi-command updates and cancel restores every node", () => {
     const { bus, store } = createBus();
     const gesture = begin(bus, "drag:translate:ab");
