@@ -273,6 +273,65 @@ describe("agent loop: rigging and animation staging (plan S13.5)", () => {
       h.store.getDocument().animations["anim:loop:huge" as never],
     ).toBeUndefined();
   });
+
+  it("rejects destructive animation tools beyond track/keyframe budgets before preview mutation (issue #119)", async () => {
+    const h = harness();
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "Removing the wave clip.",
+        toolCalls: [
+          {
+            id: "call_delete_anim",
+            name: "deleteAnimation",
+            arguments: { animationId: FIXTURE_IDS.animationWave },
+          },
+        ],
+      },
+    ];
+    // Caps of zero must stop deletion of a clip holding 1 track and 2
+    // keyframes; the reservation is derived from the staged read view.
+    const session = h.makeSession(script, {
+      budgets: { maxTracks: 0, maxKeyframes: 0 },
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.code).toBe("LIMIT_EXCEEDED");
+    }
+    expect(session.preview.stagedCount).toBe(0);
+    expect(session.preview.closed).toBe(true);
+    // The live document is untouched.
+    expect(
+      h.store.getDocument().animations[FIXTURE_IDS.animationWave],
+    ).toBeDefined();
+  });
+
+  it("stages destructive animation tools at the track/keyframe budget boundary (issue #119)", async () => {
+    const h = harness();
+    const script: readonly DeterministicStep[] = [
+      {
+        text: "Removing the wave clip.",
+        toolCalls: [
+          {
+            id: "call_delete_anim",
+            name: "deleteAnimation",
+            arguments: { animationId: FIXTURE_IDS.animationWave },
+          },
+        ],
+      },
+    ];
+    // The clip holds exactly 1 track and 2 keyframes, so a session with
+    // those exact caps must stage the deletion normally.
+    const session = h.makeSession(script, {
+      budgets: { maxTracks: 1, maxKeyframes: 2 },
+    });
+    const result = runOk(await session.run());
+    expect(result.stagedCommands).toBe(1);
+    // Staged only: the live clip is still present until Apply.
+    expect(
+      h.store.getDocument().animations[FIXTURE_IDS.animationWave],
+    ).toBeDefined();
+  });
 });
 
 describe("agent loop: bounded context recipes (plan S13.1/S13.2)", () => {

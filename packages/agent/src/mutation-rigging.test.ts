@@ -182,6 +182,39 @@ describe("animation mutation tools (plan S13.5)", () => {
     expect(payload.name).toBeUndefined();
   });
 
+  it("destructive tools reserve the tracks and keyframes they modify (issue #119)", () => {
+    const { mutator } = makeMutator();
+    // removeTrack removes the track and its nested keyframes.
+    const removeTrackResult = constructOk(mutator, "removeTrack", {
+      animationId: FIXTURE_IDS.animationWave,
+      trackId: FIXTURE_IDS.trackWave,
+    });
+    expect(removeTrackResult.animation).toEqual({ tracks: 1, keyframes: 2 });
+
+    // moveKeyframe retimes one keyframe: one modified keyframe.
+    const move = constructOk(mutator, "moveKeyframe", {
+      animationId: FIXTURE_IDS.animationWave,
+      trackId: FIXTURE_IDS.trackWave,
+      keyframeId: FIXTURE_IDS.keyframeEnd,
+      time: 1.5,
+    });
+    expect(move.animation).toEqual({ keyframes: 1 });
+
+    // deleteKeyframe removes one keyframe.
+    const deleteKeyframeResult = constructOk(mutator, "deleteKeyframe", {
+      animationId: FIXTURE_IDS.animationWave,
+      trackId: FIXTURE_IDS.trackWave,
+      keyframeId: FIXTURE_IDS.keyframeEnd,
+    });
+    expect(deleteKeyframeResult.animation).toEqual({ keyframes: 1 });
+
+    // deleteAnimation removes the whole clip: 1 track, 2 keyframes.
+    const deleteClip = constructOk(mutator, "deleteAnimation", {
+      animationId: FIXTURE_IDS.animationWave,
+    });
+    expect(deleteClip.animation).toEqual({ tracks: 1, keyframes: 2 });
+  });
+
   it("rejects missing references and malformed values with stable errors", () => {
     const { mutator } = makeMutator();
     constructError(
