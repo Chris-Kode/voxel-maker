@@ -435,6 +435,16 @@ export class CommandBus {
     const context = this.#makeContext(staged);
     const executions: CommandExecution[] = [];
     const inverses: (InverseCommand | readonly InverseCommand[])[] = [];
+    /**
+     * Each executed command paired with its parsed, bounded payload
+     * (issue #113). The pair keeps the envelope and payload alignment
+     * structural instead of index-dependent; collected for new commits
+     * only, which are the only runs that build a forward snapshot.
+     */
+    const parsedCommands: Array<{
+      readonly command: Command;
+      readonly payload: unknown;
+    }> = [];
     // Issue #92: ADR-0009's 1,000,000-voxel transaction budget is a
     // cumulative meter over every command and volume of the transaction.
     // Like the byte budgets, it applies to new commits only: undo, redo,
@@ -491,6 +501,9 @@ export class CommandBus {
       } catch (error) {
         return err(withCommandIndex(toWorkspaceError(error), index));
       }
+      if (mode.kind === "commit") {
+        parsedCommands.push({ command, payload });
+      }
       executions.push(execution);
       inverses.push(execution.inverse);
       if (mode.kind === "commit") {
@@ -506,10 +519,21 @@ export class CommandBus {
       }
     }
 
+    // Issue #113: the caller retains references to the submitted commands
+    // and can mutate them after commit. Store and journal an owned
+    // deep-frozen canonical snapshot of each executed forward command
+    // (envelope plus parsed, bounded payload) so redo, the commit event,
+    // and the committed hook record can never be rewritten by later caller
+    // mutation. Undo/redo/cancel replay stored commands that are already
+    // owned by the bus (handler-built inverses or frozen snapshots).
+    const forwardCommands =
+      mode.kind === "commit"
+        ? snapshotForwardCommands(parsedCommands)
+        : commands;
     const revisionBefore = this.#store.revision;
     const revisionAfter = revisionBefore + 1;
     const event = buildEvent(
-      commands,
+      forwardCommands,
       executions,
       options,
       revisionBefore,
@@ -549,7 +573,7 @@ export class CommandBus {
       transactionId: options.transactionId,
       revisionBefore,
       revisionAfter,
-      forward: commands,
+      forward: forwardCommands,
       inverse: inverseCommands,
       source: options.source,
       ...(options.correlationId !== undefined
@@ -626,7 +650,7 @@ export class CommandBus {
           ...(options.label === undefined ? {} : { label: options.label }),
           revisionBefore,
           revisionAfter,
-          commands,
+          commands: forwardCommands,
         });
       } catch {
         // The commit succeeded; a journal hook failure is isolated and
@@ -848,7 +872,10 @@ export class CommandBus {
       if (entry === undefined) {
         throw new Error("CommandBus: gesture update left no history entry");
       }
-      this.#pending = { key, firstForward: [...commands], entry };
+      // The committed entry carries the frozen forward snapshot; the caller
+      // may mutate its own commands after the update without changing what
+      // redo replays (issue #113).
+      this.#pending = { key, firstForward: entry.forward, entry };
       return result;
     }
     const result = this.#runTransaction(commands, options, { kind: "commit" });
@@ -897,8 +924,9 @@ export class CommandBus {
     } else {
       // Incompatible resources or types: the just-committed entry seals
       // (it stays a normal undoable entry) and becomes the first segment
-      // of a fresh pending gesture.
-      this.#pending = { key, firstForward: [...commands], entry: newEntry };
+      // of a fresh pending gesture. The segment replays the committed
+      // snapshot, never the caller's mutable commands (issue #113).
+      this.#pending = { key, firstForward: newEntry.forward, entry: newEntry };
     }
     return result;
   }
@@ -1132,14 +1160,79 @@ function historyMetadata(
   };
 }
 
+/**
+ * Owned deep-frozen canonical snapshot of one executed transaction's forward
+ * commands (issue #113): the envelope with the parsed, bounded payload copied
+ * so no caller-held reference can rewrite committed history, the commit
+ * event, or the journaled hook record after commit. Parse results are
+ * validated and bounded but may still alias caller data (for example
+ * `volume.create` keeps the caller's raw entries record), so the payload is
+ * deep-copied before freezing; the frozen copy is safe to replay and to
+ * serialize into the recovery journal.
+ */
+function snapshotForwardCommands(
+  parsed: readonly { readonly command: Command; readonly payload: unknown }[],
+): readonly Command[] {
+  return parsed.map(({ command, payload }) =>
+    Object.freeze(
+      commandEnvelope(
+        command.id,
+        command.type,
+        command.schemaVersion,
+        deepFreezeClone(payload),
+      ),
+    ),
+  );
+}
+
+/**
+ * Owned deep-frozen copy of a parsed command payload (issue #113).
+ * Primitives are immutable and returned as-is; arrays and records are
+ * rebuilt so the copy never shares identity with caller-held objects, then
+ * frozen. Only plain JSON trees can reach this walker by contract: parse
+ * helpers rebuild fresh plain structures from input that already passed
+ * commit-time canonicalization (the budget check), and the one caller
+ * record a parse may keep by reference (`volume.create` entries) also
+ * passed canonicalization. Null-prototype records are preserved so an
+ * absent ID-keyed member can never resolve to an inherited
+ * `Object.prototype` member in the owned snapshot (issue #103).
+ */
+function deepFreezeClone(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((item) => deepFreezeClone(item)));
+  }
+  const source = value as Record<string, unknown>;
+  const copy: Record<string, unknown> =
+    Object.getPrototypeOf(value) === null
+      ? (Object.create(null) as Record<string, unknown>)
+      : {};
+  for (const key of Object.keys(source)) {
+    copy[key] = deepFreezeClone(source[key]);
+  }
+  return Object.freeze(copy);
+}
+
+/** One command envelope; shared by the snapshot and byte-budget paths. */
+function commandEnvelope(
+  id: CommandId,
+  type: string,
+  schemaVersion: number,
+  payload: unknown,
+): { id: CommandId; type: string; schemaVersion: number; payload: unknown } {
+  return { id, type, schemaVersion, payload };
+}
+
 function transactionBytes(commands: readonly Command[]): string {
   return canonicalJson(
-    commands.map((command) => ({
-      id: command.id,
-      type: command.type,
-      schemaVersion: command.schemaVersion,
-      payload: command.payload,
-    })) as JsonValue,
+    commands.map((command) =>
+      commandEnvelope(
+        command.id,
+        command.type,
+        command.schemaVersion,
+        command.payload,
+      ),
+    ) as JsonValue,
   );
 }
 

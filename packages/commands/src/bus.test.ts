@@ -8,9 +8,14 @@ import {
 import { createDocument, type VoxelDocument } from "@voxel-maker/model";
 import { createDocumentStoreHandle } from "@voxel-maker/document/internal";
 import { CommandBus } from "./bus.js";
-import type { TransactionOptions } from "./types.js";
+import {
+  journalTransactionToJson,
+  type CommittedTransactionRecord,
+} from "./codec.js";
+import type { Command, TransactionOptions } from "./types.js";
 import { CommandRegistry } from "./registry.js";
 import {
+  VOXEL_SET_COMMAND,
   registerVoxelCommands,
   removeVoxelCommand,
   setVoxelCommand,
@@ -682,7 +687,201 @@ describe("undo and redo", () => {
     if (!redone.ok) return;
     expect(store.getVoxel(VOLUME, [3, 3, 3])).toBe(1);
   });
+
+  it("replays the committed parsed payload, not a caller-mutated command (issue #113)", () => {
+    const { bus, store } = createBus();
+    // The caller keeps references to the command it submits; after commit
+    // it must be free to mutate them without changing what redo replays.
+    const payload = {
+      volumeId: VOLUME,
+      coordinate: [0, 0, 0] as [number, number, number],
+      material: materialId(1),
+    };
+    const command: Command = {
+      id: commandId("command:bus:issue113:0001"),
+      type: VOXEL_SET_COMMAND,
+      schemaVersion: 1,
+      payload,
+    };
+    expect(bus.execute(command, options("issue113:0001", 0)).ok).toBe(true);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(bus.undo(options("issue113:undo:0001", 1)).ok).toBe(true);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(0);
+    payload.coordinate[0] = 1;
+    const redo = bus.redo(options("issue113:redo:0001", 2));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+  });
 });
+describe("caller-held payload isolation (issue #113)", () => {
+  function createRecordingBus(): {
+    bus: CommandBus;
+    store: ReturnType<typeof createDocumentStoreHandle>["store"];
+    records: CommittedTransactionRecord[];
+  } {
+    const { store, writeCapability } = createDocumentStoreHandle({
+      document: createDemoDocument(),
+    });
+    const registry = new CommandRegistry();
+    registerVoxelCommands(registry);
+    const records: CommittedTransactionRecord[] = [];
+    const bus = new CommandBus(store, registry, writeCapability, undefined, {
+      onCommitted(record) {
+        records.push(record);
+      },
+    });
+    return { bus, store, records };
+  }
+
+  const mutableSet = (
+    id: string,
+    coordinate: [number, number, number],
+  ): { command: Command } => {
+    return {
+      command: {
+        id: commandId(`command:bus:${id}`),
+        type: VOXEL_SET_COMMAND,
+        schemaVersion: 1,
+        payload: {
+          volumeId: VOLUME,
+          coordinate,
+          material: materialId(1),
+        },
+      },
+    };
+  };
+
+  it("journals the committed parsed payload, not the caller's mutable command", () => {
+    const { bus, records } = createRecordingBus();
+    const { command } = mutableSet("issue113:hook:0001", [0, 0, 0]);
+    expect(bus.execute(command, options("issue113:hook:0001", 0)).ok).toBe(
+      true,
+    );
+    // The caller mutates its copy after commit; the committed hook record
+    // (and the journaled bytes derived from it) must not change.
+    (command.payload as { coordinate: number[] }).coordinate[0] = 1;
+    expect(records).toHaveLength(1);
+    const record = records[0];
+    expect(record?.commands[0]?.payload).toEqual({
+      volumeId: VOLUME,
+      coordinate: [0, 0, 0],
+      material: 1,
+    });
+    const journaled = journalTransactionToJson(
+      record as CommittedTransactionRecord,
+    );
+    expect((journaled as { commands: unknown[] }).commands[0]).toEqual({
+      id: "command:bus:issue113:hook:0001",
+      type: VOXEL_SET_COMMAND,
+      schemaVersion: 1,
+      payload: { volumeId: VOLUME, coordinate: [0, 0, 0], material: 1 },
+    });
+  });
+
+  it("keeps the recorded idempotency result immune to caller mutation", () => {
+    const { bus, store } = createRecordingBus();
+    const { command } = mutableSet("issue113:idem:0001", [0, 0, 0]);
+    const first = bus.execute(command, options("issue113:idem:0001", 0));
+    expect(first.ok).toBe(true);
+    (command.payload as { coordinate: number[] }).coordinate[0] = 1;
+    // A retry with a fresh identical command still replays the recorded
+    // result captured at commit time.
+    const retry = bus.execute(
+      set("issue113:idem:0001", [0, 0, 0]),
+      options("issue113:idem:0001", 1),
+    );
+    expect(retry.ok).toBe(true);
+    if (!first.ok || !retry.ok) return;
+    expect(retry.value.replayed).toBe(true);
+    expect(retry.value.revisionAfter).toBe(first.value.revisionAfter);
+    expect(store.revision).toBe(1);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+  });
+
+  it("keeps the committed event immune to caller mutation", () => {
+    const { bus, store } = createRecordingBus();
+    const { command } = mutableSet("issue113:event:0001", [0, 0, 0]);
+    const result = bus.execute(command, options("issue113:event:0001", 0));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const event = result.value.event;
+    (command.payload as { coordinate: number[] }).coordinate[0] = 1;
+    expect(event.commandIds).toEqual(["command:bus:issue113:event:0001"]);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+  });
+
+  it("replays the committed command array, not a caller-replaced array", () => {
+    const { bus, store } = createBus();
+    const submitted = [set("issue113:array:0001", [0, 0, 0])];
+    expect(
+      bus.executeTransaction(submitted, options("issue113:array:0001", 0)).ok,
+    ).toBe(true);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(bus.undo(options("issue113:array:undo:0001", 1)).ok).toBe(true);
+    // Replacing the caller's array entry after commit must not change what
+    // redo replays (the committed snapshot owns its own array).
+    submitted[0] = set("issue113:array:0001", [5, 0, 0]);
+    const redo = bus.redo(options("issue113:array:redo:0001", 2));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [5, 0, 0])).toBe(0);
+  });
+
+  it("keeps the committed envelope, not a caller-mutated command id", () => {
+    const { bus, store } = createBus();
+    const payload = {
+      volumeId: VOLUME,
+      coordinate: [0, 0, 0] as [number, number, number],
+      material: materialId(1),
+    };
+    const command = {
+      id: commandId("command:bus:issue113:envelope:0001"),
+      type: VOXEL_SET_COMMAND,
+      schemaVersion: 1,
+      payload,
+    };
+    expect(bus.execute(command, options("issue113:envelope:0001", 0)).ok).toBe(
+      true,
+    );
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(bus.undo(options("issue113:envelope:undo:0001", 1)).ok).toBe(true);
+    // Mutating the caller's envelope after commit must not change what redo
+    // replays or how the redo event identifies the commands.
+    command.id = commandId("command:bus:mutated:0001");
+    const redo = bus.redo(options("issue113:envelope:redo:0001", 2));
+    expect(redo.ok).toBe(true);
+    if (!redo.ok) return;
+    expect(redo.value.event.commandIds).toEqual([
+      "command:bus:issue113:envelope:0001",
+    ]);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+  });
+
+  it("rejects an idempotent retry whose caller-mutated bytes differ", () => {
+    const { bus, store } = createRecordingBus();
+    const { command } = mutableSet("issue113:idem:0002", [0, 0, 0]);
+    const first = bus.execute(command, options("issue113:idem:0002", 0));
+    expect(first.ok).toBe(true);
+    // The recorded idempotency record stays intact, and the mutated retry is
+    // detected as a different transaction rather than silently replayed
+    // (plan 5.4: "an ID reused with different bytes is an error").
+    (command.payload as { coordinate: number[] }).coordinate[0] = 1;
+    const retry = bus.execute(command, options("issue113:idem:0002", 1));
+    expect(retry.ok).toBe(false);
+    if (retry.ok) return;
+    expect(retry.error.code).toBe("DUPLICATE_TRANSACTION_ID");
+    expect(store.revision).toBe(1);
+    expect(store.getVoxel(VOLUME, [0, 0, 0])).toBe(1);
+    expect(store.getVoxel(VOLUME, [1, 0, 0])).toBe(0);
+  });
+});
+
 describe("CommandBus.revoke", () => {
   function createHookedBus(): {
     bus: CommandBus;
