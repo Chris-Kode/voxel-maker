@@ -12,6 +12,7 @@ import {
   type DeterministicStep,
 } from "../provider/deterministic.js";
 import { DISCLOSURE_CATEGORIES, createConsent } from "../provider/consent.js";
+import { estimateRequestTokens } from "../provider/types.js";
 import type {
   ChatMessage,
   ProviderAdapter,
@@ -706,13 +707,14 @@ describe("visual refinement: regression and oscillation gates (AC5)", () => {
 });
 
 describe("visual refinement: consent token caps bind critique requests (issue #117)", () => {
-  it("fails before a critique request exceeds the remaining consent token cap", async () => {
+  it("fails before a critique request whose input estimate exceeds the remaining consent token cap", async () => {
     const h = harness();
-    // The measured text-round requests of this harness are ~26.2k tokens
-    // worst-case (estimate + 2,048 output cap) and the image-bearing
-    // critique request is ~26.8k: a 26,500 consent token cap lets the
-    // two text rounds through and refuses the critique request before
-    // transmission.
+    // The measured input estimates of this harness are ~24.1k for the
+    // first text round, ~24.2k for the second, and ~24.7k for the
+    // image-bearing critique request: a 24,400 consent token cap lets
+    // the two text rounds through and refuses the critique request
+    // before transmission (issue #117 AC: caps bind the run; issue #118:
+    // the pre-request token contract fails before any provider work).
     const session = h.makeSession([...BASE_SCRIPT, DONE_CRITIQUE_STEP], {
       consent: createConsent({
         providerId: "deterministic",
@@ -720,7 +722,7 @@ describe("visual refinement: consent token caps bind critique requests (issue #1
         categories: DISCLOSURE_CATEGORIES,
         consentedAt: 0,
         expiresAt: 1_000_000_000_000,
-        tokenCap: 26_500,
+        tokenCap: 24_400,
       }),
     });
     const result = runErr(await session.run());
@@ -741,6 +743,41 @@ describe("visual refinement: consent token caps bind critique requests (issue #1
       ),
     ).toBe(true);
     expect(session.preview.closed).toBe(true);
+  });
+
+  it("clamps a critique request's output cap to the remaining consent token allowance", async () => {
+    const h = harness();
+    // A 26,500 token cap covers the critique request's ~24.7k input
+    // estimate but not its full 2,048-token output cap, so the loop
+    // sends the critique with maxTokens clamped to exactly the remaining
+    // allowance (issue #118): the consent cap still binds the worst
+    // case, and the evidence images only leave the device inside it.
+    const session = h.makeSession([...BASE_SCRIPT, DONE_CRITIQUE_STEP], {
+      consent: createConsent({
+        providerId: "deterministic",
+        model: "deterministic-model",
+        categories: DISCLOSURE_CATEGORIES,
+        consentedAt: 0,
+        expiresAt: 1_000_000_000_000,
+        tokenCap: 26_500,
+      }),
+    });
+    const result = runOk(await session.run());
+    expect(result.ok).toBe(true);
+    const critique = h.provider.requests.at(-1);
+    expect(critique).toBeDefined();
+    if (critique !== undefined) {
+      expect(
+        critique.messages.some(
+          (message) =>
+            message.role === "user" && (message.images?.length ?? 0) > 0,
+        ),
+      ).toBe(true);
+      const inputEstimate = estimateRequestTokens(critique);
+      expect(inputEstimate).toBeLessThan(26_500);
+      expect(critique.maxTokens).toBe(26_500 - inputEstimate);
+      expect(critique.maxTokens).toBeLessThan(2048);
+    }
   });
 });
 

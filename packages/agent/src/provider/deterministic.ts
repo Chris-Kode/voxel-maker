@@ -72,6 +72,7 @@ export class DeterministicProvider implements ProviderAdapter {
   readonly #defaultUsage: ProviderUsage;
   #calls = 0;
   #cursor = 0;
+  #lastRequest: ProviderChatRequest | undefined = undefined;
   /** True when the script's final step is an error to repeat forever. */
   #repeatError = false;
   #lastErrorStep:
@@ -101,6 +102,11 @@ export class DeterministicProvider implements ProviderAdapter {
     return this.#calls;
   }
 
+  /** The most recent request observed by the adapter (issue #118). */
+  get lastRequest(): ProviderChatRequest | undefined {
+    return this.#lastRequest;
+  }
+
   /**
    * Replaces the scripted steps and resets the cursor, call count, and
    * repeat-error state. Used by the loop harness to re-script one shared
@@ -110,6 +116,7 @@ export class DeterministicProvider implements ProviderAdapter {
     this.#script = script;
     this.#calls = 0;
     this.#cursor = 0;
+    this.#lastRequest = undefined;
     this.#repeatError = false;
     this.#lastErrorStep = undefined;
     const finalStep = this.#script[this.#script.length - 1];
@@ -122,6 +129,7 @@ export class DeterministicProvider implements ProviderAdapter {
     options: ChatOptions = {},
   ): AsyncIterable<ProviderEvent> {
     this.#calls += 1;
+    this.#lastRequest = request;
     const startedAt = this.#clock.now();
     const signal = options.signal;
     for (;;) {

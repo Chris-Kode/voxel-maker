@@ -188,6 +188,64 @@ describe("BudgetLedger: per-resource enforcement", () => {
     );
   });
 
+  it("reserves request tokens and clamps the output cap to the remaining allowance", () => {
+    const { ledger } = makeLedger({ maxTokens: 10 });
+    // Input estimate 4 fits; the 2048 output cap is clamped to 6.
+    const first = ledger.reserveRequest(4, 2048);
+    expect(first).toEqual({ ok: true, maxTokens: 6, reservedTokens: 10 });
+    expect(ledger.reservedTokens).toBe(10);
+    // The reservation counts against the budget even before usage lands.
+    expectLimit(
+      ledger.reserveRequest(1, 0) as { ok: false; error: WorkspaceError },
+      "tokens",
+      10,
+      11,
+    );
+  });
+
+  it("rejects a request whose input estimate cannot fit the remaining allowance", () => {
+    const { ledger } = makeLedger({ maxTokens: 10 });
+    expectLimit(
+      ledger.reserveRequest(11, 2048) as { ok: false; error: WorkspaceError },
+      "tokens",
+      10,
+      11,
+    );
+    expect(ledger.reservedTokens).toBe(0);
+  });
+
+  it("rejects a request that would clamp to a zero output allowance", () => {
+    const { ledger } = makeLedger({ maxTokens: 10 });
+    // The input estimate exactly fills the remainder, so no output
+    // allowance is left: the request must fail without any reservation.
+    expectLimit(
+      ledger.reserveRequest(10, 2048) as { ok: false; error: WorkspaceError },
+      "tokens",
+      10,
+      10,
+    );
+    expect(ledger.reservedTokens).toBe(0);
+  });
+
+  it("reconciles a released reservation with the recorded actual usage", () => {
+    const { ledger } = makeLedger({ maxTokens: 10 });
+    const reserved = ledger.reserveRequest(4, 2048);
+    expect(reserved.ok).toBe(true);
+    if (reserved.ok) {
+      expect(ledger.recordUsage({ inputTokens: 2, outputTokens: 2 }).ok).toBe(
+        true,
+      );
+      ledger.releaseRequest(reserved.reservedTokens);
+      // Actual usage (4) plus the new input estimate (4) still fits.
+      expect(ledger.reservedTokens).toBe(0);
+      expect(ledger.reserveRequest(4, 2048)).toEqual({
+        ok: true,
+        maxTokens: 2,
+        reservedTokens: 6,
+      });
+    }
+  });
+
   it("enforces the combined token budget", () => {
     const { ledger } = makeLedger({ maxTokens: 100 });
     expect(ledger.recordUsage({ inputTokens: 30, outputTokens: 20 }).ok).toBe(

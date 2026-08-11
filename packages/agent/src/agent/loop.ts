@@ -183,6 +183,14 @@ export interface VisualRefinementConfig {
   readonly critiquePrompt?: string;
 }
 
+/** One pre-request token reservation awaiting its provider round (issue #118). */
+interface RequestReservation {
+  /** Output cap clamped to the remaining token allowance. */
+  readonly maxTokens: number;
+  /** Reserved tokens to release once the request completes. */
+  readonly reservedTokens: number;
+}
+
 /** One projected progress event of a run (UI-facing, never persisted). */
 export type AgentEvent =
   | { readonly kind: "state"; readonly state: AgentState }
@@ -541,11 +549,11 @@ class AgentSessionImpl implements AgentSession {
           tools: contracts,
           maxTokens: this.#maxOutputTokens,
         };
-        const reserveError = this.#reserveRequest(request);
-        if (reserveError !== undefined) {
-          return this.#failedResult("limit", reserveError);
+        const preflight = this.#reserveRequest(request);
+        if (!preflight.ok) {
+          return this.#failedResult("limit", preflight.error);
         }
-        const outcome = await this.#request(request);
+        const outcome = await this.#runRequest(request, preflight.reservation);
         if (outcome.kind === "canceled") return this.#canceledResult();
         if (outcome.kind === "fatal") {
           return this.#failedResult("provider", outcome.error);
@@ -680,13 +688,37 @@ class AgentSessionImpl implements AgentSession {
   /**
    * Refuses a request before transmission when its worst-case token or
    * cost reservation cannot fit the remaining consent-bounded budgets
-   * (ADR-0009, issue #117). Token check first, then cost, so a capped
-   * run reports the first violated resource.
+   * (ADR-0009, issues #117/#118). Token first, then cost, so a capped
+   * run reports the first violated resource. The token reservation
+   * (issue #118) reserves the deterministic input estimate plus the
+   * bounded output allowance and clamps the output cap to the remaining
+   * allowance; a cost failure releases the token reservation so the
+   * ledger keeps no stale accounting.
    */
-  #reserveRequest(request: ProviderChatRequest): WorkspaceError | undefined {
-    const tokenError = this.#reserveRequestTokens(request);
-    if (tokenError !== undefined) return tokenError;
-    return this.#reserveCost(request);
+  #reserveRequest(
+    request: ProviderChatRequest,
+  ):
+    | { readonly ok: true; readonly reservation: RequestReservation }
+    | { readonly ok: false; readonly error: WorkspaceError } {
+    const tokenReservation = this.#ledger.reserveRequest(
+      estimateRequestTokens(request),
+      this.#maxOutputTokens,
+    );
+    if (!tokenReservation.ok) {
+      return { ok: false, error: tokenReservation.error };
+    }
+    const costError = this.#reserveCost(request);
+    if (costError !== undefined) {
+      this.#ledger.releaseRequest(tokenReservation.reservedTokens);
+      return { ok: false, error: costError };
+    }
+    return {
+      ok: true,
+      reservation: {
+        maxTokens: tokenReservation.maxTokens,
+        reservedTokens: tokenReservation.reservedTokens,
+      },
+    };
   }
 
   /**
@@ -723,27 +755,32 @@ class AgentSessionImpl implements AgentSession {
   }
 
   /**
-   * Reserves the worst-case token count of the next request before
-   * sending (ADR-0009, issue #117): the deterministic request estimate
-   * (messages, tool schemas, and evidence images) plus the full output
-   * cap must fit the remaining session token budget — already clamped
-   * to the consent token cap — or the request is refused before
-   * transmission. Actual usage is recorded on the response, so this
-   * check mutates no counters.
+   * Sends one provider round under the session's pre-request token
+   * contract (issue #118): `#reserveRequest` already reserved the
+   * deterministic input estimate (messages + tool schemas) plus the
+   * bounded output allowance and clamped the output cap to the remaining
+   * token budget. This sends the clamped request and releases the
+   * reservation as soon as the provider returns, whether the normalized
+   * actual usage is recorded or the request failed.
    */
-  #reserveRequestTokens(
+  async #runRequest(
     request: ProviderChatRequest,
-  ): WorkspaceError | undefined {
-    const estimated = estimateRequestTokens(request) + this.#maxOutputTokens;
-    const remaining = this.#budgets.maxTokens - this.#ledger.tokens;
-    if (remaining < estimated) {
-      return budgetLimitError(
-        "tokens",
-        this.#budgets.maxTokens,
-        this.#ledger.tokens + estimated,
-      );
-    }
-    return undefined;
+    reservation: RequestReservation,
+  ): Promise<
+    | {
+        readonly kind: "response";
+        readonly response: ChatResponse;
+      }
+    | { readonly kind: "canceled" }
+    | { readonly kind: "fatal"; readonly error: ProviderError }
+    | { readonly kind: "round-error"; readonly error: ProviderError }
+  > {
+    const outcome = await this.#request({
+      ...request,
+      maxTokens: reservation.maxTokens,
+    });
+    this.#ledger.releaseRequest(reservation.reservedTokens);
+    return outcome;
   }
 
   /**
@@ -870,14 +907,14 @@ class AgentSessionImpl implements AgentSession {
         };
       }
       const request = this.#critiqueRequest(config, current.set);
-      const reserveError = this.#reserveRequest(request);
-      if (reserveError !== undefined) {
+      const preflight = this.#reserveRequest(request);
+      if (!preflight.ok) {
         return {
           kind: "failed",
-          result: this.#failedResult("limit", reserveError),
+          result: this.#failedResult("limit", preflight.error),
         };
       }
-      const outcome = await this.#request(request);
+      const outcome = await this.#runRequest(request, preflight.reservation);
       if (outcome.kind === "canceled") {
         stopped = "canceled";
         break;

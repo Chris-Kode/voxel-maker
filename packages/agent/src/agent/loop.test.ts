@@ -12,8 +12,13 @@ import {
   type DeterministicStep,
 } from "../provider/deterministic.js";
 import { DISCLOSURE_CATEGORIES, createConsent } from "../provider/consent.js";
-import { DEFAULT_RETRY_POLICY, type ToolCall } from "../provider/types.js";
 import {
+  DEFAULT_RETRY_POLICY,
+  estimateRequestTokens,
+  type ToolCall,
+} from "../provider/types.js";
+import {
+  AGENT_SYSTEM_PROMPT,
   createAgentSession,
   type AgentEvent,
   type AgentLoopOptions,
@@ -903,6 +908,115 @@ describe("agent loop: budget exhaustion", () => {
     const session = h.makeSession(script);
     const result = runErr(await session.run());
     expectLimit(result, "tokens");
+  });
+
+  // Issue #118: the token budget is a hard PRE-request contract. A run
+  // whose remaining token allowance cannot cover the known input plus the
+  // bounded output allowance must fail before any provider work, so a
+  // zero-token session never sends the prompt or tool schemas.
+  it("rejects a request before any provider call when the token budget cannot cover it", async () => {
+    const h = harness();
+    const session = h.makeSession(SUCCESS_SCRIPT, {
+      budgets: { maxTokens: 0 },
+    });
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({ resource: "tokens" });
+    }
+    expect(h.provider.callCount).toBe(0);
+    expect(session.preview.closed).toBe(true);
+  });
+
+  it("rejects the next request before another provider call when the remainder is insufficient", async () => {
+    const h = harness();
+    // The first response's usage consumes nearly the whole session token
+    // budget, so the second round must fail at the pre-request check
+    // instead of reaching the provider again. The tool call keeps the
+    // run alive after round one.
+    const session = h.makeSession(
+      [
+        {
+          text: "consume the budget",
+          toolCalls: [summaryCall()],
+          usage: { inputTokens: 24_500, outputTokens: 0 },
+        },
+      ],
+      {
+        budgets: { maxTokens: 25_000 },
+      },
+    );
+    const result = runErr(await session.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({ resource: "tokens" });
+    }
+    expect(h.provider.callCount).toBe(1);
+  });
+
+  it("rejects a request whose remainder leaves no output allowance before any provider call", async () => {
+    const h = harness();
+    // The loop's first request is deterministic: system prompt + user
+    // prompt + the tool contracts. A token budget exactly equal to its
+    // known input estimate leaves zero output allowance, so the run must
+    // fail before the provider instead of sending a degenerate
+    // zero-output-cap request.
+    const session = createPreviewSession({
+      live: h.store,
+      applyBus: h.bus,
+      sessionId: previewSessionId("preview:loop:zero-output-allowance"),
+    });
+    const inspector = createInspector({
+      store: session,
+      capabilities: ["inspect"],
+    });
+    const mutator = createMutator({
+      store: session,
+      registry: h.registry,
+      session,
+      capabilities: ["mutate"],
+    });
+    const inputEstimate = estimateRequestTokens({
+      model: "deterministic-model",
+      messages: [
+        { role: "system", content: AGENT_SYSTEM_PROMPT },
+        { role: "user", content: "Shorten the chair legs." },
+      ],
+      tools: [...inspector.contracts, ...mutator.contracts],
+    });
+    expect(inputEstimate).toBeGreaterThan(0);
+    const agent = h.makeSession(SUCCESS_SCRIPT, {
+      budgets: { maxTokens: inputEstimate },
+    });
+    const result = runErr(await agent.run());
+    expect(result.reason).toBe("limit");
+    if (result.error instanceof WorkspaceError) {
+      expect(result.error.context).toMatchObject({ resource: "tokens" });
+    }
+    expect(h.provider.callCount).toBe(0);
+    expect(agent.preview.closed).toBe(true);
+  });
+
+  it("clamps the per-request output cap to the remaining token allowance", async () => {
+    const h = harness();
+    // The session budget covers the request's known input estimate but
+    // not the full 2048-token output cap, so the loop must send a
+    // clamped maxTokens equal to exactly the remaining allowance.
+    // A text-only response ends the run after one round.
+    const session = h.makeSession([{ text: "done" }], {
+      budgets: { maxTokens: 25_000 },
+      maxOutputTokens: 2048,
+    });
+    const result = runOk(await session.run());
+    expect(result.ok).toBe(true);
+    const request = h.provider.lastRequest;
+    expect(request).toBeDefined();
+    if (request !== undefined) {
+      const inputEstimate = estimateRequestTokens(request);
+      expect(inputEstimate).toBeLessThan(25_000);
+      expect(request.maxTokens).toBe(25_000 - inputEstimate);
+      expect(request.maxTokens).toBeLessThan(2048);
+    }
   });
 
   it("stops on estimated-cost exhaustion", async () => {
